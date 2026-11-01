@@ -10,7 +10,7 @@
 +        <message name="IDS_NEO_CAPTURE_META_ALT" desc="IPTC accessibility alt text preview label.">
 +          Alt Text (Accessibility)
 +        </message>
-+        <message name="IDS_NEO_CAPTURE_POST_TEXT" desc="Label for manually entered post text preserved in screenshot metadata.">
++        <message name="IDS_NEO_CAPTURE_POST_TEXT" desc="Label for post text preserved in screenshot metadata, suggested from the page when found and quoted in the description.">
 +          Post text (optional)
 +        </message>
 +        <message name="IDS_NEO_CAPTURE_ALT_TEXT" desc="Label for optional accessibility text describing the screenshot.">
@@ -178,14 +178,14 @@
 +        <message name="IDS_NEO_CAPTURE_TIME" desc="Automatic capture time. Placeholder is an ISO timestamp in UTC.">
 +          Captured: <ph name="VALUE">$1<ex>https://example.com/post</ex></ph>
 +        </message>
-+        <message name="IDS_NEO_CAPTURE_COPYRIGHT_LANGUAGE" desc="Language selector for the formatted IPTC Copyright Notice source credit.">
-+          Copyright text language
++        <message name="IDS_NEO_CAPTURE_COPYRIGHT_LANGUAGE" desc="Language selector for the formatted screenshot metadata text: description summary and IPTC Copyright Notice source credit. Remembered for all profiles.">
++          Metadata text language
 +        </message>
-+        <message name="IDS_NEO_CAPTURE_COPYRIGHT_ENGLISH" desc="English screenshot credit format option.">
-+          English — Screenshot
++        <message name="IDS_NEO_CAPTURE_COPYRIGHT_ENGLISH" desc="English screenshot metadata text option, showing example words.">
++          English — Screenshot, Captured, Posted
 +        </message>
-+        <message name="IDS_NEO_CAPTURE_COPYRIGHT_NORWEGIAN" desc="Norwegian screenshot credit format option, showing the Norwegian word for screenshot.">
-+          Norsk — Skjermbilde
++        <message name="IDS_NEO_CAPTURE_COPYRIGHT_NORWEGIAN" desc="Norwegian screenshot metadata text option, showing the Norwegian words for screenshot, captured and published.">
++          Norsk — Skjermbilde, Tatt, Publisert
 +        </message>
          <message name="IDS_BROWSER_SHARING_SCREENSHOT_POST_CAPTURE_TITLE"
              desc="Title for the dialog shown after a screenshot is captured.">
@@ -1082,13 +1082,14 @@
    gfx::Point drag_end_;
 --- /dev/null
 +++ b/chrome/browser/image_editor/screenshot_source.cc
-@@ -0,0 +1,1429 @@
+@@ -0,0 +1,1621 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
 +
 +#include "chrome/browser/image_editor/screenshot_source.h"
 +
++#include <optional>
 +#include <string_view>
 +
 +#include "base/json/json_writer.h"
@@ -1276,6 +1277,10 @@
 +  const redditSelector = 'shreddit-post,shreddit-comment';
 +  const postSelector = telegramSelector + ',' + mastodonSelector + ',' + linkedinSelector + ',' + youtubeSelector + ',' + redditSelector + ',article,[role="article"],[data-testid="tweet"],[data-testid="quoteTweet"],[role="link"][data-href*="/status/"],[data-pagelet^="FeedUnit_"],[data-pagelet^="TimelineFeedUnit"],[aria-label^="Comment by "],[aria-label^="Kommentar fra "],[data-testid="status"],.detailed-actualStatus,[data-testid^="feedItem-by-"],[data-testid^="postThreadItem-by-"],[data-e2e="comment-level-1"],[data-e2e="comment-level-2"]';
 +  const text = element => (element?.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 256);
++  // Keeps paragraph breaks. Collapsed "See more" toggles are not post text.
++  const longText = element => (element?.innerText || '').replace(/\r\n?/g, '\n')
++      .replace(/[^\S\n]+/g, ' ').replace(/ ?\n ?/g, '\n').replace(/\n{3,}/g, '\n\n').trim()
++      .replace(/\s*(?:…|\.\.\.)?\s*(?:See more|Show more|Read more|Se mer|Vis mer|Les mer|…\s?more)$/i, '').trim();
 +  // Current Meta layouts may omit article semantics. Derive narrow post roots
 +  // from observed timestamp links, without adding attributes to the webpage.
 +  const metaPosts = new Set();
@@ -1596,7 +1601,7 @@
 +    return 'html>' + parts.join('>');
 +  };
 +
-+  const siteDetails = (post, anchor, parsed) => {
++  const baseDetails = (post, anchor, parsed) => {
 +    if (!post) return {};
 +    if (parsed.platform === 'telegram') return telegramDetails(post, parsed);
 +    if (parsed.platform === 'mastodon') return mastodonDetails(post, parsed);
@@ -1797,6 +1802,151 @@
 +      }
 +    }
 +    return details;
++  };
++  // The post's own rendered body. Ownership excludes quoted and nested posts.
++  // Nothing is expanded, so a collapsed post yields only its visible start.
++  const postTextSelectors = {
++    twitter_x:'[data-testid="tweetText"]',
++    bluesky:'[data-testid="postText"],[data-word-wrap]',
++    mastodon:'.status__content',
++    truth_social:'.status__content,[data-testid="status-content"],[data-testid="markup"]',
++    telegram:'.tgme_widget_message_text',
++    linkedin:'[data-test-id="main-feed-activity-card__commentary"],.attributed-text-segment-list__content',
++    tiktok:'[data-e2e="video-desc"],[data-e2e="browse-video-desc"]',
++    facebook:'[data-ad-preview="message"],[data-ad-comet-preview="message"]',
++    instagram:'h1',
++    youtube:'ytd-watch-metadata h1',
++    youtube_comment:'#content-text',
++    reddit:'[slot="text-body"]',
++    reddit_comment:'[slot="comment"]'};
++  const postText = (post, platform) => {
++    const key = platform === 'youtube' && post.matches(youtubeCommentSelector) ? 'youtube_comment' :
++        platform === 'reddit' && post.matches('shreddit-comment') ? 'reddit_comment' : platform;
++    if (!postTextSelectors[key]) return '';
++    const nodes = [...post.querySelectorAll(postTextSelectors[key])].slice(0, 64).filter(node =>
++        postFor(node) === post && visible(node, false) && longText(node));
++    const roots = nodes.filter(node => !nodes.some(other => other !== node && other.contains(node)));
++    const body = roots.length === 1 ? longText(roots[0]) : '';
++    // A Reddit post's title is part of what its author published.
++    const title = key === 'reddit' ? (post.getAttribute('post-title') || '').replace(/\s+/g, ' ').trim() : '';
++    return [title, roots.length > 1 ? '' : body].filter(Boolean).join('\n\n');
++  };
++  const ownsIdentity = (post, parsed) =>
++      parsed.platform === 'telegram' ? !!telegramStamp(post, parsed) :
++      parsed.platform === 'mastodon' ? !!mastodonSources.get(parsed.url)?.observations.some(item => item.post === post) :
++      parsed.platform === 'linkedin' ? linkedinMatches(post, parsed.url) :
++      parsed.platform === 'youtube' ? youtubeMatches(post, parsed.url) :
++      parsed.platform === 'reddit' ? redditPostMatches(post, parsed.url) :
++      parsed.platform !== 'tiktok' || !post.matches('article[data-e2e="recommend-list-item-container"]') ||
++          tiktokPostMatches(post, parsed.url);
++  const siteDetails = (post, anchor, parsed) => {
++    const details = baseDetails(post, anchor, parsed);
++    if (!post || !ownsIdentity(post, parsed)) return details;
++    const value = [...postText(post, parsed.platform)];
++    if (value.length) {
++      details.post_text = value.slice(0, 1500).join('');
++      if (value.length > 1500) details.post_text_truncated = true;
++      details.post_text_evidence = 'post_body_text_in_post';
++    }
++    return details;
++  };
++  // Pages outside the dedicated platforms may describe their main item with
++  // schema.org JSON-LD or Open Graph. That describes the document, not a
++  // selected element, so it is only offered when no post link or competing
++  // post was found, and only while the metadata belongs to the current URL.
++  const structuredPage = () => {
++    const clean = (value, max = 256) => typeof value === 'string' ? value.replace(/\s+/g, ' ').trim().slice(0, max) : '';
++    const meta = name => clean(document.querySelector('meta[property="' + name + '"],meta[name="' + name + '"]')?.content);
++    const key = raw => {
++      try {
++        const u = new URL(raw, document.baseURI);
++        return ['http:','https:'].includes(u.protocol) ?
++            u.hostname.toLowerCase().replace(/^www\./, '') + u.pathname.replace(/\/+$/, '') : '';
++      } catch { return ''; }
++    };
++    const here = key(location.href);
++    // Single-page sites may keep metadata from the first document. Only trust
++    // a canonical URL differing from the address if this document loaded here.
++    const loaded = key(performance.getEntriesByType('navigation')[0]?.name || '') === here;
++    const declared = [document.querySelector('link[rel="canonical"]')?.href, meta('og:url')].filter(Boolean);
++    const current = raw => !!key(raw) && (key(raw) === here || (loaded && declared.some(d => key(d) === key(raw))));
++    const ranks = {SocialMediaPosting:3, DiscussionForumPosting:3, Comment:3, Article:2, NewsArticle:2,
++      ReportageNewsArticle:2, AnalysisNewsArticle:2, OpinionNewsArticle:2, BackgroundNewsArticle:2,
++      BlogPosting:2, LiveBlogPosting:2, VideoObject:1};
++    const rank = item => Math.max(0, ...[].concat(item['@type'] || []).map(t => ranks[t] || 0));
++    const items = [];
++    const visit = (value, depth) => {
++      if (!value || typeof value !== 'object' || depth > 2 || items.length >= 64) return;
++      if (Array.isArray(value)) { for (const v of value.slice(0, 64)) visit(v, depth + 1); return; }
++      if (rank(value)) items.push(value);
++      if (value['@graph']) visit(value['@graph'], depth + 1);
++    };
++    for (const script of [...document.querySelectorAll('script[type="application/ld+json"]')].slice(0, 32)) {
++      const raw = script.textContent || '';
++      if (raw.length > 1048576) continue;
++      try { visit(JSON.parse(raw), 0); } catch { /* Malformed site metadata. */ }
++    }
++    const itemUrl = item => [item.url, item.mainEntityOfPage, item.mainEntityOfPage?.['@id'],
++        item.mainEntityOfPage?.url, item['@id']].find(value => typeof value === 'string' && key(value)) || '';
++    const owned = items.filter(item => current(itemUrl(item)));
++    const pool = owned.length ? owned : loaded && items.length === 1 && !itemUrl(items[0]) ? items : [];
++    const best = Math.max(0, ...pool.map(rank));
++    const top = pool.filter(item => rank(item) === best);
++    const item = top.length === 1 ? top[0] : null;
++    if (!item && !loaded && !declared.some(current)) return null;
++    const social = !!item && rank(item) === 3;
++    let url;
++    try {
++      const u = new URL((item && itemUrl(item)) || declared.find(current) || location.href, document.baseURI);
++      u.hash = '';
++      if (!['http:','https:'].includes(u.protocol) || u.username || u.password || u.port ||
++          key(u.href).split('/')[0] !== here.split('/')[0] || u.href.length > 2048) return null;
++      url = u.href;
++    } catch { return null; }
++    const details = {url, evidence: item ? 'page_json_ld' : 'page_open_graph',
++      structured_type: clean(item ? [].concat(item['@type'])[0] : meta('og:type'), 64)};
++    const site = meta('og:site_name') || clean(item?.publisher?.name);
++    if (site) details.site_name = site;
++    const accounts = (item ? [].concat(item.author || item.creator || []) : []).slice(0, 8).map(person => {
++      if (typeof person === 'string') return clean(person) ? {account:clean(person), display_name:clean(person)} : null;
++      if (!person || typeof person !== 'object') return null;
++      const name = clean(person.name), alias = clean(person.alternateName, 64);
++      const handle = social && /^@?[\p{L}\p{N}_.-]{1,64}$/u.test(alias) ? (alias.startsWith('@') ? alias : '@' + alias) : '';
++      let profile = '';
++      try {
++        const u = typeof person.url === 'string' ? new URL(person.url, document.baseURI) : null;
++        if (u && ['http:','https:'].includes(u.protocol) && !u.username && !u.password && u.href.length <= 2048) profile = u.href;
++      } catch { /* No usable author profile. */ }
++      return handle || name ? {account:handle || name, display_name:name, ...(profile ? {profile_url:profile} : {})} : null;
++    }).filter(Boolean);
++    // Plain meta tags are not tied to a URL; use them only for this document.
++    const author = loaded ? meta('author') || meta('article:author') : '';
++    if (!accounts.length && author && !/^https?:/i.test(author)) accounts.push({account:author, display_name:author});
++    if (accounts.length) details.account_candidates = accounts;
++    if (accounts.length === 1 || (accounts.length && !social)) {
++      details.posting_account = accounts.map(a => a.account).join(', ').slice(0, 256);
++      details.account_display_name = accounts.map(a => a.display_name).filter(Boolean).join(', ').slice(0, 256);
++      if (accounts.length === 1 && accounts[0].profile_url) details.account_profile_url = accounts[0].profile_url;
++      details.account_evidence = item?.author || item?.creator ? 'page_json_ld_author' : 'page_meta_author';
++    }
++    const date = [item?.datePublished, item?.uploadDate, item?.dateCreated,
++        loaded ? meta('article:published_time') : '',
++        loaded ? clean(document.querySelector('meta[itemprop="datePublished"]')?.content) : ''].map(v => clean(v, 64)).find(v => /\d{4}/.test(v));
++    if (date) {
++      details.publication_date_text = date;
++      details.date_evidence = item && [item.datePublished, item.uploadDate, item.dateCreated].includes(date) ?
++          'page_json_ld_date' : 'page_meta_published_time';
++    }
++    if (social) {
++      const body = [item.articleBody, item.text, item.headline, item.description].find(v => typeof v === 'string' && v.trim());
++      if (body) {
++        const chars = [...body.replace(/\r\n?/g, '\n').replace(/[^\S\n]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim()];
++        details.post_text = chars.slice(0, 1500).join('');
++        if (chars.length > 1500) details.post_text_truncated = true;
++        details.post_text_evidence = 'page_json_ld_body';
++      }
++    }
++    return details.posting_account || details.publication_date_text || details.post_text ? details : null;
 +  };
 +  const candidates = new Map();
 +  // Retain DOM ownership only during inspection. Distinct nested post
@@ -2166,7 +2316,11 @@
 +    const post = overlapping.find(post => !overlapping.some(other => post !== other && post.contains(other)));
 +    if (platform && post) selectedDetails = siteDetails(post, null, {platform, url:location.href});
 +  }
-+  return {status, candidates: list, selected_post_details: selectedDetails, suggested_permalink: status === 'preferred' ? preferred.url : status === 'unique' ? list[0].url : '',
++  const dedicatedSite = location.hostname === 't.me' || !!document.querySelector('#mastodon') ||
++      /(?:^|\.)(?:x\.com|twitter\.com|facebook\.com|instagram\.com|threads\.com|threads\.net|linkedin\.com|youtube\.com|reddit\.com|tiktok\.com|bsky\.app|truthsocial\.com)$/.test(location.hostname);
++  const pageDetails = !truncated && !list.length && postCount <= 1 && !dedicatedSite ? structuredPage() : null;
++  return {status, candidates: list, selected_post_details: selectedDetails,
++    ...(pageDetails ? {page_details: pageDetails} : {}), suggested_permalink: status === 'preferred' ? preferred.url : status === 'unique' ? list[0].url : '',
 +    selection_reason: selectionReason,
 +    overlapping_post_count: postCount, method: 'selected_area_dom_sources_v2', coordinate_space: 'layout_viewport_css_pixels',
 +    selection_css: selected, unverified: true};
@@ -2361,6 +2515,36 @@
 +      domain, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-");
 +}
 +
++// Page-level suggestions describe the captured document on websites without
++// dedicated support. Keep only bounded strings, and a public HTTP(S) URL.
++std::optional<base::DictValue> ValidPageDetails(const base::DictValue& page) {
++  const auto* raw = page.FindString("url");
++  const GURL url(raw ? *raw : "");
++  if (!raw || raw->size() > 2048 || !url.is_valid() ||
++      !url.SchemeIsHTTPOrHTTPS() || url.has_username() || url.has_password() ||
++      url.has_port() || url.has_ref())
++    return std::nullopt;
++  base::DictValue result;
++  for (const char* key :
++       {"url", "evidence", "structured_type", "site_name", "posting_account",
++        "account_display_name", "account_profile_url", "account_evidence",
++        "publication_date_text", "date_evidence", "post_text",
++        "post_text_evidence"}) {
++    const auto* value = page.FindString(key);
++    if (value && !value->empty())
++      result.Set(key, std::string(base::TruncateUTF8ToByteSize(*value, 8192)));
++  }
++  if (const auto* profile = result.FindString("account_profile_url")) {
++    const GURL link(*profile);
++    if (!link.is_valid() || !link.SchemeIsHTTPOrHTTPS() ||
++        link.has_username() || link.has_password())
++      result.Remove("account_profile_url");
++  }
++  if (page.FindBool("post_text_truncated").value_or(false))
++    result.Set("post_text_truncated", true);
++  return result;
++}
++
 +}  // namespace
 +
 +std::u16string ScreenshotSourceScript(const gfx::Rect& region,
@@ -2505,8 +2689,16 @@
 +  }
 +  if (*status != "unique" && *status != "preferred")
 +    dict.Set("suggested_permalink", "");
++  if (const auto* page = dict.FindDict("page_details")) {
++    auto valid = candidates->empty() ? ValidPageDetails(*page) : std::nullopt;
++    if (valid)
++      dict.Set("page_details", std::move(*valid));
++    else
++      dict.Remove("page_details");
++  }
++  // Post text quotes raise the budget; eight long posts still fit.
 +  std::string json;
-+  if (!base::JSONWriter::Write(dict, &json) || json.size() > 65536)
++  if (!base::JSONWriter::Write(dict, &json) || json.size() > 196608)
 +    return unavailable();
 +  return std::move(dict);
 +}
@@ -2549,7 +2741,7 @@
 +#endif  // CHROME_BROWSER_IMAGE_EDITOR_SCREENSHOT_SOURCE_H_
 --- /dev/null
 +++ b/chrome/browser/image_editor/screenshot_source_unittest.cc
-@@ -0,0 +1,487 @@
+@@ -0,0 +1,540 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -2918,7 +3110,7 @@
 +
 +TEST(ScreenshotSourceTest, RejectsOversizedResults) {
 +  auto value = Sources("https://x.com/reporter/status/123");
-+  value.GetDict().Set("unexpected", std::string(65537, 'x'));
++  value.GetDict().Set("unexpected", std::string(196609, 'x'));
 +  EXPECT_EQ(*ValidateScreenshotSources(std::move(value)).FindString("status"),
 +            "unavailable");
 +  base::ListValue list;
@@ -3035,8 +3227,73 @@
 +      observation("https://x.com/reporter/status/123", "Another date")));
 +}
 +
++TEST(ScreenshotSourceTest, PageDetailsAreBoundedAndOnlyWithoutCandidates) {
++  const auto with_page = [](base::DictValue page, bool candidate) {
++    base::ListValue candidates;
++    if (candidate)
++      candidates.Append(
++          base::DictValue().Set("url", "https://x.com/reporter/status/123"));
++    return base::Value(base::DictValue()
++                           .Set("status", candidate ? "unique" : "none")
++                           .Set("suggested_permalink",
++                                candidate ? "https://x.com/reporter/status/123"
++                                          : "")
++                           .Set("candidates", std::move(candidates))
++                           .Set("page_details", std::move(page)));
++  };
++  auto result = ValidateScreenshotSources(with_page(
++      base::DictValue()
++          .Set("url", "https://news.example/2026/10/story")
++          .Set("site_name", "Example Times")
++          .Set("posting_account", "Kari Nordmann")
++          .Set("publication_date_text", "2026-10-31T09:00:00+01:00")
++          .Set("post_text", std::string(20000, 'a'))
++          .Set("post_text_truncated", true)
++          .Set("account_profile_url", "javascript:alert(1)")
++          .Set("unexpected", "dropped")
++          .Set("account_candidates", base::ListValue()),
++      false));
++  const auto* page = result.FindDict("page_details");
++  ASSERT_TRUE(page);
++  EXPECT_EQ(*page->FindString("site_name"), "Example Times");
++  EXPECT_EQ(*page->FindString("posting_account"), "Kari Nordmann");
++  EXPECT_EQ(page->FindString("post_text")->size(), 8192u);
++  EXPECT_TRUE(page->FindBool("post_text_truncated").value_or(false));
++  EXPECT_FALSE(page->FindString("account_profile_url"));
++  EXPECT_FALSE(page->FindString("unexpected"));
++  EXPECT_FALSE(page->Find("account_candidates"));
++  EXPECT_EQ(*result.FindString("status"), "none");
++
++  // A post found in the selection always takes precedence over the page.
++  result = ValidateScreenshotSources(with_page(
++      base::DictValue().Set("url", "https://news.example/story"), true));
++  EXPECT_EQ(*result.FindString("status"), "unique");
++  EXPECT_FALSE(result.FindDict("page_details"));
++  for (const char* url :
++       {"file:///tmp/story", "https://user:pw@news.example/story",
++        "https://news.example:8443/story", "https://news.example/story#top",
++        "not a url"}) {
++    result = ValidateScreenshotSources(
++        with_page(base::DictValue().Set("url", url), false));
++    EXPECT_EQ(*result.FindString("status"), "none") << url;
++    EXPECT_FALSE(result.FindDict("page_details")) << url;
++  }
++}
++
 +}  // namespace
 +}  // namespace image_editor
+--- a/chrome/browser/prefs/browser_prefs.cc
++++ b/chrome/browser/prefs/browser_prefs.cc
+@@ -1537,6 +1537,9 @@
+   registry->RegisterIntegerPref(
+       prefs::kHeliumCrashReportingMode,
+       static_cast<int>(helium::CrashReportingMode::kAsk));
++#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_CHROMEOS)
++  sharing_hub::RegisterLocalStatePrefs(registry);
++#endif
+   ChromeContentBrowserClient::RegisterLocalStatePrefs(registry);
+ #if BUILDFLAG(CHROME_FOR_TESTING)
+   chrome_for_testing::RegisterPrefs(registry);
 --- a/chrome/browser/renderer_context_menu/BUILD.gn
 +++ b/chrome/browser/renderer_context_menu/BUILD.gn
 @@ -162,6 +162,7 @@ source_set("impl") {
@@ -3134,15 +3391,19 @@
        // Give the PDF viewer a chance to handle the save, otherwise have the
 --- a/chrome/browser/sharing_hub/sharing_hub_features.cc
 +++ b/chrome/browser/sharing_hub/sharing_hub_features.cc
-@@ -4,6 +4,7 @@
+@@ -4,7 +4,11 @@
  
  #include "chrome/browser/sharing_hub/sharing_hub_features.h"
  
++#include <algorithm>
++
 +#include "base/files/file_path.h"
  #include "build/build_config.h"
++#include "chrome/browser/browser_process.h"
  #include "chrome/browser/profiles/profile.h"
  #include "chrome/common/pref_names.h"
-@@ -71,6 +72,13 @@ BASE_FEATURE(kDesktopScreenshots, base::
+ #include "components/prefs/pref_registry_simple.h"
+@@ -71,6 +75,41 @@
  #if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_CHROMEOS)
  void RegisterProfilePrefs(PrefRegistrySimple* registry) {
    registry->RegisterBooleanPref(prefs::kDesktopSharingHubEnabled, true);
@@ -3153,12 +3414,48 @@
 +  registry->RegisterFilePathPref(kScreenshotDirectoryPref, base::FilePath());
 +  registry->RegisterBooleanPref(kScreenshotPreserveHDRPref, true);
 +  registry->RegisterIntegerPref(kScreenshotCopyrightLanguagePref, 0);
++}
++
++void RegisterLocalStatePrefs(PrefRegistrySimple* registry) {
++  registry->RegisterIntegerPref(kScreenshotTextLanguageLocalStatePref, 0);
++}
++
++int GetScreenshotTextLanguage(const PrefService* profile_prefs) {
++  const PrefService* local_state = g_browser_process->local_state();
++  // Earlier versions stored the choice per profile. Keep it until the first
++  // browser-wide choice, so an existing default is not lost on upgrade.
++  if (local_state && !local_state->HasPrefPath(
++                         kScreenshotTextLanguageLocalStatePref) &&
++      profile_prefs &&
++      profile_prefs->HasPrefPath(kScreenshotCopyrightLanguagePref)) {
++    return std::clamp(profile_prefs->GetInteger(kScreenshotCopyrightLanguagePref),
++                      0, 1);
++  }
++  return local_state ? std::clamp(local_state->GetInteger(
++                                      kScreenshotTextLanguageLocalStatePref),
++                                  0, 1)
++                     : 0;
++}
++
++void SetScreenshotTextLanguage(int language) {
++  if (PrefService* local_state = g_browser_process->local_state()) {
++    local_state->SetInteger(kScreenshotTextLanguageLocalStatePref,
++                            std::clamp(language, 0, 1));
++  }
  }
  #endif
  
 --- a/chrome/browser/sharing_hub/sharing_hub_features.h
 +++ b/chrome/browser/sharing_hub/sharing_hub_features.h
-@@ -42,6 +42,17 @@ bool SharingIsDisabledByPolicy(content::
+@@ -9,6 +9,7 @@
+ #include "build/build_config.h"
+ 
+ class PrefRegistrySimple;
++class PrefService;
+ 
+ namespace content {
+ class BrowserContext;
+@@ -42,7 +43,26 @@
  BASE_DECLARE_FEATURE(kDesktopScreenshots);
  
  #if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_CHROMEOS)
@@ -3170,12 +3467,21 @@
 +inline constexpr char kScreenshotPreserveHDRPref[] =
 +    "helium.screenshot_preserve_hdr";
 +
++// Superseded by the browser-wide preference below; read once for migration.
 +inline constexpr char kScreenshotCopyrightLanguagePref[] =
 +    "helium.screenshot_copyright_language";
++// Screenshot metadata text language, shared by every profile and by page
++// change monitor exports. 0 = English, 1 = Norwegian.
++inline constexpr char kScreenshotTextLanguageLocalStatePref[] =
++    "helium.screenshot_text_language";
 +
  void RegisterProfilePrefs(PrefRegistrySimple* registry);
++void RegisterLocalStatePrefs(PrefRegistrySimple* registry);
++int GetScreenshotTextLanguage(const PrefService* profile_prefs);
++void SetScreenshotTextLanguage(int language);
  #endif
  
+ }  // namespace sharing_hub
 --- a/chrome/browser/ui/accelerator_table.cc
 +++ b/chrome/browser/ui/accelerator_table.cc
 @@ -81,6 +81,8 @@ const AcceleratorMapping kAcceleratorMap
@@ -3467,15 +3773,16 @@
 +}
 --- a/chrome/browser/ui/views/sharing_hub/screenshot/screenshot_captured_bubble.cc
 +++ b/chrome/browser/ui/views/sharing_hub/screenshot/screenshot_captured_bubble.cc
-@@ -3,242 +3,836 @@
+@@ -3,242 +3,858 @@
  // found in the LICENSE file.
  
  #include "chrome/browser/ui/views/sharing_hub/screenshot/screenshot_captured_bubble.h"
-+#include "chrome/browser/image_editor/screenshot_color.h"
- 
+-
 -#include <memory>
 -#include <utility>
 -#include <vector>
++#include "chrome/browser/image_editor/screenshot_color.h"
++
 +#include <algorithm>
  
  #include "base/containers/span.h"
@@ -3543,9 +3850,10 @@
 -#include "ui/views/layout/table_layout_view.h"
 -#include "ui/views/metadata/view_factory.h"
 -#include "ui/views/view.h"
+-
 +#include "ui/views/style/typography.h"
 +#include "url/origin.h"
- 
++
 +namespace sharing_hub {
  namespace {
  
@@ -3560,8 +3868,7 @@
 +  value.Set("height", rect.height());
 +  return value;
 +}
- 
--}  // namespace
++
 +views::Label* AddLabel(views::View* parent,
 +                       const std::u16string& text,
 +                       int width = 400) {
@@ -3571,8 +3878,7 @@
 +  label->SetMaximumWidth(width);
 +  return label;
 +}
- 
--namespace sharing_hub {
++
 +views::Textfield* AddField(views::View* parent,
 +                           int label_id,
 +                           bool multiline,
@@ -3586,8 +3892,10 @@
 +  field->SetPreferredSize(gfx::Size(width, multiline ? 76 : 32));
 +  return parent->AddChildView(std::move(field));
 +}
-+
-+}  // namespace
+ 
+ }  // namespace
+-
+-namespace sharing_hub {
  
  ScreenshotCapturedBubble::ScreenshotCapturedBubble(
      views::BubbleAnchor anchor,
@@ -3606,23 +3914,13 @@
 +      web_contents_(web_contents->GetWeakPtr()) {
    SetButtons(static_cast<int>(ui::mojom::DialogButton::kNone));
 -  SetTitle(IDS_BROWSER_SHARING_SCREENSHOT_POST_CAPTURE_TITLE);
-+  SetTitle(IDS_NEO_CAPTURE_TITLE);
-+  set_close_on_deactivate(false);
-+  set_fixed_width(std::clamp(capture_.screen_bounds.width() - 32, 320, 940));
- }
- 
+-}
+-
 -ScreenshotCapturedBubble::~ScreenshotCapturedBubble() = default;
-+ScreenshotCapturedBubble::~ScreenshotCapturedBubble() {
-+  if (folder_dialog_)
-+    folder_dialog_->ListenerDestroyed();
-+}
- 
+-
 -void ScreenshotCapturedBubble::OnThemeChanged() {
 -  LocationBarBubbleDelegateView::OnThemeChanged();
-+views::View* ScreenshotCapturedBubble::GetInitiallyFocusedView() {
-+  return permalink_;
-+}
- 
+-
 -  const int border_radius = ChromeLayoutProvider::Get()->GetCornerRadiusMetric(
 -      views::Emphasis::kHigh);
 -  const auto* const color_provider = GetColorProvider();
@@ -3632,13 +3930,114 @@
 -  image_view_->SetBackground(views::CreateRoundedRectBackground(
 -      color_provider->GetColor(kColorScreenshotCapturedImageBackground),
 -      border_radius, 2));
-+bool ScreenshotCapturedBubble::ShouldShowCloseButton() const {
-+  return true;
- }
- 
+-}
+-
 -void ScreenshotCapturedBubble::Show() {
 -  ShowForReason(USER_GESTURE);
-+void ScreenshotCapturedBubble::Init() {
++  SetTitle(IDS_NEO_CAPTURE_TITLE);
++  set_close_on_deactivate(false);
++  set_fixed_width(std::clamp(capture_.screen_bounds.width() - 32, 320, 940));
++}
++
++ScreenshotCapturedBubble::~ScreenshotCapturedBubble() {
++  if (folder_dialog_)
++    folder_dialog_->ListenerDestroyed();
+ }
+ 
+ views::View* ScreenshotCapturedBubble::GetInitiallyFocusedView() {
+-  return download_button_;
++  return permalink_;
+ }
+ 
+ bool ScreenshotCapturedBubble::ShouldShowCloseButton() const {
+   return true;
+ }
+ 
+-void ScreenshotCapturedBubble::WindowClosing() {}
+-
+ void ScreenshotCapturedBubble::Init() {
+-  auto* layout_provider = ChromeLayoutProvider::Get();
+-
+-  // Requesting TEXT for trailing prevents extra padding at bottom of dialog.
+-  gfx::Insets insets = layout_provider->GetDialogInsetsForContentType(
+-      views::DialogContentType::kControl, views::DialogContentType::kText);
+-  const int border_radius =
+-      layout_provider->GetCornerRadiusMetric(views::Emphasis::kHigh);
+-
+-  int width_padding =
+-      (kImageWidthPx + border_radius - GetImageSize().width()) / 2;
+-
+-  using Alignment = views::ImageView::Alignment;
+-  auto builder =
+-      views::Builder<ScreenshotCapturedBubble>(this)
+-          .set_margins(insets)
+-          .SetLayoutManager(std::make_unique<views::BoxLayout>(
+-              views::BoxLayout::Orientation::kVertical, gfx::Insets(),
+-              layout_provider->GetDistanceMetric(
+-                  DISTANCE_UNRELATED_CONTROL_VERTICAL_LARGE)))
+-          .AddChild(
+-              views::Builder<views::TableLayoutView>()
+-                  .AddPaddingColumn(views::TableLayout::kFixedSize,
+-                                    width_padding)
+-                  .AddColumn(views::LayoutAlignment::kCenter,
+-                             views::LayoutAlignment::kCenter, 1.0,
+-                             views::TableLayout::ColumnSize::kUsePreferred, 0,
+-                             0)
+-                  .AddPaddingColumn(views::TableLayout::kFixedSize,
+-                                    width_padding)
+-                  .AddRows(1, views::TableLayout::kFixedSize, 0)
+-                  .AddChild(views::Builder<views::ImageView>()
+-                                .SetHorizontalAlignment(Alignment::kCenter)
+-                                .SetVerticalAlignment(Alignment::kCenter)
+-                                .SetImageSize(GetImageSize())
+-                                .SetPreferredSize(
+-                                    GetImageSize() +
+-                                    gfx::Size(border_radius, border_radius))
+-                                .SetImage(ui::ImageModel::FromImage(image_))
+-                                .SetVisible(true)
+-                                .CopyAddressTo(&image_view_)));
+-
+-  auto download_button =
+-      views::Builder<views::MdTextButton>()
+-          .SetCallback(base::BindRepeating(
+-              &ScreenshotCapturedBubble::DownloadButtonPressed,
+-              weak_factory_.GetWeakPtr()))
+-          .SetText(l10n_util::GetStringUTF16(
+-              IDS_BROWSER_SHARING_SCREENSHOT_DIALOG_DOWNLOAD_BUTTON_LABEL))
+-          .SetStyle(ui::ButtonStyle::kProminent)
+-          .Build();
+-
+-  auto download_row = views::Builder<views::TableLayoutView>();
+-
+-  // Column for download button
+-  download_row
+-      .AddColumn(views::LayoutAlignment::kEnd, views::LayoutAlignment::kCenter,
+-                 1.0, views::TableLayout::ColumnSize::kUsePreferred, 0, 0)
+-      .AddRows(1, views::TableLayout::kFixedSize, 0);
+-  download_row.AddChild(
+-      views::Builder<views::MdTextButton>(std::move(download_button))
+-          .CopyAddressTo(&download_button_));
+-
+-  std::move(builder).AddChild(std::move(download_row)).BuildChildren();
+-}
+-
+-/*static*/
+-const std::u16string ScreenshotCapturedBubble::GetFilenameForURL(
+-    const GURL& url) {
+-  if (!url.has_host() || url.HostIsIPAddress()) {
+-    return u"helium_screenshot.png";
+-  }
+-
+-  return base::ASCIIToUTF16(
+-      base::StrCat({"helium_screenshot_", url.GetHost(), ".png"}));
+-}
+-
+-void ScreenshotCapturedBubble::DownloadButtonPressed() {
+-  // Returns closest scaling to parameter (1.0).
+-  const SkBitmap& bitmap =
+-      image_view_->GetImage().GetRepresentation(1.0f).GetBitmap();
+-  const GURL data_url = GURL(webui::GetBitmapDataUrl(bitmap));
+-
 +  set_margins(gfx::Insets(20));
 +  SetLayoutManager(std::make_unique<views::BoxLayout>(
 +      views::BoxLayout::Orientation::kVertical, gfx::Insets(), 12));
@@ -3680,6 +4079,13 @@
 +    if (capture_.suggested_permalink.is_valid()) {
 +      selected_suggestion_ = capture_.suggested_permalink.spec();
 +      permalink_->SetText(base::UTF8ToUTF16(selected_suggestion_));
++    } else if (const auto* page = sources->FindDict("page_details");
++               page && status && *status == "none") {
++      // The page describes itself (schema.org / Open Graph); no post matched.
++      if (const auto* url = page->FindString("url"); url && GURL(*url).is_valid()) {
++        selected_suggestion_ = page_suggestion_ = *url;
++        permalink_->SetText(base::UTF8ToUTF16(selected_suggestion_));
++      }
 +    }
 +    if (status && (*status == "ambiguous" || *status == "incomplete" ||
 +                   *status == "preferred")) {
@@ -3779,7 +4185,7 @@
 +  copyright_language_->GetViewAccessibility().SetName(
 +      l10n_util::GetStringUTF16(IDS_NEO_CAPTURE_COPYRIGHT_LANGUAGE));
 +  copyright_language_->SetSelectedIndex(
-+      std::clamp(prefs->GetInteger(kScreenshotCopyrightLanguagePref), 0, 1));
++      static_cast<size_t>(GetScreenshotTextLanguage(prefs)));
 +  copyright_language_->SetCallback(
 +      base::BindRepeating(&ScreenshotCapturedBubble::CopyrightLanguageChanged,
 +                          weak_factory_.GetWeakPtr()));
@@ -3905,10 +4311,8 @@
 +                          weak_factory_.GetWeakPtr()),
 +      l10n_util::GetStringUTF16(IDS_NEO_CAPTURE_SAVE)));
 +  save_->SetStyle(ui::ButtonStyle::kProminent);
- }
- 
--views::View* ScreenshotCapturedBubble::GetInitiallyFocusedView() {
--  return download_button_;
++}
++
 +void ScreenshotCapturedBubble::UseSuggestedPermalink() {
 +  const auto index = candidates_->GetSelectedIndex().value_or(0);
 +  if (index > 0 && index <= suggested_permalinks_.size()) {
@@ -3917,10 +4321,8 @@
 +    AutofillPostDetails(selected_suggestion_);
 +    SizeToContents();
 +  }
- }
- 
--bool ScreenshotCapturedBubble::ShouldShowCloseButton() const {
--  return true;
++}
++
 +void ScreenshotCapturedBubble::ContentsChanged(
 +    views::Textfield* sender,
 +    const std::u16string& new_contents) {
@@ -3928,21 +4330,25 @@
 +    account_edited_ = true;
 +  if (sender == published_)
 +    publication_date_edited_ = true;
++  if (sender == post_text_)
++    post_text_edited_ = true;
 +  UpdateMetadataPreview();
 +  const auto label = sender == captured_by_ ? u"Captured by (user-provided)"
 +                     : sender == permalink_ ? u"Post permalink (reviewed)"
 +                     : sender == account_ ? u"Posting account (reviewed)"
 +                     : sender == published_
 +                         ? u"Publication date / time as entered"
-+                     : sender == post_text_ ? u"Post text (user-provided)"
++                     : sender == post_text_ ? u""
 +                     : sender == alt_text_  ? u"Alt text (user-provided)"
 +                                            : u"Notes (user-provided)";
-+  const auto position = description_preview_->GetText().find(label);
++  // The post text is quoted in the summary at the top of the description.
++  const auto position = sender == post_text_
++                            ? 0
++                            : description_preview_->GetText().find(label);
 +  if (position != std::u16string_view::npos)
 +    description_preview_->Scroll({position});
- }
- 
--void ScreenshotCapturedBubble::WindowClosing() {}
++}
++
 +void ScreenshotCapturedBubble::AutofillPostDetails(
 +    const std::string& permalink) {
 +  auto sources = base::JSONReader::ReadDict(capture_.source_suggestions_json,
@@ -3951,6 +4357,10 @@
 +  if (sources) {
 +    if (permalink.empty())
 +      details = sources->FindDict("selected_post_details");
++    const auto* page = sources->FindDict("page_details");
++    const auto* page_url = page ? page->FindString("url") : nullptr;
++    if (!permalink.empty() && page_url && *page_url == permalink)
++      details = page;
 +    if (const auto* candidates = sources->FindList("candidates")) {
 +      for (const auto& candidate : *candidates) {
 +        const auto* url = candidate.GetDict().FindString("url");
@@ -3975,19 +4385,22 @@
 +    suggested_publication_date_ = field("publication_date_text");
 +    published_->SetText(base::UTF8ToUTF16(suggested_publication_date_));
 +  }
++  if (!post_text_edited_) {
++    suggested_post_text_ = field("post_text");
++    post_text_->SetText(base::UTF8ToUTF16(suggested_post_text_));
++  }
 +  const bool suggested =
 +      !selected_suggestion_.empty() ||
 +      (!account_edited_ && !suggested_account_.empty()) ||
-+      (!publication_date_edited_ && !suggested_publication_date_.empty());
++      (!publication_date_edited_ && !suggested_publication_date_.empty()) ||
++      (!post_text_edited_ && !suggested_post_text_.empty());
 +  details_status_->SetText(
 +      suggested ? l10n_util::GetStringUTF16(IDS_NEO_CAPTURE_REVIEW_NOTICE)
 +                : u"");
 +  details_status_->SetVisible(suggested);
 +  UpdateMetadataPreview();
 +}
- 
--void ScreenshotCapturedBubble::Init() {
--  auto* layout_provider = ChromeLayoutProvider::Get();
++
 +void ScreenshotCapturedBubble::CopyImage() {
 +  ui::ScopedClipboardWriter(ui::ClipboardBuffer::kCopyPaste)
 +      .WriteImage(*capture_.image.ToSkBitmap());
@@ -3995,86 +4408,7 @@
 +  status_->SetText(l10n_util::GetStringUTF16(IDS_NEO_CAPTURE_COPIED));
 +  SizeToContents();
 +}
- 
--  // Requesting TEXT for trailing prevents extra padding at bottom of dialog.
--  gfx::Insets insets = layout_provider->GetDialogInsetsForContentType(
--      views::DialogContentType::kControl, views::DialogContentType::kText);
--  const int border_radius =
--      layout_provider->GetCornerRadiusMetric(views::Emphasis::kHigh);
--
--  int width_padding =
--      (kImageWidthPx + border_radius - GetImageSize().width()) / 2;
--
--  using Alignment = views::ImageView::Alignment;
--  auto builder =
--      views::Builder<ScreenshotCapturedBubble>(this)
--          .set_margins(insets)
--          .SetLayoutManager(std::make_unique<views::BoxLayout>(
--              views::BoxLayout::Orientation::kVertical, gfx::Insets(),
--              layout_provider->GetDistanceMetric(
--                  DISTANCE_UNRELATED_CONTROL_VERTICAL_LARGE)))
--          .AddChild(
--              views::Builder<views::TableLayoutView>()
--                  .AddPaddingColumn(views::TableLayout::kFixedSize,
--                                    width_padding)
--                  .AddColumn(views::LayoutAlignment::kCenter,
--                             views::LayoutAlignment::kCenter, 1.0,
--                             views::TableLayout::ColumnSize::kUsePreferred, 0,
--                             0)
--                  .AddPaddingColumn(views::TableLayout::kFixedSize,
--                                    width_padding)
--                  .AddRows(1, views::TableLayout::kFixedSize, 0)
--                  .AddChild(views::Builder<views::ImageView>()
--                                .SetHorizontalAlignment(Alignment::kCenter)
--                                .SetVerticalAlignment(Alignment::kCenter)
--                                .SetImageSize(GetImageSize())
--                                .SetPreferredSize(
--                                    GetImageSize() +
--                                    gfx::Size(border_radius, border_radius))
--                                .SetImage(ui::ImageModel::FromImage(image_))
--                                .SetVisible(true)
--                                .CopyAddressTo(&image_view_)));
--
--  auto download_button =
--      views::Builder<views::MdTextButton>()
--          .SetCallback(base::BindRepeating(
--              &ScreenshotCapturedBubble::DownloadButtonPressed,
--              weak_factory_.GetWeakPtr()))
--          .SetText(l10n_util::GetStringUTF16(
--              IDS_BROWSER_SHARING_SCREENSHOT_DIALOG_DOWNLOAD_BUTTON_LABEL))
--          .SetStyle(ui::ButtonStyle::kProminent)
--          .Build();
--
--  auto download_row = views::Builder<views::TableLayoutView>();
--
--  // Column for download button
--  download_row
--      .AddColumn(views::LayoutAlignment::kEnd, views::LayoutAlignment::kCenter,
--                 1.0, views::TableLayout::ColumnSize::kUsePreferred, 0, 0)
--      .AddRows(1, views::TableLayout::kFixedSize, 0);
--  download_row.AddChild(
--      views::Builder<views::MdTextButton>(std::move(download_button))
--          .CopyAddressTo(&download_button_));
--
--  std::move(builder).AddChild(std::move(download_row)).BuildChildren();
--}
--
--/*static*/
--const std::u16string ScreenshotCapturedBubble::GetFilenameForURL(
--    const GURL& url) {
--  if (!url.has_host() || url.HostIsIPAddress()) {
--    return u"helium_screenshot.png";
--  }
--
--  return base::ASCIIToUTF16(
--      base::StrCat({"helium_screenshot_", url.GetHost(), ".png"}));
--}
--
--void ScreenshotCapturedBubble::DownloadButtonPressed() {
--  // Returns closest scaling to parameter (1.0).
--  const SkBitmap& bitmap =
--      image_view_->GetImage().GetRepresentation(1.0f).GetBitmap();
--  const GURL data_url = GURL(webui::GetBitmapDataUrl(bitmap));
++
 +void ScreenshotCapturedBubble::PreserveHDRChanged() {
 +  if (web_contents_)
 +    Profile::FromBrowserContext(web_contents_->GetBrowserContext())
@@ -4100,11 +4434,8 @@
 +}
 +
 +void ScreenshotCapturedBubble::CopyrightLanguageChanged() {
-+  if (web_contents_)
-+    Profile::FromBrowserContext(web_contents_->GetBrowserContext())
-+        ->GetPrefs()
-+        ->SetInteger(kScreenshotCopyrightLanguagePref,
-+                     copyright_language_->GetSelectedIndex().value_or(0));
++  SetScreenshotTextLanguage(
++      static_cast<int>(copyright_language_->GetSelectedIndex().value_or(0)));
 +  UpdateMetadataPreview();
 +  SizeToContents();
 +}
@@ -4151,7 +4482,7 @@
 +        relevant ? ui::kColorSysPrimary : ui::kColorLabelForeground);
 +  }
 +}
- 
++
 +void ScreenshotCapturedBubble::OnViewBlurred(views::View* view) {
 +  for (const auto& heading : metadata_headings_) {
 +    if (heading)
@@ -4215,7 +4546,9 @@
 +  user.Set("post_permalink_origin",
 +           permalink.empty() ? "not_supplied"
 +           : !selected_suggestion_.empty() && permalink == selected_suggestion_
-+               ? "selected_area_suggestion_reviewed"
++               ? (permalink == page_suggestion_
++                      ? "page_metadata_suggestion_reviewed"
++                      : "selected_area_suggestion_reviewed")
 +               : "user_entered");
 +  user.Set("captured_by", base::UTF16ToUTF8(captured_by_->GetText()));
 +  user.Set("captured_by_origin", captured_by_->GetText().empty()
@@ -4238,7 +4571,10 @@
 +  user.Set("notes", base::UTF16ToUTF8(notes_->GetText()));
 +  user.Set("post_text", base::UTF16ToUTF8(post_text_->GetText()));
 +  user.Set("alt_text", base::UTF16ToUTF8(alt_text_->GetText()));
-+  for (const char* field : {"post_text", "alt_text", "notes"}) {
++  user.Set("post_text_origin",
++           origin(base::UTF16ToUTF8(post_text_->GetText()),
++                  suggested_post_text_, post_text_edited_));
++  for (const char* field : {"alt_text", "notes"}) {
 +    const auto* value = user.FindString(field);
 +    user.Set(std::string(field) + "_origin",
 +             value && !value->empty() ? "user_entered" : "not_supplied");
@@ -4311,8 +4647,17 @@
 +    status_->SetVisible(true);
 +    status_->SetText(l10n_util::GetStringUTF16(IDS_NEO_CAPTURE_SOURCE_GONE));
 +    SizeToContents();
-+    return;
-+  }
+     return;
+   }
+-
+-  BrowserWindowInterface* browser =
+-      GlobalBrowserCollection::GetInstance()->FindBrowserWithTab(
+-          web_contents_.get());
+-  content::DownloadManager* download_manager =
+-      browser->GetProfile()->GetDownloadManager();
+-  // TODO(crbug.com/40753957): Update the annotation's |setting| and
+-  // |chrome_policy| fields once the Sharing Hub is landed.
+-  net::NetworkTrafficAnnotationTag traffic_annotation =
 +  auto automatic = AutomaticFields();
 +  auto user = UserFields();
 +  auto format =
@@ -4329,14 +4674,13 @@
 +      prefs->GetFilePath(kScreenshotDirectoryPref).empty()) {
 +    save_after_folder_selection_ = true;
 +    ChooseScreenshotFolder();
-     return;
-   }
++    return;
++  }
 +  const bool preserve_hdr = preserve_hdr_->GetChecked();
 +  prefs->SetBoolean(kScreenshotPreserveHDRPref, preserve_hdr);
 +  const auto language = static_cast<ScreenshotTextLanguage>(
 +      copyright_language_->GetSelectedIndex().value_or(0));
-+  prefs->SetInteger(kScreenshotCopyrightLanguagePref,
-+                    static_cast<int>(language));
++  SetScreenshotTextLanguage(static_cast<int>(language));
 +  save_directory_ = quick_save_->GetChecked()
 +                        ? prefs->GetFilePath(kScreenshotDirectoryPref)
 +                        : base::FilePath();
@@ -4355,15 +4699,7 @@
 +      base::BindOnce(&ScreenshotCapturedBubble::ExportReady,
 +                     weak_factory_.GetWeakPtr()));
 +}
- 
--  BrowserWindowInterface* browser =
--      GlobalBrowserCollection::GetInstance()->FindBrowserWithTab(
--          web_contents_.get());
--  content::DownloadManager* download_manager =
--      browser->GetProfile()->GetDownloadManager();
--  // TODO(crbug.com/40753957): Update the annotation's |setting| and
--  // |chrome_policy| fields once the Sharing Hub is landed.
--  net::NetworkTrafficAnnotationTag traffic_annotation =
++
 +void ScreenshotCapturedBubble::ExportReady(ScreenshotExport result) {
 +  if (result.bytes.empty() || !web_contents_) {
 +    save_->SetEnabled(true);
@@ -4487,7 +4823,7 @@
  BEGIN_METADATA(ScreenshotCapturedBubble)
 --- a/chrome/browser/ui/views/sharing_hub/screenshot/screenshot_captured_bubble.h
 +++ b/chrome/browser/ui/views/sharing_hub/screenshot/screenshot_captured_bubble.h
-@@ -5,75 +5,126 @@
+@@ -5,75 +5,130 @@
  #ifndef CHROME_BROWSER_UI_VIEWS_SHARING_HUB_SCREENSHOT_SCREENSHOT_CAPTURED_BUBBLE_H_
  #define CHROME_BROWSER_UI_VIEWS_SHARING_HUB_SCREENSHOT_SCREENSHOT_CAPTURED_BUBBLE_H_
  
@@ -4550,29 +4886,10 @@
    ~ScreenshotCapturedBubble() override;
  
 -  void OnThemeChanged() override;
--
--  void Show();
--
-  private:
--  // LocationBarBubbleDelegateView:
--  View* GetInitiallyFocusedView() override;
++ private:
 +  views::View* GetInitiallyFocusedView() override;
-   bool ShouldShowCloseButton() const override;
--  void WindowClosing() override;
--
--  static const std::u16string GetFilenameForURL(const GURL& url);
--
--  // views::BubbleDialogDelegateView:
-   void Init() override;
--
--  void DownloadButtonPressed();
--
--  gfx::Size GetImageSize();
--
--  // Makes a copy of the image to use in button callbacks without worry of
--  // dereferencing
--  const gfx::Image image_;
--
++  bool ShouldShowCloseButton() const override;
++  void Init() override;
 +  void CopyImage();
 +  void UseSuggestedPermalink();
 +  void AutofillPostDetails(const std::string& permalink);
@@ -4597,7 +4914,28 @@
 +  void BlobReady(std::unique_ptr<std::string> archive,
 +                 std::string extension,
 +                 std::unique_ptr<content::BlobHandle> blob);
-+
+ 
+-  void Show();
+-
+- private:
+-  // LocationBarBubbleDelegateView:
+-  View* GetInitiallyFocusedView() override;
+-  bool ShouldShowCloseButton() const override;
+-  void WindowClosing() override;
+-
+-  static const std::u16string GetFilenameForURL(const GURL& url);
+-
+-  // views::BubbleDialogDelegateView:
+-  void Init() override;
+-
+-  void DownloadButtonPressed();
+-
+-  gfx::Size GetImageSize();
+-
+-  // Makes a copy of the image to use in button callbacks without worry of
+-  // dereferencing
+-  const gfx::Image image_;
+-
 +  // Source details are frozen with the snapshot, never read from a later page.
 +  const image_editor::ScreenshotCaptureResult capture_;
 +  const image_editor::ScreenshotColorInfo color_info_;
@@ -4614,8 +4952,12 @@
 +  std::string selected_suggestion_;
 +  std::string suggested_account_;
 +  std::string suggested_publication_date_;
++  std::string suggested_post_text_;
++  // The page's own metadata URL, when no post in the selection was linked.
++  std::string page_suggestion_;
 +  bool account_edited_ = false;
 +  bool publication_date_edited_ = false;
++  bool post_text_edited_ = false;
 +  raw_ptr<views::Label> details_status_ = nullptr;
 +  raw_ptr<views::Combobox> candidates_ = nullptr;
 +  raw_ptr<views::Combobox> format_ = nullptr;
@@ -4653,7 +4995,7 @@
  
 --- /dev/null
 +++ b/chrome/browser/ui/views/sharing_hub/screenshot/screenshot_documentation.cc
-@@ -0,0 +1,569 @@
+@@ -0,0 +1,869 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -4675,6 +5017,8 @@
 +#include "base/i18n/time_formatting.h"
 +#include "base/json/json_writer.h"
 +#include "base/strings/string_number_conversions.h"
++#include "base/strings/string_split.h"
++#include "base/strings/stringprintf.h"
 +#include "base/strings/string_util.h"
 +#include "base/strings/utf_string_conversions.h"
 +#include "chrome/browser/image_editor/screenshot_color.h"
@@ -4699,7 +5043,10 @@
 +    "the webpage or entered by the user; each field's origin is recorded. "
 +    "Site-reported text, timestamps and account links are unverified claims. "
 +    "Relative dates and missing timezones are not converted to exact times. "
-+    "Post text, alt text and notes are user-provided. Suggestions are "
++    "Post text may be suggested from the webpage and is quoted in the "
++    "description, possibly shortened. Alt text and notes are user-provided. "
++    "Displayed dates are normalized only when the site showed a year and time; "
++    "exact times use the computer's time zone. Suggestions are "
 +    "heuristic "
 +    "and unverified. "
 +    "Missing "
@@ -4951,67 +5298,76 @@
 +         (title.empty() ? "" : "-" + title);
 +}
 +
-+std::string ScreenshotCopyrightNotice(const base::DictValue& automatic,
-+                                      const base::DictValue& user_provided,
-+                                      ScreenshotTextLanguage language) {
-+  const auto* account_value = user_provided.FindString("posting_account");
-+  const std::string account = account_value
-+                                  ? std::string(base::TrimWhitespaceASCII(
-+                                        *account_value, base::TRIM_ALL))
-+                                  : std::string();
-+  const std::string label = language == ScreenshotTextLanguage::kNorwegian
-+                                ? "Skjermbilde"
-+                                : "Screenshot";
-+  if (account.empty()) {
-+    const auto* value = automatic.FindString("page_url");
-+    const GURL url(value ? *value : "");
-+    if (!url.is_valid() || !url.SchemeIsHTTPOrHTTPS() || url.has_username() ||
-+        url.has_password() || url.host().empty())
-+      return {};
-+    std::string host(url.host());
-+    if (base::StartsWith(host, "www."))
-+      host.erase(0, 4);
-+    return label + " / " + host;
-+  }
-+  const auto platform = [](const std::string* value) -> std::string {
-+    if (!value)
-+      return {};
-+    const GURL url(*value);
-+    if (!url.is_valid() || !url.SchemeIsHTTPOrHTTPS() || url.has_username() ||
-+        url.has_password())
-+      return {};
-+    if (url.DomainIs("instagram.com"))
-+      return "Instagram";
-+    if (url.DomainIs("twitter.com") || url.DomainIs("x.com"))
-+      return "Twitter";
-+    if (url.DomainIs("facebook.com"))
-+      return "Facebook";
-+    if (url.DomainIs("threads.com") || url.DomainIs("threads.net"))
-+      return "Threads";
-+    if (url.host() == "t.me")
-+      return "Telegram";
-+    if (url.DomainIs("linkedin.com"))
-+      return "LinkedIn";
-+    if (url.DomainIs("youtube.com") || url.DomainIs("youtu.be"))
-+      return "YouTube";
-+    if (url.DomainIs("reddit.com"))
-+      return "Reddit";
-+    if (url.DomainIs("tiktok.com"))
-+      return "TikTok";
-+    if (url.DomainIs("bsky.app"))
-+      return "Bluesky";
-+    if (url.DomainIs("truthsocial.com"))
-+      return "Truth Social";
++std::string ScreenshotPlatformName(const GURL& url) {
++  if (!url.is_valid() || !url.SchemeIsHTTPOrHTTPS() || url.has_username() ||
++      url.has_password())
 +    return {};
-+  };
-+  // Prefer the reviewed post link. Otherwise use the captured page's platform.
-+  std::string source = platform(user_provided.FindString("post_permalink"));
-+  if (source.empty()) {
-+    const auto* reviewed = user_provided.FindString("post_permalink");
-+    const auto* suggestions = automatic.FindDict("permalink_suggestions");
-+    const auto* candidates =
-+        suggestions ? suggestions->FindList("candidates") : nullptr;
-+    if (reviewed && candidates) {
++  static constexpr std::pair<const char*, const char*> kPlatforms[] = {
++      {"instagram.com", "Instagram"},   {"twitter.com", "Twitter"},
++      {"x.com", "Twitter"},             {"facebook.com", "Facebook"},
++      {"threads.com", "Threads"},       {"threads.net", "Threads"},
++      {"linkedin.com", "LinkedIn"},     {"youtube.com", "YouTube"},
++      {"youtu.be", "YouTube"},          {"reddit.com", "Reddit"},
++      {"tiktok.com", "TikTok"},         {"bsky.app", "Bluesky"},
++      {"truthsocial.com", "Truth Social"}, {"tumblr.com", "Tumblr"},
++      {"pinterest.com", "Pinterest"},   {"vk.com", "VK"},
++      {"weibo.com", "Weibo"},           {"snapchat.com", "Snapchat"},
++      {"twitch.tv", "Twitch"},          {"vimeo.com", "Vimeo"},
++      {"rumble.com", "Rumble"},         {"kick.com", "Kick"},
++      {"substack.com", "Substack"},     {"medium.com", "Medium"},
++      {"quora.com", "Quora"},           {"flickr.com", "Flickr"},
++      {"gab.com", "Gab"},               {"gettr.com", "GETTR"},
++      {"discord.com", "Discord"},       {"pixelfed.social", "Pixelfed"},
++      {"lemmy.world", "Lemmy"},         {"soundcloud.com", "SoundCloud"}};
++  if (url.host() == "t.me")
++    return "Telegram";
++  for (const auto& [domain, name] : kPlatforms) {
++    if (url.DomainIs(domain))
++      return name;
++  }
++  // Pinterest serves the same pins from country domains (pinterest.de,
++  // pinterest.co.uk, pinterest.com.au).
++  const auto labels = base::SplitStringPiece(
++      url.host(), ".", base::KEEP_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
++  if (labels.size() < 2 || labels.back().size() != 2)
++    return {};
++  const bool second_level = labels.size() > 2 &&
++                            (labels[labels.size() - 2] == "co" ||
++                             labels[labels.size() - 2] == "com");
++  return labels[labels.size() - (second_level ? 3 : 2)] == "pinterest"
++             ? "Pinterest"
++             : std::string();
++}
++
++namespace {
++
++std::string Trimmed(const base::DictValue& fields, const char* key) {
++  const auto* value = fields.FindString(key);
++  return value ? std::string(base::TrimWhitespaceASCII(*value, base::TRIM_ALL))
++               : std::string();
++}
++
++// The captured page's host, or empty when it cannot identify a public website.
++std::string ObservedHost(const base::DictValue& automatic, bool strip_www) {
++  const auto* value = automatic.FindString("page_url");
++  const GURL url(value ? *value : "");
++  if (!url.is_valid() || !url.SchemeIsHTTPOrHTTPS() || url.has_username() ||
++      url.has_password() || url.host().empty())
++    return {};
++  std::string host(url.host());
++  if (strip_www && base::StartsWith(host, "www."))
++    host.erase(0, 4);
++  return host;
++}
++
++// Prefer the reviewed post link. Otherwise use the captured page's platform.
++std::string ReviewedPlatform(const base::DictValue& automatic,
++                             const base::DictValue& user_provided) {
++  const auto* reviewed = user_provided.FindString("post_permalink");
++  std::string source = reviewed ? ScreenshotPlatformName(GURL(*reviewed)) : "";
++  const auto* suggestions = automatic.FindDict("permalink_suggestions");
++  if (source.empty() && reviewed && suggestions) {
++    if (const auto* candidates = suggestions->FindList("candidates")) {
 +      for (const auto& value : *candidates) {
 +        if (!value.is_dict())
 +          continue;
@@ -5026,17 +5382,298 @@
 +      }
 +    }
 +  }
-+  if (source.empty())
-+    source = platform(automatic.FindString("page_url"));
 +  if (source.empty()) {
-+    const auto* value = automatic.FindString("page_url");
-+    const GURL url(value ? *value : "");
-+    if (!url.is_valid() || !url.SchemeIsHTTPOrHTTPS() || url.has_username() ||
-+        url.has_password() || url.host().empty())
-+      return {};
-+    source = url.host();
++    const auto* page = automatic.FindString("page_url");
++    source = page ? ScreenshotPlatformName(GURL(*page)) : "";
 +  }
-+  return label + " / " + account + " / " + source;
++  return source;
++}
++
++// The page's self-declared name (og:site_name) applies only to its own URL.
++std::string PageSiteName(const base::DictValue& automatic,
++                         const base::DictValue& user_provided) {
++  const auto* suggestions = automatic.FindDict("permalink_suggestions");
++  const auto* page = suggestions ? suggestions->FindDict("page_details") : nullptr;
++  if (!page)
++    return {};
++  const auto* url = page->FindString("url");
++  const auto* reviewed = user_provided.FindString("post_permalink");
++  if (!url || (reviewed && !reviewed->empty() && *reviewed != *url))
++    return {};
++  return std::string(base::TruncateUTF8ToByteSize(Trimmed(*page, "site_name"), 96));
++}
++
++bool Digits(std::string_view text, size_t count) {
++  return text.size() == count && base::ContainsOnlyChars(text, "0123456789");
++}
++
++std::string DateTimeText(int year, int month, int day, int hour, int minute) {
++  if (year < 1990 || year > 2100 || month < 1 || month > 12 || day < 1 ||
++      day > 31)
++    return {};
++  std::string result = base::StringPrintf("%04d-%02d-%02d", year, month, day);
++  if (hour >= 0 && hour < 24 && minute >= 0 && minute < 60)
++    result += base::StringPrintf("_%02d:%02d", hour, minute);
++  return result;
++}
++
++// An exact instant shown in the computer's time zone, matching how the site
++// rendered its own labels during capture.
++std::string LocalDateTime(base::Time time) {
++  base::Time::Exploded local;
++  time.LocalExplode(&local);
++  return local.HasValidValues()
++             ? DateTimeText(local.year, local.month, local.day_of_month,
++                            local.hour, local.minute)
++             : std::string();
++}
++
++int MonthNumber(std::string_view word) {
++  static constexpr const char* kMonths[][2] = {
++      {"jan", "januar"},  {"feb", "februar"}, {"mar", "mars"},
++      {"apr", "april"},   {"may", "mai"},     {"jun", "juni"},
++      {"jul", "juli"},    {"aug", "august"},  {"sep", "september"},
++      {"oct", "oktober"}, {"nov", "november"}, {"dec", "desember"}};
++  static constexpr const char* kEnglish[] = {
++      "january", "february", "march",     "april",   "may",      "june",
++      "july",    "august",   "september", "october", "november", "december"};
++  const std::string lower = base::ToLowerASCII(word);
++  for (int i = 0; i < 12; ++i) {
++    if (lower == kMonths[i][0] || lower == kMonths[i][1] || lower == kEnglish[i] ||
++        (i == 8 && lower == "sept") || (i == 9 && lower == "okt") ||
++        (i == 11 && lower == "des"))
++      return i + 1;
++  }
++  return 0;
++}
++
++}  // namespace
++
++std::string ScreenshotDisplayDate(std::string_view raw) {
++  const std::string text(base::TrimWhitespaceASCII(raw, base::TRIM_ALL));
++  if (text.size() > 256)
++    return {};
++  // ISO 8601: convert exact instants; keep a zoneless wall time unchanged.
++  if (text.size() >= 10 && Digits(std::string_view(text).substr(0, 4), 4) &&
++      text[4] == '-' && Digits(std::string_view(text).substr(5, 2), 2) &&
++      text[7] == '-' && Digits(std::string_view(text).substr(8, 2), 2)) {
++    int year = 0, month = 0, day = 0, hour = -1, minute = -1;
++    base::StringToInt(std::string_view(text).substr(0, 4), &year);
++    base::StringToInt(std::string_view(text).substr(5, 2), &month);
++    base::StringToInt(std::string_view(text).substr(8, 2), &day);
++    if (text.size() == 10)
++      return DateTimeText(year, month, day, -1, -1);
++    if ((text[10] != 'T' && text[10] != ' ') || text.size() < 16 ||
++        !Digits(std::string_view(text).substr(11, 2), 2) || text[13] != ':' ||
++        !Digits(std::string_view(text).substr(14, 2), 2))
++      return {};
++    base::StringToInt(std::string_view(text).substr(11, 2), &hour);
++    base::StringToInt(std::string_view(text).substr(14, 2), &minute);
++    std::string_view rest = std::string_view(text).substr(16);
++    int second = 0;
++    if (rest.size() >= 3 && rest[0] == ':' && Digits(rest.substr(1, 2), 2)) {
++      base::StringToInt(rest.substr(1, 2), &second);
++      rest.remove_prefix(3);
++      if (!rest.empty() && rest[0] == '.') {
++        rest.remove_prefix(1);
++        while (!rest.empty() && base::IsAsciiDigit(rest[0]))
++          rest.remove_prefix(1);
++      }
++    }
++    if (rest.empty())
++      return DateTimeText(year, month, day, hour, minute);
++    int offset_minutes = 0;
++    if (rest != "Z" && rest != "z") {
++      std::string zone(rest.substr(rest[0] == '+' || rest[0] == '-' ? 1 : 0));
++      base::RemoveChars(zone, ":", &zone);
++      int hours = 0, minutes = 0;
++      if ((rest[0] != '+' && rest[0] != '-') || !Digits(zone, 4) ||
++          !base::StringToInt(std::string_view(zone).substr(0, 2), &hours) ||
++          !base::StringToInt(std::string_view(zone).substr(2, 2), &minutes) ||
++          hours > 14 || minutes > 59)
++        return {};
++      offset_minutes = (rest[0] == '-' ? -1 : 1) * (hours * 60 + minutes);
++    }
++    base::Time::Exploded utc = {};
++    utc.year = year;
++    utc.month = month;
++    utc.day_of_month = day;
++    utc.hour = hour;
++    utc.minute = minute;
++    utc.second = second;
++    base::Time time;
++    return base::Time::FromUTCExploded(utc, &time)
++               ? LocalDateTime(time - base::Minutes(offset_minutes))
++               : std::string();
++  }
++  // Labels as displayed by the site ("3:14 PM · Oct 31, 2026",
++  // "31. oktober 2026 kl. 09.12"). Without a year it stays relative.
++  struct Token {
++    std::string_view text;
++    bool number;
++  };
++  std::vector<Token> tokens;
++  for (size_t i = 0; i < text.size();) {
++    const bool digit = base::IsAsciiDigit(text[i]);
++    if (!digit && !base::IsAsciiAlpha(text[i])) {
++      ++i;
++      continue;
++    }
++    size_t end = i;
++    while (end < text.size() && (digit ? base::IsAsciiDigit(text[end])
++                                       : base::IsAsciiAlpha(text[end])))
++      ++end;
++    tokens.push_back({std::string_view(text).substr(i, end - i), digit});
++    i = end;
++  }
++  int year = 0, month = 0, day = 0, hour = -1, minute = -1;
++  size_t month_index = tokens.size();
++  for (size_t i = 0; i < tokens.size(); ++i) {
++    if (!tokens[i].number && !month && MonthNumber(tokens[i].text)) {
++      month = MonthNumber(tokens[i].text);
++      month_index = i;
++    }
++  }
++  // Locate the time first, so its digits are never read as a day or year.
++  std::vector<bool> used(tokens.size(), false);
++  for (size_t i = 0; i + 1 < tokens.size(); ++i) {
++    const size_t gap_start =
++        tokens[i].text.data() + tokens[i].text.size() - text.data();
++    const size_t gap_end = tokens[i + 1].text.data() - text.data();
++    const std::string_view gap =
++        std::string_view(text).substr(gap_start, gap_end - gap_start);
++    if (!tokens[i].number || !tokens[i + 1].number ||
++        tokens[i].text.size() > 2 || tokens[i + 1].text.size() != 2 ||
++        (gap != ":" && gap != "."))
++      continue;
++    // "31.10.2026" is a date, not 31:10.
++    if (gap == "." && i + 2 < tokens.size() && tokens[i + 2].number &&
++        tokens[i + 2].text.data() ==
++            tokens[i + 1].text.data() + tokens[i + 1].text.size() + 1 &&
++        text[tokens[i + 1].text.data() + 2 - text.data()] == '.')
++      continue;
++    base::StringToInt(tokens[i].text, &hour);
++    base::StringToInt(tokens[i + 1].text, &minute);
++    used[i] = used[i + 1] = true;
++    if (i + 2 < tokens.size() && !tokens[i + 2].number) {
++      const std::string marker = base::ToLowerASCII(tokens[i + 2].text);
++      const bool pm = marker == "pm" || marker == "p";
++      if ((pm || marker == "am" || marker == "a") && hour >= 1 && hour <= 12)
++        hour = pm ? hour % 12 + 12 : hour % 12;
++    }
++    break;
++  }
++  for (size_t i = 0; i < tokens.size(); ++i) {
++    if (!used[i] && tokens[i].number && Digits(tokens[i].text, 4)) {
++      base::StringToInt(tokens[i].text, &year);
++      used[i] = true;
++      break;
++    }
++  }
++  if (!year)
++    return {};
++  if (month) {
++    // The day is the number adjacent to the month name, in either order.
++    for (size_t i : {month_index + 1, month_index - 1}) {
++      if (i < tokens.size() && !used[i] && tokens[i].number &&
++          tokens[i].text.size() <= 2) {
++        base::StringToInt(tokens[i].text, &day);
++        break;
++      }
++    }
++  } else {
++    // Numeric day.month.year (European); unambiguous slashes only.
++    std::vector<int> parts;
++    for (size_t i = 0; i < tokens.size(); ++i) {
++      if (!used[i] && tokens[i].number && tokens[i].text.size() <= 2) {
++        int value = 0;
++        base::StringToInt(tokens[i].text, &value);
++        parts.push_back(value);
++      }
++    }
++    if (parts.size() != 2)
++      return {};
++    const bool slash = text.find('/') != std::string::npos;
++    if (!slash || parts[0] > 12) {
++      day = parts[0];
++      month = parts[1];
++    } else if (parts[1] > 12) {
++      month = parts[0];
++      day = parts[1];
++    } else {
++      return {};
++    }
++  }
++  return DateTimeText(year, month, day, hour, minute);
++}
++
++std::string ScreenshotCopyrightNotice(const base::DictValue& automatic,
++                                      const base::DictValue& user_provided,
++                                      ScreenshotTextLanguage language) {
++  const std::string account = Trimmed(user_provided, "posting_account");
++  const std::string label = language == ScreenshotTextLanguage::kNorwegian
++                                ? "Skjermbilde"
++                                : "Screenshot";
++  if (account.empty()) {
++    const std::string host = ObservedHost(automatic, true);
++    return host.empty() ? std::string() : label + " / " + host;
++  }
++  std::string source = ReviewedPlatform(automatic, user_provided);
++  if (source.empty())
++    source = ObservedHost(automatic, false);
++  return source.empty() ? std::string()
++                        : label + " / " + account + " / " + source;
++}
++
++std::string ScreenshotDescriptionHeader(const base::DictValue& automatic,
++                                        const base::DictValue& user_provided,
++                                        ScreenshotTextLanguage language) {
++  const bool norwegian = language == ScreenshotTextLanguage::kNorwegian;
++  std::string header;
++  // The capture time is UTC, so this always yields the computer's local time.
++  const std::string captured =
++      ScreenshotDisplayDate(Trimmed(automatic, "capture_started_at_utc"));
++  if (!captured.empty())
++    header += (norwegian ? "Tatt: " : "Captured: ") + captured + "\n";
++  const std::string published = Trimmed(user_provided, "publication_date_text");
++  if (!published.empty()) {
++    const std::string normalized = ScreenshotDisplayDate(published);
++    header += (norwegian ? "Publisert: " : "Posted: ") +
++              (normalized.empty()
++                   ? published + (norwegian ? " (som vist)" : " (as shown)")
++                   : normalized) +
++              "\n";
++  }
++  std::string site = ReviewedPlatform(automatic, user_provided);
++  if (site.empty())
++    site = PageSiteName(automatic, user_provided);
++  if (site.empty())
++    site = ObservedHost(automatic, true);
++  const std::string account = Trimmed(user_provided, "posting_account");
++  if (!site.empty() || !account.empty()) {
++    header += site + (site.empty() || account.empty() ? "" : ": ") + account +
++              "\n";
++  }
++  // One searchable line. The complete text stays in the source record.
++  std::string quote = base::UTF16ToUTF8(base::CollapseWhitespace(
++      base::UTF8ToUTF16(Trimmed(user_provided, "post_text")), false));
++  if (!quote.empty()) {
++    constexpr size_t kQuoteBytes = 1000;
++    if (quote.size() > kQuoteBytes) {
++      quote = std::string(base::TruncateUTF8ToByteSize(quote, kQuoteBytes));
++      const size_t space = quote.rfind(' ');
++      if (space != std::string::npos && space > kQuoteBytes / 2)
++        quote.erase(space);
++      quote += "…";
++    }
++    header += (norwegian ? "«" : "“") + quote + (norwegian ? "»" : "”") + "\n";
++  }
++  const std::string permalink = Trimmed(user_provided, "post_permalink");
++  if (!permalink.empty()) {
++    header += std::string("\n") + (norwegian ? "Permalenke: " : "Permalink: ") +
++              permalink + "\n";
++  }
++  return header;
 +}
 +
 +ScreenshotMetadata BuildScreenshotMetadata(
@@ -5078,7 +5715,12 @@
 +                            ? "JPEG quality 95, 4:4:4 (lossy)"
 +                            : "lossless");
 +
-+  std::string report = "HELIUM NEO — SCREENSHOT SOURCE RECORD\n\n";
++  // A readable summary first; the detailed provenance record follows.
++  std::string report =
++      ScreenshotDescriptionHeader(automatic, user_provided, language);
++  if (!report.empty())
++    report += "\n";
++  report += "HELIUM NEO — SCREENSHOT SOURCE RECORD\n\n";
 +  AppendField(report, "Page URL (observed)", automatic, "page_url");
 +  AppendField(report, "Page title (observed)", automatic, "page_title");
 +  AppendField(report, "Capture started (UTC, computer clock)", automatic,
@@ -5099,7 +5741,7 @@
 +              "posting_account_origin");
 +  AppendField(report, "Publication date origin", user_provided,
 +              "publication_date_text_origin");
-+  AppendField(report, "Post text (user-provided)", user_provided, "post_text");
++  AppendField(report, "Post text origin", user_provided, "post_text_origin");
 +  AppendField(report, "Alt text (user-provided)", user_provided, "alt_text");
 +  AppendField(report, "Notes (user-provided)", user_provided, "notes");
 +  report += "Screenshot: " + filename +
@@ -5225,7 +5867,7 @@
 +}  // namespace sharing_hub
 --- /dev/null
 +++ b/chrome/browser/ui/views/sharing_hub/screenshot/screenshot_documentation.h
-@@ -0,0 +1,79 @@
+@@ -0,0 +1,96 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -5234,6 +5876,8 @@
 +#define CHROME_BROWSER_UI_VIEWS_SHARING_HUB_SCREENSHOT_SCREENSHOT_DOCUMENTATION_H_
 +
 +#include <string>
++#include <string_view>
++
 +#include "base/time/time.h"
 +#include "base/values.h"
 +#include "chrome/browser/image_editor/screenshot_color.h"
@@ -5253,6 +5897,21 @@
 +// Persisted in profile preferences. Do not reorder.
 +enum class ScreenshotFormat { kPng = 0, kJpeg = 1, kJpegXL = 2 };
 +enum class ScreenshotTextLanguage { kEnglish = 0, kNorwegian = 1 };
++
++// Short display name of a known social platform ("Twitter", "Bluesky"), or
++// empty for other websites and non-HTTP(S) URLs.
++std::string ScreenshotPlatformName(const GURL& url);
++
++// Normalizes a site-reported date to "YYYY-MM-DD_HH:MM" (or "YYYY-MM-DD").
++// Instants with a UTC offset use the computer's time zone; displayed labels
++// keep their wall time. Relative or year-less labels return empty.
++std::string ScreenshotDisplayDate(std::string_view text);
++
++// Readable dc:description summary: capture and post dates, site and account,
++// a quote of the post text, then the permalink. Missing lines are omitted.
++std::string ScreenshotDescriptionHeader(const base::DictValue& automatic,
++                                        const base::DictValue& user_provided,
++                                        ScreenshotTextLanguage language);
 +
 +// User-requested source credit in IPTC Copyright Notice. The reviewed account
 +// is preserved verbatim (including @); no creator/rights-holder is inferred.
@@ -5307,7 +5966,7 @@
 +#endif  // CHROME_BROWSER_UI_VIEWS_SHARING_HUB_SCREENSHOT_SCREENSHOT_DOCUMENTATION_H_
 --- /dev/null
 +++ b/chrome/browser/ui/views/sharing_hub/screenshot/screenshot_documentation_unittest.cc
-@@ -0,0 +1,831 @@
+@@ -0,0 +1,962 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -6096,7 +6755,18 @@
 +      EXPECT_EQ(*fields->FindString("post_text"),
 +                "First line\nSecond line æøå");
 +      EXPECT_EQ(*fields->FindString("notes"), "My own annotations");
-+      EXPECT_NE(preview.description.find("Post text (user-provided)"),
++      const bool norwegian = language == ScreenshotTextLanguage::kNorwegian;
++      EXPECT_NE(preview.description.find(
++                    norwegian ? "«First line Second line æøå»"
++                              : "“First line Second line æøå”"),
++                std::string::npos);
++      EXPECT_NE(preview.description.find(norwegian
++                                             ? "Publisert: Yesterday (som vist)"
++                                             : "Posted: Yesterday (as shown)"),
++                std::string::npos);
++      EXPECT_NE(preview.description.find(
++                    norwegian ? "\n\nPermalenke: https://example.com/posts/123"
++                              : "\n\nPermalink: https://example.com/posts/123"),
 +                std::string::npos);
 +      EXPECT_NE(preview.description.find("Notes (user-provided)"),
 +                std::string::npos);
@@ -6135,6 +6805,126 @@
 +              std::string::npos);
 +    EXPECT_EQ(output.bytes.find("<Iptc4xmpCore:ExtDescrAccessibility>"),
 +              std::string::npos);
++  }
++}
++
++TEST(ScreenshotDocumentationTest, DisplayDatesNormalizeOnlyExplicitDates) {
++  for (const auto& [input, expected] :
++       std::vector<std::pair<std::string, std::string>>{
++           {"2026-10-31T09:12", "2026-10-31_09:12"},
++           {"2026-10-31T09:12:59.123", "2026-10-31_09:12"},
++           {"2026-10-31", "2026-10-31"},
++           {"3:14 PM · Oct 31, 2026", "2026-10-31_15:14"},
++           {"12:05 AM · Jan 2, 2026", "2026-01-02_00:05"},
++           {"October 31, 2026 at 9:12 AM", "2026-10-31_09:12"},
++           {"Friday 31 October 2026 at 09:12", "2026-10-31_09:12"},
++           {"Oct 09, 2026, 10:11 PM", "2026-10-09_22:11"},
++           {"31. oktober 2026 kl. 09.12", "2026-10-31_09:12"},
++           {"31. okt. 2026", "2026-10-31"},
++           {"31.10.2026, 09:12", "2026-10-31_09:12"},
++           {"10/31/2026", "2026-10-31"},
++           {"31/10/2026 21:07", "2026-10-31_21:07"},
++           {"05/06/2026", ""},
++           {"17h", ""},
++           {"Yesterday", ""},
++           {"Oct 31", ""},
++           {"2026-13-31", ""},
++           {"2026-10-31Tgarbage", ""},
++           {"2026-10-31T09:12+99:00", ""}}) {
++    EXPECT_EQ(ScreenshotDisplayDate(input), expected) << input;
++  }
++  // Exact instants use the computer's time zone, consistently with capture.
++  EXPECT_EQ(ScreenshotDisplayDate("2026-10-31T08:12:00.000Z"),
++            ScreenshotDisplayDate("2026-10-31T09:12:00+01:00"));
++  EXPECT_EQ(ScreenshotDisplayDate("2026-10-31T08:12:00Z"),
++            ScreenshotDisplayDate("2026-10-31T03:12-0500"));
++  EXPECT_EQ(ScreenshotDisplayDate("2026-10-31T08:12:00Z").size(), 16u);
++}
++
++TEST(ScreenshotDocumentationTest, DescriptionStartsWithReadableSummary) {
++  base::DictValue automatic, user;
++  automatic.Set("page_url", "https://x.com/home");
++  automatic.Set("capture_started_at_utc", "2026-11-01T12:03:00.000Z");
++  user.Set("post_permalink", "https://x.com/alice/status/123");
++  user.Set("posting_account", " @alice ");
++  user.Set("publication_date_text", "3:14 PM · Oct 31, 2026");
++  user.Set("post_text", "Breaking:  the library\n\nopens today.");
++  const std::string captured =
++      ScreenshotDisplayDate("2026-11-01T12:03:00.000Z");
++  ASSERT_FALSE(captured.empty());
++  EXPECT_EQ(ScreenshotDescriptionHeader(automatic, user,
++                                        ScreenshotTextLanguage::kEnglish),
++            "Captured: " + captured +
++                "\nPosted: 2026-10-31_15:14\nTwitter: @alice\n"
++                "“Breaking: the library opens today.”\n\n"
++                "Permalink: https://x.com/alice/status/123\n");
++  EXPECT_EQ(ScreenshotDescriptionHeader(automatic, user,
++                                        ScreenshotTextLanguage::kNorwegian),
++            "Tatt: " + captured +
++                "\nPublisert: 2026-10-31_15:14\nTwitter: @alice\n"
++                "«Breaking: the library opens today.»\n\n"
++                "Permalenke: https://x.com/alice/status/123\n");
++  const auto metadata = BuildScreenshotMetadata(
++      automatic.Clone(), user.Clone(), {}, gfx::Size(4, 4),
++      ScreenshotFormat::kPng, true, ScreenshotTextLanguage::kEnglish);
++  EXPECT_TRUE(metadata.description.starts_with("Captured: " + captured));
++  EXPECT_NE(metadata.description.find(
++                "Permalink: https://x.com/alice/status/123\n\n"
++                "HELIUM NEO — SCREENSHOT SOURCE RECORD"),
++            std::string::npos);
++
++  // Missing details are omitted; unknown sites use their own name or host.
++  base::DictValue page;
++  page.Set("page_url", "https://www.tv2.no/nyheter/1");
++  EXPECT_EQ(ScreenshotDescriptionHeader(page, base::DictValue(),
++                                        ScreenshotTextLanguage::kEnglish),
++            "tv2.no\n");
++  page.Set("permalink_suggestions",
++           base::DictValue().Set(
++               "page_details", base::DictValue()
++                                   .Set("url", "https://www.tv2.no/nyheter/1")
++                                   .Set("site_name", "TV 2")));
++  base::DictValue reviewed;
++  reviewed.Set("post_permalink", "https://www.tv2.no/nyheter/1");
++  reviewed.Set("posting_account", "Kari Nordmann");
++  EXPECT_EQ(ScreenshotDescriptionHeader(page, reviewed,
++                                        ScreenshotTextLanguage::kEnglish),
++            "TV 2: Kari Nordmann\n\n"
++            "Permalink: https://www.tv2.no/nyheter/1\n");
++  reviewed.Set("post_permalink", "https://example.com/other");
++  EXPECT_TRUE(ScreenshotDescriptionHeader(page, reviewed,
++                                          ScreenshotTextLanguage::kEnglish)
++                  .starts_with("tv2.no: Kari Nordmann\n"));
++
++  // Long posts are shortened at a word boundary.
++  user.Set("post_text", std::string(600, 'a') + " " + std::string(600, 'b'));
++  const std::string header = ScreenshotDescriptionHeader(
++      automatic, user, ScreenshotTextLanguage::kEnglish);
++  EXPECT_NE(header.find("“" + std::string(600, 'a') + "…”"),
++            std::string::npos);
++}
++
++TEST(ScreenshotDocumentationTest, PlatformNamesCoverMoreSocialSites) {
++  for (const auto& [url, name] :
++       std::vector<std::pair<std::string, std::string>>{
++           {"https://www.tumblr.com/staff/123", "Tumblr"},
++           {"https://staff.tumblr.com/post/123", "Tumblr"},
++           {"https://www.pinterest.com/pin/123/", "Pinterest"},
++           {"https://no.pinterest.com/pin/123/", "Pinterest"},
++           {"https://www.pinterest.co.uk/pin/123/", "Pinterest"},
++           {"https://vk.com/wall-1_2", "VK"},
++           {"https://www.twitch.tv/videos/1", "Twitch"},
++           {"https://vimeo.com/1", "Vimeo"},
++           {"https://example.substack.com/p/post", "Substack"},
++           {"https://t.me/channel/1", "Telegram"},
++           {"https://pinterest.evil.test/pin/1", ""},
++           {"https://de.pinterest.de/pin/1", "Pinterest"},
++           {"https://pinterest.abc.xy/pin/1", ""},
++           {"https://pinterest.co.evil/pin/1", ""},
++           {"https://notpinterest.com/pin/1", ""},
++           {"https://example.com/", ""},
++           {"file:///tmp/x", ""}}) {
++    EXPECT_EQ(ScreenshotPlatformName(GURL(url)), name) << url;
 +  }
 +}
 +
