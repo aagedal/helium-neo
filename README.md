@@ -175,15 +175,18 @@ in **Settings → Keyboard shortcuts**, under **Capture screenshot with source**
 The review dialog records the page URL, title, capture times in UTC, selection
 bounds and image dimensions. You can optionally enter a post permalink, posting
 account, publication date as displayed, post text, notes, and accessibility alt
-text. Post text is entered manually and kept separate from notes and alt text.
+text. Post text is kept separate from notes and alt text.
 These entries are recorded separately from observed page details. The browser can
 suggest a post permalink for Twitter/X, Instagram, Facebook, Threads, Truth Social, Bluesky,
 TikTok, Reddit, YouTube, LinkedIn, Mastodon and Telegram using visible links and
 the post container overlapping your selection. One clear match fills the field;
 multiple matches offer a chooser. Check or edit the link before saving. The
 record preserves candidate links and the chosen link's origin. Suggestions are
-heuristics, not verified attribution. Posting account and publication date can
-also fill from the selected post when the site exposes them. The record keeps
+heuristics, not verified attribution. Posting account, publication date and
+post text can also fill from the selected post when the site exposes them. Post
+text comes from the post's own rendered body (quoted posts are excluded) and is
+not expanded, so a collapsed post fills only its visible start, up to 1,500
+characters. Reddit posts include their title. The record keeps
 the displayed date, any tooltip or machine-readable timestamp, and linked
 account details separate from your reviewed values. Relative dates and missing
 timezones are preserved as shown. You can edit or clear any field; notes remain
@@ -247,6 +250,15 @@ mentions and edited labels do not replace the original author or publication tim
 Other clients, ActivityPub URI-only layouts and missing ownership evidence require
 manual attribution. These DOM observations remain unverified.
 
+Other websites, including Pinterest, news sites, blogs, Substack, Medium and
+forums, can fill the same fields from the page's own schema.org (JSON-LD) or
+Open Graph metadata: the page URL or its canonical link, author, publication
+date, site name and, for social posts and forum threads, the post text. This
+describes the page rather than a selected item, so it is offered only when the
+selection contains no recognized post link and at most one post container, and
+only while that metadata still belongs to the current address. Pinterest
+repins can suggest the original pin and pinner the page declares.
+
 Telegram supports public channel message previews and standalone message widgets
 on `t.me`. The message's own timestamp permalink must match its `data-post`
 identity; account suggestions require its matching channel header link. Video
@@ -278,9 +290,24 @@ image creator or copyright owner.
 The embedded fields are arranged for photo and newsroom metadata tools:
 
 - **Title and Headline:** the captured page title.
-- **Description:** the readable source report, including the reviewed post
-  permalink, account, publication date, manually entered post text, and notes
-  when supplied.
+- **Description:** a short summary for reading and database search, followed by
+  the detailed source report (reviewed permalink, account, publication date,
+  origins and notes when supplied). The summary lines, each omitted when
+  unknown, are:
+
+  ```text
+  Captured: 2026-11-01_14:03
+  Posted: 2026-10-31_09:12
+  Twitter: @username
+  “The post text, or the start of a long post…”
+
+  Permalink: https://x.com/username/status/…
+  ```
+
+  Times use `YYYY-MM-DD_HH:MM`. Capture times and exact site timestamps use the
+  computer's time zone; displayed labels with a year keep their shown time.
+  Relative or year-less labels stay as shown, marked “(as shown)”. Quotes are
+  shortened to about 1,000 bytes; the complete post text stays in the record.
 - **Alt Text (Accessibility):** your optional image description. Empty alt text
   is omitted; post text and notes are never used as a substitute.
 - **Source:** the reviewed posting account and post permalink, separated by
@@ -294,9 +321,11 @@ including observed values, reviewed values and how each was obtained. The ZIP's
 `source.txt` retains the capture limitations alongside the readable report.
 
 The IPTC Copyright Notice uses **Screenshot / [account] / [platform]**.
-Choose **Norsk — Skjermbilde** under **Copyright text language** for
-**Skjermbilde / [account] / [platform]**. The choice is remembered, and a live
-preview shows the resulting text. Twitter/X uses the platform name **Twitter**.
+Choose **Norsk** under **Metadata text language** for
+**Skjermbilde / [account] / [platform]** and Norwegian summary labels
+(**Tatt**, **Publisert**, **Permalenke**, «quotes»). The choice is remembered for
+all profiles, and page-change monitor screenshots use it too; a live preview
+shows the resulting text. Twitter/X uses the platform name **Twitter**.
 When no posting account is supplied, the notice falls back to
 **Screenshot / [hostname]** or **Skjermbilde / [hostname]** for any website
 (for example, **Screenshot / tv2.no**). The hostname omits `www.`, the page

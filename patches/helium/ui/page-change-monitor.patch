@@ -318,7 +318,7 @@
        ":tab_menu",
 --- /dev/null
 +++ b/chrome/browser/ui/tabs/page_change_monitor.cc
-@@ -0,0 +1,985 @@
+@@ -0,0 +1,992 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -1220,15 +1220,22 @@
 +  automatic.Set("capture_trigger", "text_change_monitor");
 +  automatic.Set("monitor_selector", selector_);
 +  automatic.Set("screenshot_scope", "visible_pane_sdr_at_most_8_megapixels");
++  const auto language = static_cast<sharing_hub::ScreenshotTextLanguage>(
++      sharing_hub::GetScreenshotTextLanguage(
++          web_contents() ? Profile::FromBrowserContext(
++                               web_contents()->GetBrowserContext())
++                               ->GetPrefs()
++                         : nullptr));
 +  base::ThreadPool::PostTaskAndReplyWithResult(
 +      FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
 +      base::BindOnce(
-+          [](SkBitmap bitmap, base::DictValue automatic) {
++          [](SkBitmap bitmap, base::DictValue automatic,
++             sharing_hub::ScreenshotTextLanguage language) {
 +            return sharing_hub::CreateScreenshotExport(
 +                bitmap, std::move(automatic), base::DictValue(),
-+                sharing_hub::ScreenshotFormat::kPng, false, false);
++                sharing_hub::ScreenshotFormat::kPng, false, false, language);
 +          },
-+          result->bitmap, std::move(automatic)),
++          result->bitmap, std::move(automatic), language),
 +      base::BindOnce(
 +          [](base::WeakPtr<PageChangeMonitor> self, int generation,
 +             sharing_hub::ScreenshotExport output) {
