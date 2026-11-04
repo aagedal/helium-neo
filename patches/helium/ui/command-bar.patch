@@ -566,7 +566,7 @@
 +#endif  // CHROME_BROWSER_UI_VIEWS_HELIUM_COMMAND_BAR_VIEW_H_
 --- /dev/null
 +++ b/chrome/browser/ui/views/helium/command_bar_view.cc
-@@ -0,0 +1,1310 @@
+@@ -0,0 +1,1312 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -1498,14 +1498,9 @@
 +                browser_->GetProfile(), ServiceAccessType::EXPLICIT_ACCESS)) {
 +      auto callback = base::BindOnce(&CommandBarView::OnEngineFaviconFetched,
 +                                     weak_factory_.GetWeakPtr());
-+      if (engine->favicon_url().is_valid()) {
-+        favicon_service->GetFaviconImage(engine->favicon_url(),
-+                                         std::move(callback),
-+                                         &engine_favicon_tracker_);
-+      } else {
-+        favicon_service->GetFaviconImageForPageURL(
-+            home, std::move(callback), &engine_favicon_tracker_);
-+      }
++      // Look up by page, as for results; bang icon URLs are rarely stored.
++      favicon_service->GetFaviconImageForPageURL(home, std::move(callback),
++                                                 &engine_favicon_tracker_);
 +    }
 +  }
 +
@@ -1728,9 +1723,18 @@
 +    const AutocompleteMatch& match) const {
 +  Entry entry;
 +  entry.match = match;
++  TemplateURLService* template_url_service =
++      TemplateURLServiceFactory::GetForProfile(browser_->GetProfile());
 +  if (AutocompleteMatch::IsSearchType(match.type)) {
 +    entry.title = match.contents;
 +    entry.detail = match.description;
++    // Searches on another site, such as through a bang, show its icon.
++    if (const TemplateURL* engine =
++            match.GetTemplateURL(template_url_service);
++        engine &&
++        engine != template_url_service->GetDefaultSearchProvider()) {
++      entry.favicon_url = GURL(engine->url()).GetWithEmptyPath();
++    }
 +  } else {
 +    entry.title = match.description.empty() ? match.contents
 +                                            : match.description;
@@ -1739,8 +1743,6 @@
 +    entry.favicon_url = match.destination_url;
 +  }
 +
-+  TemplateURLService* template_url_service =
-+      TemplateURLServiceFactory::GetForProfile(browser_->GetProfile());
 +  entry.icon = ui::ImageModel::FromVectorIcon(
 +      match.GetVectorIcon(/*is_bookmark=*/false,
 +                          match.GetTemplateURL(template_url_service)),
