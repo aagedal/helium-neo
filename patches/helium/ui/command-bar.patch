@@ -375,7 +375,7 @@
 +}
 --- /dev/null
 +++ b/chrome/browser/ui/views/helium/command_bar_view.h
-@@ -0,0 +1,212 @@
+@@ -0,0 +1,215 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -509,6 +509,8 @@
 +  void RebuildEntries();
 +  void RebuildRows();
 +  void SetSelectedIndex(std::optional<size_t> index);
++  // Shows or hides a QR code for the current page, for opening it on a phone.
++  void ToggleQrCode();
 +  // Shows which site a bang or keyword search will go to.
 +  void UpdateEngineChip();
 +  void OnEngineFaviconFetched(const favicon_base::FaviconImageResult& result);
@@ -558,6 +560,7 @@
 +  raw_ptr<views::Textfield> textfield_ = nullptr;
 +  raw_ptr<views::View> results_ = nullptr;
 +  raw_ptr<views::View> separator_ = nullptr;
++  raw_ptr<views::View> qr_panel_ = nullptr;
 +  raw_ptr<views::View> engine_row_ = nullptr;
 +  raw_ptr<views::ImageView> engine_icon_ = nullptr;
 +  raw_ptr<views::Label> engine_label_ = nullptr;
@@ -590,7 +593,7 @@
 +#endif  // CHROME_BROWSER_UI_VIEWS_HELIUM_COMMAND_BAR_VIEW_H_
 --- /dev/null
 +++ b/chrome/browser/ui/views/helium/command_bar_view.cc
-@@ -0,0 +1,1490 @@
+@@ -0,0 +1,1570 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -632,12 +635,14 @@
 +#include "components/favicon/content/content_favicon_driver.h"
 +#include "components/favicon/core/favicon_service.h"
 +#include "components/keyed_service/core/service_access_type.h"
++#include "chrome/app/vector_icons/vector_icons.h"
 +#include "components/omnibox/browser/autocomplete_classifier.h"
 +#include "components/omnibox/browser/autocomplete_controller_config.h"
 +#include "components/omnibox/browser/autocomplete_result.h"
 +#include "components/omnibox/browser/vector_icons.h"
 +#include "components/omnibox/common/omnibox_features.h"
 +#include "components/prefs/pref_service.h"
++#include "components/qr_code_generator/bitmap_generator.h"
 +#include "components/search_engines/template_url.h"
 +#include "components/search_engines/template_url_bang.h"
 +#include "components/search_engines/template_url_service.h"
@@ -654,14 +659,19 @@
 +#include "ui/base/window_open_disposition_utils.h"
 +#include "ui/events/event.h"
 +#include "ui/events/keycodes/keyboard_codes.h"
++#include "ui/compositor/layer.h"
 +#include "ui/gfx/font_list.h"
 +#include "ui/gfx/geometry/insets.h"
++#include "ui/gfx/geometry/rounded_corners_f.h"
 +#include "ui/gfx/text_elider.h"
 +#include "ui/gfx/vector_icon_types.h"
 +#include "ui/views/background.h"
 +#include "ui/views/bubble/bubble_dialog_delegate_view.h"
 +#include "ui/views/border.h"
 +#include "ui/views/controls/button/button.h"
++#include "ui/views/controls/button/image_button.h"
++#include "ui/views/controls/button/image_button_factory.h"
++#include "ui/views/controls/highlight_path_generator.h"
 +#include "ui/views/controls/image_view.h"
 +#include "ui/views/controls/label.h"
 +#include "ui/views/controls/separator.h"
@@ -679,6 +689,7 @@
 +constexpr int kRowCornerRadius = 10;
 +constexpr int kIconSize = 16;
 +constexpr int kActionIconSize = 14;
++constexpr int kQrCodeSize = 148;
 +constexpr size_t kMaxEntries = 8;
 +constexpr size_t kMaxTabsWithQuery = 4;
 +constexpr size_t kMaxTabsWithoutQuery = 6;
@@ -1099,6 +1110,71 @@
 +  textfield_->SetPlaceholderText(placeholder);
 +  textfield_->GetViewAccessibility().SetName(placeholder);
 +  input_row->SetFlexForView(textfield_, 1);
++
++  // A QR code for the current page, so it can be opened on a phone.
++  if (mode_ == Mode::kCurrentTab) {
++    content::WebContents* contents =
++        browser_->GetTabStripModel()->GetActiveWebContents();
++    const GURL url = contents ? contents->GetLastCommittedURL() : GURL();
++    base::expected<gfx::ImageSkia, qr_code_generator::Error> qr_code =
++        base::unexpected(qr_code_generator::Error::kUnknownError);
++    if (url.SchemeIsHTTPOrHTTPS()) {
++      qr_code = qr_code_generator::GenerateImage(
++          base::as_byte_span(url.spec()),
++          qr_code_generator::ModuleStyle::kSquares,
++          qr_code_generator::LocatorStyle::kSquare,
++          qr_code_generator::CenterImage::kNoCenterImage,
++          qr_code_generator::QuietZone::kIncluded);
++    }
++    if (qr_code.has_value()) {
++      auto* qr_button =
++          input_row->AddChildView(views::CreateVectorImageButtonWithNativeTheme(
++              base::BindRepeating(&CommandBarView::ToggleQrCode,
++                                  base::Unretained(this)),
++              kQrCodeIcon, 20, kColorOmniboxResultsIcon,
++              kColorOmniboxResultsIcon, kColorOmniboxResultsIconHovered));
++      qr_button->SetTooltipText(
++          l10n_util::GetStringUTF16(IDS_HELIUM_COMMAND_BAR_SHOW_QR_CODE));
++      // The textfield keeps focus.
++      qr_button->SetFocusBehavior(FocusBehavior::NEVER);
++      views::InstallCircleHighlightPathGenerator(qr_button);
++
++      auto* qr_panel = AddChildView(std::make_unique<views::BoxLayoutView>());
++      qr_panel->SetInsideBorderInsets(gfx::Insets::TLBR(4, 44, 12, 12));
++      qr_panel->SetBetweenChildSpacing(16);
++      qr_panel->SetCrossAxisAlignment(
++          views::BoxLayout::CrossAxisAlignment::kCenter);
++      auto* qr_image =
++          qr_panel->AddChildView(std::make_unique<views::ImageView>());
++      qr_image->SetImage(ui::ImageModel::FromImageSkia(qr_code.value()));
++      qr_image->SetImageSize(gfx::Size(kQrCodeSize, kQrCodeSize));
++      // The code includes its light margin; round its corners.
++      qr_image->SetBackground(
++          views::CreateRoundedRectBackground(SK_ColorWHITE, kRowCornerRadius));
++      qr_image->SetPaintToLayer();
++      qr_image->layer()->SetRoundedCornerRadius(
++          gfx::RoundedCornersF(kRowCornerRadius));
++      qr_image->GetViewAccessibility().SetName(
++          l10n_util::GetStringUTF16(IDS_HELIUM_COMMAND_BAR_QR_CODE_HINT));
++
++      auto* qr_text =
++          qr_panel->AddChildView(std::make_unique<views::BoxLayoutView>());
++      qr_text->SetOrientation(views::BoxLayout::Orientation::kVertical);
++      qr_text->SetBetweenChildSpacing(4);
++      auto* hint = qr_text->AddChildView(std::make_unique<views::Label>(
++          l10n_util::GetStringUTF16(IDS_HELIUM_COMMAND_BAR_QR_CODE_HINT)));
++      hint->SetHorizontalAlignment(gfx::ALIGN_LEFT);
++      hint->SetEnabledColor(kColorOmniboxText);
++      auto* address = qr_text->AddChildView(
++          std::make_unique<views::Label>(FormatUrlForDisplay(url)));
++      address->SetHorizontalAlignment(gfx::ALIGN_LEFT);
++      address->SetElideBehavior(gfx::ELIDE_MIDDLE);
++      address->SetEnabledColor(kColorOmniboxResultsTextDimmed);
++      qr_panel->SetFlexForView(qr_text, 1);
++      qr_panel->SetVisible(false);
++      qr_panel_ = qr_panel;
++    }
++  }
 +
 +  // A chip naming the site a bang or keyword search goes to, aligned with
 +  // the input text.
@@ -1569,6 +1645,13 @@
 +                       : vector_icons::kSearchIcon,
 +      kColorOmniboxResultsIcon, 20));
 +  ApplyInlineAutocompletion();
++}
++
++void CommandBarView::ToggleQrCode() {
++  qr_panel_->SetVisible(!qr_panel_->GetVisible());
++  if (views::Widget* widget = GetWidget()) {
++    widget->widget_delegate()->AsBubbleDialogDelegate()->SizeToContents();
++  }
 +}
 +
 +void CommandBarView::UpdateEngineChip() {
@@ -2209,7 +2292,7 @@
      </message>
 --- a/chrome/app/generated_resources.grd
 +++ b/chrome/app/generated_resources.grd
-@@ -292,6 +292,55 @@
+@@ -292,6 +292,57 @@
        <message name="IDS_HELIUM_MOBILE_PREVIEW" desc="Toggle clean mobile device emulation for this tab.">Mobile preview (402 × 874)</message>
        <message name="IDS_HELIUM_CREATE_PREVIEW_WORKSPACE" desc="Create a pinned tab group containing desktop and mobile copies of this page.">Create desktop/mobile workspace</message>
        <message name="IDS_HELIUM_PREVIEW_WORKSPACE_TITLE" desc="Default name for a desktop and mobile preview tab group.">Desktop + mobile</message>
@@ -2221,6 +2304,8 @@
 +      <message name="IDS_HELIUM_COMMAND_BAR_SEARCH_WITH" desc="Shown below the search overlay input when a bang or keyword sends the search to another site.">Search with <ph name="SITE_NAME">$1<ex>YouTube</ex></ph></message>
 +      <message name="IDS_HELIUM_COMMAND_BAR_USE_BANG" desc="Action shown on a search overlay result that puts a bang, a shortcut for searching a site, into the input.">Use bang</message>
 +      <message name="IDS_HELIUM_COMMAND_BAR_CMD_BROWSE_BANGS" desc="Search overlay command that lists bangs, shortcuts for searching other sites.">Browse bangs</message>
++      <message name="IDS_HELIUM_COMMAND_BAR_SHOW_QR_CODE" desc="Tooltip for the search overlay button that shows a QR code for the current page.">Show QR code</message>
++      <message name="IDS_HELIUM_COMMAND_BAR_QR_CODE_HINT" desc="Shown next to a QR code for the current page in the search overlay.">Scan to open this page on your phone</message>
 +      <message name="IDS_HELIUM_COMMAND_BAR_RUN" desc="Action shown on a search overlay result that runs a browser command.">Run</message>
 +      <message name="IDS_HELIUM_COMMAND_BAR_CMD_REOPEN_TAB" desc="Search overlay command that reopens the most recently closed tab.">Reopen closed tab</message>
 +      <message name="IDS_HELIUM_COMMAND_BAR_CMD_DUPLICATE_TAB" desc="Search overlay command that duplicates the current tab.">Duplicate tab</message>
