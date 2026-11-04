@@ -1,6 +1,370 @@
 --- /dev/null
++++ b/chrome/browser/ui/views/helium/command_bar_commands.h
+@@ -0,0 +1,72 @@
++// Copyright 2026 The Helium Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_VIEWS_HELIUM_COMMAND_BAR_COMMANDS_H_
++#define CHROME_BROWSER_UI_VIEWS_HELIUM_COMMAND_BAR_COMMANDS_H_
++
++#include <string>
++#include <vector>
++
++#include "base/containers/span.h"
++#include "base/memory/raw_ptr_exclusion.h"
++
++class BrowserWindowInterface;
++
++namespace gfx {
++struct VectorIcon;
++}  // namespace gfx
++
++// A browser feature that can be run from the search overlay.
++struct CommandBarCommand {
++  // Decides which label describes the command right now.
++  enum class State {
++    kNone,
++    // `state_pref` is true.
++    kPrefEnabled,
++    // The active tab is pinned.
++    kTabPinned,
++    // The active tab is muted.
++    kTabMuted,
++  };
++
++  // The browser command to run, or 0 to toggle `toggle_pref` instead.
++  int command_id = 0;
++  // A boolean profile pref the command flips when `command_id` is 0.
++  const char* toggle_pref = nullptr;
++  int label_id = 0;
++  // Replaces `label_id` while `state` holds, e.g. "Unpin tab".
++  int active_label_id = 0;
++  State state = State::kNone;
++  const char* state_pref = nullptr;
++  // Space-separated English words that also find the command.
++  const char* keywords = "";
++  // Points at a static icon; the commands live in a constant table.
++  RAW_PTR_EXCLUSION const gfx::VectorIcon* icon = nullptr;
++};
++
++// All commands in display order.
++base::span<const CommandBarCommand> GetCommandBarCommands();
++
++// Whether `command` can run in `browser` right now.
++bool IsCommandBarCommandAvailable(const CommandBarCommand& command,
++                                  BrowserWindowInterface* browser);
++
++// The label for `command` in its current state.
++std::u16string GetCommandBarCommandLabel(const CommandBarCommand& command,
++                                         BrowserWindowInterface* browser);
++
++// The keyboard shortcut for `command`, or an empty string.
++std::u16string GetCommandBarCommandShortcut(const CommandBarCommand& command,
++                                            BrowserWindowInterface* browser);
++
++// Scores how well `terms` (lowercase) match `label` and `command`'s keywords.
++// Every term must match. Returns 0 for no match.
++int ScoreCommandBarCommand(const CommandBarCommand& command,
++                           const std::u16string& label,
++                           const std::vector<std::u16string>& terms);
++
++void RunCommandBarCommand(const CommandBarCommand& command,
++                          BrowserWindowInterface* browser);
++
++#endif  // CHROME_BROWSER_UI_VIEWS_HELIUM_COMMAND_BAR_COMMANDS_H_
+--- /dev/null
++++ b/chrome/browser/ui/views/helium/command_bar_commands.cc
+@@ -0,0 +1,286 @@
++// Copyright 2026 The Helium Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#include "chrome/browser/ui/views/helium/command_bar_commands.h"
++
++#include <algorithm>
++
++#include "base/i18n/case_conversion.h"
++#include "base/strings/string_split.h"
++#include "base/strings/utf_string_conversions.h"
++#include "chrome/app/chrome_command_ids.h"
++#include "chrome/app/vector_icons/vector_icons.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/ui/browser_commands.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
++#include "chrome/browser/ui/tabs/tab_strip_model.h"
++#include "chrome/browser/ui/views/frame/browser_view.h"
++#include "chrome/common/pref_names.h"
++#include "chrome/grit/generated_resources.h"
++#include "components/bookmarks/common/bookmark_pref_names.h"
++#include "components/omnibox/browser/vector_icons.h"
++#include "components/prefs/pref_service.h"
++#include "components/vector_icons/vector_icons.h"
++#include "content/public/browser/web_contents.h"
++#include "ui/base/accelerators/accelerator.h"
++#include "ui/base/l10n/l10n_util.h"
++
++namespace {
++
++using State = CommandBarCommand::State;
++
++constexpr CommandBarCommand kCommands[] = {
++    // Tabs.
++    {.command_id = IDC_RESTORE_TAB,
++     .label_id = IDS_HELIUM_COMMAND_BAR_CMD_REOPEN_TAB,
++     .keywords = "undo restore recently closed",
++     .icon = &vector_icons::kHistoryIcon},
++    {.command_id = IDC_DUPLICATE_TAB,
++     .label_id = IDS_HELIUM_COMMAND_BAR_CMD_DUPLICATE_TAB,
++     .keywords = "copy clone",
++     .icon = &kOpenInNewIcon},
++    {.command_id = IDC_WINDOW_PIN_TAB,
++     .label_id = IDS_HELIUM_COMMAND_BAR_CMD_PIN_TAB,
++     .active_label_id = IDS_HELIUM_COMMAND_BAR_CMD_UNPIN_TAB,
++     .state = State::kTabPinned,
++     .icon = &kKeepIcon},
++    {.command_id = IDC_WINDOW_MUTE_SITE,
++     .label_id = IDS_HELIUM_COMMAND_BAR_CMD_MUTE_SITE,
++     .active_label_id = IDS_HELIUM_COMMAND_BAR_CMD_UNMUTE_SITE,
++     .state = State::kTabMuted,
++     .keywords = "sound audio volume silence",
++     .icon = &vector_icons::kVolumeUpIcon},
++    {.command_id = IDC_CLOSE_TAB,
++     .label_id = IDS_HELIUM_COMMAND_BAR_CMD_CLOSE_TAB,
++     .icon = &kTabCloseIcon},
++    {.command_id = IDC_MOVE_TAB_TO_NEW_WINDOW,
++     .label_id = IDS_HELIUM_COMMAND_BAR_CMD_MOVE_TAB_TO_NEW_WINDOW,
++     .keywords = "detach",
++     .icon = &kNewWindowIcon},
++    {.command_id = IDC_NEW_SPLIT_TAB,
++     .label_id = IDS_HELIUM_COMMAND_BAR_CMD_SPLIT_VIEW,
++     .keywords = "side by side pane",
++     .icon = &kSplitSceneIcon},
++
++    // Windows.
++    {.command_id = IDC_NEW_WINDOW,
++     .label_id = IDS_HELIUM_COMMAND_BAR_CMD_NEW_WINDOW,
++     .icon = &kNewWindowIcon},
++    {.command_id = IDC_NEW_INCOGNITO_WINDOW,
++     .label_id = IDS_HELIUM_COMMAND_BAR_CMD_NEW_INCOGNITO_WINDOW,
++     .keywords = "private",
++     .icon = &kIncognitoIcon},
++
++    // The current page.
++    {.command_id = IDC_COPY_URL,
++     .label_id = IDS_HELIUM_COMMAND_BAR_CMD_COPY_URL,
++     .keywords = "link url clipboard share",
++     .icon = &kLinkChromeRefreshOldIcon},
++    {.command_id = IDC_RELOAD,
++     .label_id = IDS_HELIUM_COMMAND_BAR_CMD_RELOAD,
++     .keywords = "refresh",
++     .icon = &vector_icons::kRefreshIcon},
++    {.command_id = IDC_BOOKMARK_THIS_TAB,
++     .label_id = IDS_HELIUM_COMMAND_BAR_CMD_BOOKMARK_PAGE,
++     .keywords = "star favorite save",
++     .icon = &kStarIcon},
++    {.command_id = IDC_FIND,
++     .label_id = IDS_HELIUM_COMMAND_BAR_CMD_FIND,
++     .keywords = "search text",
++     .icon = &kFindInPageIcon},
++    {.command_id = IDC_TAKE_SCREENSHOT,
++     .label_id = IDS_HELIUM_COMMAND_BAR_CMD_SCREENSHOT,
++     .keywords = "capture image",
++     .icon = &kScreenshotRegionIcon},
++    {.command_id = IDC_QRCODE_GENERATOR,
++     .label_id = IDS_HELIUM_COMMAND_BAR_CMD_QR_CODE,
++     .keywords = "share",
++     .icon = &kQrCodeIcon},
++    {.command_id = IDC_PRINT,
++     .label_id = IDS_HELIUM_COMMAND_BAR_CMD_PRINT,
++     .keywords = "pdf",
++     .icon = &vector_icons::kPrintIcon},
++    {.command_id = IDC_SAVE_PAGE,
++     .label_id = IDS_HELIUM_COMMAND_BAR_CMD_SAVE_PAGE,
++     .keywords = "download html",
++     .icon = &kFileSaveIcon},
++    {.command_id = IDC_ZOOM_PLUS,
++     .label_id = IDS_HELIUM_COMMAND_BAR_CMD_ZOOM_IN,
++     .keywords = "larger bigger",
++     .icon = &kZoomInIcon},
++    {.command_id = IDC_ZOOM_MINUS,
++     .label_id = IDS_HELIUM_COMMAND_BAR_CMD_ZOOM_OUT,
++     .keywords = "smaller",
++     .icon = &kZoomOutIcon},
++    {.command_id = IDC_ZOOM_NORMAL,
++     .label_id = IDS_HELIUM_COMMAND_BAR_CMD_ZOOM_RESET,
++     .keywords = "actual size default",
++     .icon = &kZoomInIcon},
++    {.command_id = IDC_VIEW_SOURCE,
++     .label_id = IDS_HELIUM_COMMAND_BAR_CMD_VIEW_SOURCE,
++     .keywords = "html",
++     .icon = &kCodeIcon},
++    {.command_id = IDC_DEV_TOOLS_TOGGLE,
++     .label_id = IDS_HELIUM_COMMAND_BAR_CMD_DEV_TOOLS,
++     .keywords = "inspect console devtools debug",
++     .icon = &vector_icons::kCodeIcon},
++
++    // Browser pages.
++    {.command_id = IDC_SHOW_HISTORY,
++     .label_id = IDS_HELIUM_COMMAND_BAR_CMD_HISTORY,
++     .icon = &vector_icons::kHistoryIcon},
++    {.command_id = IDC_SHOW_DOWNLOADS,
++     .label_id = IDS_HELIUM_COMMAND_BAR_CMD_DOWNLOADS,
++     .icon = &kDownloadIcon},
++    {.command_id = IDC_SHOW_BOOKMARK_MANAGER,
++     .label_id = IDS_HELIUM_COMMAND_BAR_CMD_BOOKMARKS,
++     .keywords = "manager favorites",
++     .icon = &kStarIcon},
++    {.command_id = IDC_MANAGE_EXTENSIONS,
++     .label_id = IDS_HELIUM_COMMAND_BAR_CMD_EXTENSIONS,
++     .keywords = "addons plugins",
++     .icon = &vector_icons::kExtensionChromeRefreshOldIcon},
++    {.command_id = IDC_OPTIONS,
++     .label_id = IDS_HELIUM_COMMAND_BAR_CMD_SETTINGS,
++     .keywords = "preferences options",
++     .icon = &vector_icons::kSettingsIcon},
++    {.command_id = IDC_CLEAR_BROWSING_DATA,
++     .label_id = IDS_HELIUM_COMMAND_BAR_CMD_CLEAR_DATA,
++     .keywords = "delete history cache cookies",
++     .icon = &kDeleteIcon},
++    {.command_id = IDC_TASK_MANAGER_MAIN_MENU,
++     .label_id = IDS_HELIUM_COMMAND_BAR_CMD_TASK_MANAGER,
++     .keywords = "processes memory cpu",
++     .icon = &vector_icons::kTuneIcon},
++
++    // Layout.
++    {.toggle_pref = prefs::kHeliumZenMode,
++     .label_id = IDS_HELIUM_COMMAND_BAR_CMD_FRAMELESS_ON,
++     .active_label_id = IDS_HELIUM_COMMAND_BAR_CMD_FRAMELESS_OFF,
++     .state = State::kPrefEnabled,
++     .state_pref = prefs::kHeliumZenMode,
++     .keywords = "zen focus minimal hide toolbar",
++     .icon = &kFullscreenIcon},
++    {.command_id = IDC_TOGGLE_ZEN_MODE_TOP_CHROME_PIN,
++     .label_id = IDS_HELIUM_COMMAND_BAR_CMD_PIN_TOOLBAR,
++     .active_label_id = IDS_HELIUM_COMMAND_BAR_CMD_UNPIN_TOOLBAR,
++     .state = State::kPrefEnabled,
++     .state_pref = prefs::kHeliumZenModeTopChromePinned,
++     .keywords = "frameless zen show",
++     .icon = &kKeepIcon},
++    {.command_id = IDC_TOGGLE_VERTICAL_TABS,
++     .label_id = IDS_HELIUM_COMMAND_BAR_CMD_VERTICAL_TABS,
++     .keywords = "sidebar layout tab strip horizontal",
++     .icon = &omnibox::kTabIcon},
++    {.command_id = IDC_SHOW_BOOKMARK_BAR,
++     .label_id = IDS_HELIUM_COMMAND_BAR_CMD_SHOW_BOOKMARK_BAR,
++     .active_label_id = IDS_HELIUM_COMMAND_BAR_CMD_HIDE_BOOKMARK_BAR,
++     .state = State::kPrefEnabled,
++     .state_pref = bookmarks::prefs::kShowBookmarkBar,
++     .keywords = "favorites toolbar",
++     .icon = &kStarIcon},
++    {.command_id = IDC_FULLSCREEN,
++     .label_id = IDS_HELIUM_COMMAND_BAR_CMD_FULLSCREEN,
++     .icon = &kFullscreenIcon},
++};
++
++content::WebContents* GetActiveContents(BrowserWindowInterface* browser) {
++  return browser->GetTabStripModel()->GetActiveWebContents();
++}
++
++bool IsActive(const CommandBarCommand& command,
++              BrowserWindowInterface* browser) {
++  switch (command.state) {
++    case State::kNone:
++      return false;
++    case State::kPrefEnabled:
++      return browser->GetProfile()->GetPrefs()->GetBoolean(
++          command.state_pref);
++    case State::kTabPinned: {
++      TabStripModel* tab_strip = browser->GetTabStripModel();
++      return tab_strip->active_index() != TabStripModel::kNoTab &&
++             tab_strip->IsTabPinned(tab_strip->active_index());
++    }
++    case State::kTabMuted: {
++      content::WebContents* contents = GetActiveContents(browser);
++      return contents && contents->IsAudioMuted();
++    }
++  }
++}
++
++}  // namespace
++
++base::span<const CommandBarCommand> GetCommandBarCommands() {
++  return kCommands;
++}
++
++bool IsCommandBarCommandAvailable(const CommandBarCommand& command,
++                                  BrowserWindowInterface* browser) {
++  if (command.command_id) {
++    return chrome::IsCommandEnabled(browser, command.command_id);
++  }
++  return command.toggle_pref != nullptr;
++}
++
++std::u16string GetCommandBarCommandLabel(const CommandBarCommand& command,
++                                         BrowserWindowInterface* browser) {
++  return l10n_util::GetStringUTF16(
++      command.active_label_id && IsActive(command, browser)
++          ? command.active_label_id
++          : command.label_id);
++}
++
++std::u16string GetCommandBarCommandShortcut(const CommandBarCommand& command,
++                                            BrowserWindowInterface* browser) {
++  BrowserView* browser_view = BrowserView::GetBrowserViewForBrowser(browser);
++  ui::Accelerator accelerator;
++  if (!command.command_id || !browser_view ||
++      !browser_view->GetAccelerator(command.command_id, &accelerator)) {
++    return std::u16string();
++  }
++  return accelerator.GetShortcutText();
++}
++
++int ScoreCommandBarCommand(const CommandBarCommand& command,
++                           const std::u16string& label,
++                           const std::vector<std::u16string>& terms) {
++  const std::u16string lower_label = base::i18n::ToLower(label);
++  const std::vector<std::u16string> label_words =
++      base::SplitString(lower_label, u" -", base::TRIM_WHITESPACE,
++                        base::SPLIT_WANT_NONEMPTY);
++  const std::vector<std::u16string> keywords = base::SplitString(
++      base::UTF8ToUTF16(command.keywords), u" ", base::TRIM_WHITESPACE,
++      base::SPLIT_WANT_NONEMPTY);
++  const auto has_prefix = [](const std::vector<std::u16string>& words,
++                             const std::u16string& term) {
++    return std::ranges::any_of(words, [&](const std::u16string& word) {
++      return word.starts_with(term);
++    });
++  };
++
++  int score = 0;
++  for (const auto& term : terms) {
++    if (has_prefix(label_words, term)) {
++      score += 3;
++    } else if (has_prefix(keywords, term)) {
++      score += 2;
++    } else if (lower_label.find(term) != std::u16string::npos) {
++      score += 1;
++    } else {
++      return 0;
++    }
++  }
++  return score;
++}
++
++void RunCommandBarCommand(const CommandBarCommand& command,
++                          BrowserWindowInterface* browser) {
++  if (command.command_id) {
++    chrome::ExecuteCommand(browser, command.command_id);
++    return;
++  }
++  PrefService* prefs = browser->GetProfile()->GetPrefs();
++  prefs->SetBoolean(command.toggle_pref,
++                    !prefs->GetBoolean(command.toggle_pref));
++}
+--- /dev/null
 +++ b/chrome/browser/ui/views/helium/command_bar_view.h
-@@ -0,0 +1,166 @@
+@@ -0,0 +1,192 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -30,9 +394,11 @@
 +
 +class BrowserWindowInterface;
 +class ChromeAutocompleteSchemeClassifier;
++struct CommandBarCommand;
 +
 +namespace views {
 +class ImageView;
++class Label;
 +class Textfield;
 +}  // namespace views
 +
@@ -92,6 +458,10 @@
 +    tabs::TabHandle tab;
 +    // Set when the entry opens an autocomplete match.
 +    std::optional<AutocompleteMatch> match;
++    // Set when the entry runs a browser command.
++    raw_ptr<const CommandBarCommand> command = nullptr;
++    // The command's keyboard shortcut, if any.
++    std::u16string shortcut;
 +    // Whether this is the autocomplete result's default match.
 +    bool is_default_match = false;
 +    std::u16string title;
@@ -112,10 +482,17 @@
 +    base::Time last_active;
 +  };
 +
++  // Whether the input starts with ">", which lists only commands.
++  bool IsCommandQuery() const;
 +  void StartQuery();
 +  void RebuildEntries();
 +  void RebuildRows();
 +  void SetSelectedIndex(std::optional<size_t> index);
++  // Shows which site a bang or keyword search will go to.
++  void UpdateEngineChip();
++  void OnEngineFaviconFetched(const favicon_base::FaviconImageResult& result);
++  // Selects the entry that had `key`, or else the first entry.
++  void RestoreSelection(const std::optional<std::string>& key);
 +  void ApplyInlineAutocompletion();
 +  void OpenEntry(size_t index, WindowOpenDisposition disposition);
 +  void OpenMatch(const AutocompleteMatch& match,
@@ -131,6 +508,12 @@
 +  Entry CreateMatchEntry(const AutocompleteMatch& match) const;
 +  // An entry that opens the page of `tab` again rather than switching to it.
 +  Entry CreateReopenTabEntry(tabs::TabInterface* tab) const;
++  // Available commands matching `query`, best first, or all of them in their
++  // usual order if `query` is empty. Each term must score at least
++  // `min_term_score`; see ScoreCommandBarCommand().
++  std::vector<Entry> GetCommandEntries(const std::u16string& query,
++                                       size_t max_entries,
++                                       int min_term_score) const;
 +  std::string GetEntryKey(const Entry& entry) const;
 +  void FetchFavicons();
 +  void OnFaviconFetched(size_t index,
@@ -148,6 +531,13 @@
 +  raw_ptr<views::Textfield> textfield_ = nullptr;
 +  raw_ptr<views::View> results_ = nullptr;
 +  raw_ptr<views::View> separator_ = nullptr;
++  raw_ptr<views::View> engine_row_ = nullptr;
++  raw_ptr<views::ImageView> engine_icon_ = nullptr;
++  raw_ptr<views::Label> engine_label_ = nullptr;
++  raw_ptr<views::Label> engine_host_ = nullptr;
++  // The keyword of the engine shown in the chip, if any.
++  std::u16string engine_keyword_;
++  base::CancelableTaskTracker engine_favicon_tracker_;
 +
 +  // What the user typed, excluding inline autocompletion.
 +  std::u16string user_text_;
@@ -169,7 +559,7 @@
 +#endif  // CHROME_BROWSER_UI_VIEWS_HELIUM_COMMAND_BAR_VIEW_H_
 --- /dev/null
 +++ b/chrome/browser/ui/views/helium/command_bar_view.cc
-@@ -0,0 +1,1054 @@
+@@ -0,0 +1,1256 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -177,6 +567,7 @@
 +#include "chrome/browser/ui/views/helium/command_bar_view.h"
 +
 +#include <algorithm>
++#include <functional>
 +#include <utility>
 +
 +#include "base/feature_list.h"
@@ -203,6 +594,7 @@
 +#include "chrome/browser/ui/navigator/browser_navigator_params.h"
 +#include "chrome/browser/ui/tabs/tab_strip_model.h"
 +#include "chrome/browser/ui/views/frame/browser_view.h"
++#include "chrome/browser/ui/views/helium/command_bar_commands.h"
 +#include "chrome/common/pref_names.h"
 +#include "chrome/common/webui_url_constants.h"
 +#include "chrome/grit/generated_resources.h"
@@ -216,6 +608,7 @@
 +#include "components/omnibox/common/omnibox_features.h"
 +#include "components/prefs/pref_service.h"
 +#include "components/search_engines/template_url.h"
++#include "components/search_engines/template_url_bang.h"
 +#include "components/search_engines/template_url_service.h"
 +#include "components/strings/grit/components_strings.h"
 +#include "components/url_formatter/url_formatter.h"
@@ -258,6 +651,12 @@
 +constexpr size_t kMaxEntries = 8;
 +constexpr size_t kMaxTabsWithQuery = 4;
 +constexpr size_t kMaxTabsWithoutQuery = 6;
++constexpr size_t kMaxCommandEntries = 10;
++constexpr size_t kMaxCommandsWithQuery = 2;
++// Commands only join regular results when every term starts a word of their
++// name, and the query is long enough to mean it.
++constexpr int kMinCommandTermScoreWithQuery = 3;
++constexpr size_t kMinCommandQueryLength = 3;
 +
 +bool IsNewTabPageUrl(const GURL& url) {
 +  return url.is_empty() || url.IsAboutBlank() ||
@@ -345,6 +744,11 @@
 +    static_cast<views::BoxLayout*>(GetLayoutManager())
 +        ->SetFlexForView(text, 1);
 +
++    if (!entry.shortcut.empty()) {
++      shortcut_ =
++          AddChildView(std::make_unique<views::Label>(entry.shortcut));
++    }
++
 +    // What Enter does. Switching to a tab and opening a page again are shown
 +    // as outlined chips on every row; other actions only on the selected row.
 +    if (!entry.action.empty()) {
@@ -418,6 +822,9 @@
 +    if (detail_) {
 +      detail_->SetEnabledColor(dimmed);
 +    }
++    if (shortcut_) {
++      shortcut_->SetEnabledColor(dimmed);
++    }
 +    if (action_) {
 +      action_->SetVisible(emphasized_ || selected_);
 +      enter_label_->SetVisible(selected_);
@@ -441,6 +848,7 @@
 +  raw_ptr<views::ImageView> icon_ = nullptr;
 +  raw_ptr<views::Label> title_ = nullptr;
 +  raw_ptr<views::Label> detail_ = nullptr;
++  raw_ptr<views::Label> shortcut_ = nullptr;
 +  bool emphasized_ = false;
 +  raw_ptr<views::BoxLayoutView> action_ = nullptr;
 +  raw_ptr<views::ImageView> action_icon_ = nullptr;
@@ -597,8 +1005,8 @@
 +  if (const TemplateURL* default_search =
 +          TemplateURLServiceFactory::GetForProfile(profile)
 +              ->GetDefaultSearchProvider()) {
-+    placeholder = l10n_util::GetStringFUTF16(IDS_OMNIBOX_PLACEHOLDER_TEXT,
-+                                             default_search->short_name());
++    placeholder = l10n_util::GetStringFUTF16(
++        IDS_HELIUM_COMMAND_BAR_PLACEHOLDER, default_search->short_name());
 +  }
 +
 +  textfield_ = input_row->AddChildView(std::make_unique<views::Textfield>());
@@ -611,6 +1019,30 @@
 +  textfield_->SetPlaceholderText(placeholder);
 +  textfield_->GetViewAccessibility().SetName(placeholder);
 +  input_row->SetFlexForView(textfield_, 1);
++
++  // A chip naming the site a bang or keyword search goes to, aligned with
++  // the input text.
++  auto* engine_row = AddChildView(std::make_unique<views::BoxLayoutView>());
++  engine_row->SetInsideBorderInsets(gfx::Insets::TLBR(0, 44, 8, 12));
++  engine_row->SetMainAxisAlignment(views::BoxLayout::MainAxisAlignment::kStart);
++  engine_row_ = engine_row;
++  auto* engine_chip =
++      engine_row->AddChildView(std::make_unique<views::BoxLayoutView>());
++  engine_chip->SetInsideBorderInsets(gfx::Insets::VH(4, 10));
++  engine_chip->SetBetweenChildSpacing(8);
++  engine_chip->SetCrossAxisAlignment(
++      views::BoxLayout::CrossAxisAlignment::kCenter);
++  engine_chip->SetBackground(views::CreateRoundedRectBackground(
++      kColorOmniboxResultsBackgroundSelected, kRowCornerRadius));
++  engine_icon_ =
++      engine_chip->AddChildView(std::make_unique<views::ImageView>());
++  engine_icon_->SetImageSize(gfx::Size(kIconSize, kIconSize));
++  engine_label_ = engine_chip->AddChildView(std::make_unique<views::Label>());
++  engine_label_->SetEnabledColor(kColorOmniboxResultsTextSelected);
++  engine_host_ = engine_chip->AddChildView(std::make_unique<views::Label>());
++  engine_host_->SetEnabledColor(kColorOmniboxResultsTextDimmedSelected);
++  engine_host_->SetFontList(engine_host_->font_list().DeriveWithSizeDelta(-1));
++  engine_row_->SetVisible(false);
 +
 +  separator_ = AddChildView(std::make_unique<views::Separator>());
 +  separator_->SetBorder(views::CreateEmptyBorder(gfx::Insets::VH(4, 4)));
@@ -711,10 +1143,15 @@
 +  RebuildEntries();
 +}
 +
++bool CommandBarView::IsCommandQuery() const {
++  return user_edited_ &&
++         base::TrimWhitespace(user_text_, base::TRIM_LEADING).starts_with(u">");
++}
++
 +void CommandBarView::StartQuery() {
 +  const std::u16string text(
 +      base::TrimWhitespace(user_text_, base::TRIM_LEADING));
-+  if (text.empty()) {
++  if (text.empty() || IsCommandQuery()) {
 +    autocomplete_controller_->Stop(AutocompleteStopReason::kClobbered);
 +    RebuildEntries();
 +    return;
@@ -754,6 +1191,14 @@
 +      base::TrimWhitespace(user_text_, base::TRIM_ALL));
 +  std::vector<ScoredTab> tabs =
 +      GetTabs(user_edited_ ? query : std::u16string());
++
++  if (IsCommandQuery()) {
++    entries_ = GetCommandEntries(query.substr(1), kMaxCommandEntries,
++                                 /*min_term_score=*/1);
++    RebuildRows();
++    RestoreSelection(selected_key);
++    return;
++  }
 +
 +  if (!user_edited_ || query.empty()) {
 +    // Without a query, list recently used tabs.
@@ -881,19 +1326,30 @@
 +      entries_.insert(entries_.begin() + 1, CreateReopenTabEntry(tab));
 +    }
 +  }
-+  if (entries_.size() > kMaxEntries) {
-+    entries_.resize(kMaxEntries);
++  std::vector<Entry> commands;
++  if (query.size() >= kMinCommandQueryLength) {
++    commands = GetCommandEntries(query, kMaxCommandsWithQuery,
++                                 kMinCommandTermScoreWithQuery);
++  }
++  if (entries_.size() + commands.size() > kMaxEntries) {
++    entries_.resize(kMaxEntries - commands.size());
++  }
++  for (Entry& entry : commands) {
++    entries_.push_back(std::move(entry));
 +  }
 +
 +  RebuildRows();
++  RestoreSelection(selected_key);
++}
 +
++void CommandBarView::RestoreSelection(const std::optional<std::string>& key) {
 +  std::optional<size_t> selection;
 +  if (!entries_.empty()) {
 +    selection = 0;
 +  }
-+  if (selected_key) {
++  if (key) {
 +    for (size_t i = 0; i < entries_.size(); ++i) {
-+      if (GetEntryKey(entries_[i]) == *selected_key) {
++      if (GetEntryKey(entries_[i]) == *key) {
 +        selection = i;
 +        break;
 +      }
@@ -936,13 +1392,88 @@
 +  for (size_t i = 0; i < rows_.size(); ++i) {
 +    rows_[i]->SetSelected(index == i);
 +  }
-+  // The input icon mirrors whether Enter switches tabs.
++  UpdateEngineChip();
++
++  // The input icon mirrors what Enter does.
 +  const bool switches_tab = index && *index < entries_.size() &&
 +                            entries_[*index].tab.Get();
 +  input_icon_->SetImage(ui::ImageModel::FromVectorIcon(
-+      switches_tab ? omnibox::kTabIcon : vector_icons::kSearchIcon,
++      IsCommandQuery() ? vector_icons::kKeyboardIcon
++      : switches_tab   ? omnibox::kTabIcon
++                       : vector_icons::kSearchIcon,
 +      kColorOmniboxResultsIcon, 20));
 +  ApplyInlineAutocompletion();
++}
++
++void CommandBarView::UpdateEngineChip() {
++  TemplateURLService* template_url_service =
++      TemplateURLServiceFactory::GetForProfile(browser_->GetProfile());
++  const TemplateURL* engine = nullptr;
++  const AutocompleteMatch* match = nullptr;
++  if (selected_index_ && *selected_index_ < entries_.size() &&
++      entries_[*selected_index_].match) {
++    match = &*entries_[*selected_index_].match;
++    if (AutocompleteMatch::IsSearchType(match->type)) {
++      engine = match->GetTemplateURL(template_url_service);
++    }
++  }
++  if (engine == template_url_service->GetDefaultSearchProvider()) {
++    engine = nullptr;
++  }
++
++  const bool was_visible = engine_row_->GetVisible();
++  engine_row_->SetVisible(engine);
++  if (!engine) {
++    engine_keyword_.clear();
++    engine_favicon_tracker_.TryCancelAll();
++  } else if (engine->keyword() != engine_keyword_) {
++    engine_keyword_ = engine->keyword();
++    const bool is_ai = engine->bang_id() > 0 &&
++                       engine->bang_category() == Bangs::BANG_CATEGORY_AI;
++    engine_label_->SetText(l10n_util::GetStringFUTF16(
++        is_ai ? IDS_OMNIBOX_SELECTED_KEYWORD_ASK_TEXT
++              : IDS_HELIUM_COMMAND_BAR_SEARCH_WITH,
++        engine->short_name()));
++    std::string host(match->destination_url.host());
++    if (host.starts_with("www.")) {
++      host.erase(0, 4);
++    }
++    engine_host_->SetText(base::UTF8ToUTF16(host));
++    engine_host_->SetVisible(!host.empty());
++    engine_icon_->SetImage(ui::ImageModel::FromVectorIcon(
++        match->GetVectorIcon(/*is_bookmark=*/false, engine),
++        kColorOmniboxResultsIcon, kIconSize));
++
++    engine_favicon_tracker_.TryCancelAll();
++    if (favicon::FaviconService* favicon_service =
++            FaviconServiceFactory::GetForProfile(
++                browser_->GetProfile(), ServiceAccessType::EXPLICIT_ACCESS)) {
++      auto callback = base::BindOnce(&CommandBarView::OnEngineFaviconFetched,
++                                     weak_factory_.GetWeakPtr());
++      if (engine->favicon_url().is_valid()) {
++        favicon_service->GetFaviconImage(engine->favicon_url(),
++                                         std::move(callback),
++                                         &engine_favicon_tracker_);
++      } else {
++        favicon_service->GetFaviconImageForPageURL(
++            match->destination_url.GetWithEmptyPath(), std::move(callback),
++            &engine_favicon_tracker_);
++      }
++    }
++  }
++
++  if (was_visible != engine_row_->GetVisible()) {
++    if (views::Widget* widget = GetWidget()) {
++      widget->widget_delegate()->AsBubbleDialogDelegate()->SizeToContents();
++    }
++  }
++}
++
++void CommandBarView::OnEngineFaviconFetched(
++    const favicon_base::FaviconImageResult& result) {
++  if (!result.image.IsEmpty()) {
++    engine_icon_->SetImage(ui::ImageModel::FromImage(result.image));
++  }
 +}
 +
 +void CommandBarView::ApplyInlineAutocompletion() {
@@ -982,6 +1513,22 @@
 +        window->GetWindow()->Activate();
 +      }
 +    }
++    Dismiss();
++    return;
++  }
++  if (entry.command) {
++    // Run once the overlay has closed, so commands that move focus, such as
++    // find in page, keep it.
++    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
++        FROM_HERE,
++        base::BindOnce(
++            [](base::WeakPtr<BrowserWindowInterface> browser,
++               const CommandBarCommand* command) {
++              if (browser) {
++                RunCommandBarCommand(*command, browser.get());
++              }
++            },
++            browser_->GetWeakPtr(), entry.command.get()));
 +    Dismiss();
 +    return;
 +  }
@@ -1181,7 +1728,52 @@
 +  return entry;
 +}
 +
++std::vector<CommandBarView::Entry> CommandBarView::GetCommandEntries(
++    const std::u16string& query,
++    size_t max_entries,
++    int min_term_score) const {
++  const std::vector<std::u16string> terms =
++      base::SplitString(base::i18n::ToLower(query), base::kWhitespaceUTF16,
++                        base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
++  std::vector<std::pair<int, Entry>> scored;
++  for (const CommandBarCommand& command : GetCommandBarCommands()) {
++    if (!IsCommandBarCommandAvailable(command, browser_)) {
++      continue;
++    }
++    Entry entry;
++    entry.command = &command;
++    entry.title = GetCommandBarCommandLabel(command, browser_);
++    int score = 1;
++    if (!terms.empty()) {
++      score = ScoreCommandBarCommand(command, entry.title, terms);
++      if (score < min_term_score * static_cast<int>(terms.size())) {
++        continue;
++      }
++    }
++    entry.shortcut = GetCommandBarCommandShortcut(command, browser_);
++    entry.icon = ui::ImageModel::FromVectorIcon(
++        *command.icon, kColorOmniboxResultsIcon, kIconSize);
++    entry.action = l10n_util::GetStringUTF16(IDS_HELIUM_COMMAND_BAR_RUN);
++    scored.emplace_back(score, std::move(entry));
++  }
++  std::ranges::stable_sort(scored, std::ranges::greater(),
++                           &std::pair<int, Entry>::first);
++
++  std::vector<Entry> entries;
++  for (auto& [score, entry] : scored) {
++    if (entries.size() == max_entries) {
++      break;
++    }
++    entries.push_back(std::move(entry));
++  }
++  return entries;
++}
++
 +std::string CommandBarView::GetEntryKey(const Entry& entry) const {
++  if (entry.command) {
++    return base::StrCat(
++        {"command:", base::NumberToString(entry.command->label_id)});
++  }
 +  if (entry.tab.Get()) {
 +    return base::StrCat({"tab:", base::NumberToString(entry.tab.raw_value())});
 +  }
@@ -1281,10 +1873,12 @@
        }
 --- a/chrome/browser/ui/BUILD.gn
 +++ b/chrome/browser/ui/BUILD.gn
-@@ -3573,6 +3573,8 @@ static_library("ui") {
+@@ -3573,6 +3573,10 @@ static_library("ui") {
        "views/frame/horizontal_tab_strip_region_view.h",
        "views/frame/vertical_tab_strip_region_view.cc",
        "views/frame/vertical_tab_strip_region_view.h",
++      "views/helium/command_bar_commands.cc",
++      "views/helium/command_bar_commands.h",
 +      "views/helium/command_bar_view.cc",
 +      "views/helium/command_bar_view.h",
        "views/helium/frame_corner_radius.cc",
@@ -1318,7 +1912,7 @@
      </message>
 --- a/chrome/app/generated_resources.grd
 +++ b/chrome/app/generated_resources.grd
-@@ -292,6 +292,11 @@
+@@ -292,6 +292,53 @@
        <message name="IDS_HELIUM_MOBILE_PREVIEW" desc="Toggle clean mobile device emulation for this tab.">Mobile preview (402 × 874)</message>
        <message name="IDS_HELIUM_CREATE_PREVIEW_WORKSPACE" desc="Create a pinned tab group containing desktop and mobile copies of this page.">Create desktop/mobile workspace</message>
        <message name="IDS_HELIUM_PREVIEW_WORKSPACE_TITLE" desc="Default name for a desktop and mobile preview tab group.">Desktop + mobile</message>
@@ -1327,6 +1921,48 @@
 +      <message name="IDS_HELIUM_COMMAND_BAR_OPEN" desc="Action shown on a search overlay result that opens a page in the current tab.">Open</message>
 +      <message name="IDS_HELIUM_COMMAND_BAR_SEARCH_IN_NEW_TAB" desc="Action shown on a search overlay result that searches in a new tab.">Search in new tab</message>
 +      <message name="IDS_HELIUM_COMMAND_BAR_SEARCH" desc="Action shown on a search overlay result that searches in the current tab.">Search</message>
++      <message name="IDS_HELIUM_COMMAND_BAR_SEARCH_WITH" desc="Shown below the search overlay input when a bang or keyword sends the search to another site.">Search with <ph name="SITE_NAME">$1<ex>YouTube</ex></ph></message>
++      <message name="IDS_HELIUM_COMMAND_BAR_RUN" desc="Action shown on a search overlay result that runs a browser command.">Run</message>
++      <message name="IDS_HELIUM_COMMAND_BAR_CMD_REOPEN_TAB" desc="Search overlay command that reopens the most recently closed tab.">Reopen closed tab</message>
++      <message name="IDS_HELIUM_COMMAND_BAR_CMD_DUPLICATE_TAB" desc="Search overlay command that duplicates the current tab.">Duplicate tab</message>
++      <message name="IDS_HELIUM_COMMAND_BAR_CMD_PIN_TAB" desc="Search overlay command that pins the current tab.">Pin tab</message>
++      <message name="IDS_HELIUM_COMMAND_BAR_CMD_UNPIN_TAB" desc="Search overlay command that unpins the current tab.">Unpin tab</message>
++      <message name="IDS_HELIUM_COMMAND_BAR_CMD_MUTE_SITE" desc="Search overlay command that mutes the current site.">Mute site</message>
++      <message name="IDS_HELIUM_COMMAND_BAR_CMD_UNMUTE_SITE" desc="Search overlay command that unmutes the current site.">Unmute site</message>
++      <message name="IDS_HELIUM_COMMAND_BAR_CMD_CLOSE_TAB" desc="Search overlay command that closes the current tab.">Close tab</message>
++      <message name="IDS_HELIUM_COMMAND_BAR_CMD_MOVE_TAB_TO_NEW_WINDOW" desc="Search overlay command that moves the current tab to a new window.">Move tab to new window</message>
++      <message name="IDS_HELIUM_COMMAND_BAR_CMD_SPLIT_VIEW" desc="Search overlay command that opens a split view with the current tab.">Open split view</message>
++      <message name="IDS_HELIUM_COMMAND_BAR_CMD_NEW_WINDOW" desc="Search overlay command that opens a new window.">New window</message>
++      <message name="IDS_HELIUM_COMMAND_BAR_CMD_NEW_INCOGNITO_WINDOW" desc="Search overlay command that opens a new Incognito window.">New Incognito window</message>
++      <message name="IDS_HELIUM_COMMAND_BAR_CMD_COPY_URL" desc="Search overlay command that copies the address of the current page.">Copy page address</message>
++      <message name="IDS_HELIUM_COMMAND_BAR_CMD_RELOAD" desc="Search overlay command that reloads the current page.">Reload page</message>
++      <message name="IDS_HELIUM_COMMAND_BAR_CMD_BOOKMARK_PAGE" desc="Search overlay command that bookmarks the current page.">Bookmark this page</message>
++      <message name="IDS_HELIUM_COMMAND_BAR_CMD_FIND" desc="Search overlay command that finds text in the current page.">Find in page</message>
++      <message name="IDS_HELIUM_COMMAND_BAR_CMD_SCREENSHOT" desc="Search overlay command that takes a screenshot of the current page.">Take screenshot</message>
++      <message name="IDS_HELIUM_COMMAND_BAR_CMD_QR_CODE" desc="Search overlay command that creates a QR code for the current page.">Create QR code</message>
++      <message name="IDS_HELIUM_COMMAND_BAR_CMD_PRINT" desc="Search overlay command that prints the current page.">Print page</message>
++      <message name="IDS_HELIUM_COMMAND_BAR_CMD_SAVE_PAGE" desc="Search overlay command that saves the current page to a file.">Save page as</message>
++      <message name="IDS_HELIUM_COMMAND_BAR_CMD_ZOOM_IN" desc="Search overlay command that zooms in.">Zoom in</message>
++      <message name="IDS_HELIUM_COMMAND_BAR_CMD_ZOOM_OUT" desc="Search overlay command that zooms out.">Zoom out</message>
++      <message name="IDS_HELIUM_COMMAND_BAR_CMD_ZOOM_RESET" desc="Search overlay command that resets the zoom level.">Reset zoom</message>
++      <message name="IDS_HELIUM_COMMAND_BAR_CMD_VIEW_SOURCE" desc="Search overlay command that shows the source of the current page.">View page source</message>
++      <message name="IDS_HELIUM_COMMAND_BAR_CMD_DEV_TOOLS" desc="Search overlay command that shows or hides developer tools.">Developer tools</message>
++      <message name="IDS_HELIUM_COMMAND_BAR_CMD_HISTORY" desc="Search overlay command that opens the history page.">History</message>
++      <message name="IDS_HELIUM_COMMAND_BAR_CMD_DOWNLOADS" desc="Search overlay command that opens the downloads page.">Downloads</message>
++      <message name="IDS_HELIUM_COMMAND_BAR_CMD_BOOKMARKS" desc="Search overlay command that opens the bookmark manager.">Bookmarks</message>
++      <message name="IDS_HELIUM_COMMAND_BAR_CMD_EXTENSIONS" desc="Search overlay command that opens the extensions page.">Extensions</message>
++      <message name="IDS_HELIUM_COMMAND_BAR_CMD_SETTINGS" desc="Search overlay command that opens settings.">Settings</message>
++      <message name="IDS_HELIUM_COMMAND_BAR_CMD_CLEAR_DATA" desc="Search overlay command that opens the dialog for clearing browsing data.">Clear browsing data</message>
++      <message name="IDS_HELIUM_COMMAND_BAR_CMD_TASK_MANAGER" desc="Search overlay command that opens the task manager.">Task manager</message>
++      <message name="IDS_HELIUM_COMMAND_BAR_CMD_FRAMELESS_ON" desc="Search overlay command that turns on frameless mode, which hides the browser toolbar.">Turn on frameless mode</message>
++      <message name="IDS_HELIUM_COMMAND_BAR_CMD_FRAMELESS_OFF" desc="Search overlay command that turns off frameless mode.">Turn off frameless mode</message>
++      <message name="IDS_HELIUM_COMMAND_BAR_CMD_PIN_TOOLBAR" desc="Search overlay command that keeps the toolbar shown in frameless mode.">Pin toolbar</message>
++      <message name="IDS_HELIUM_COMMAND_BAR_CMD_UNPIN_TOOLBAR" desc="Search overlay command that hides the toolbar again in frameless mode.">Unpin toolbar</message>
++      <message name="IDS_HELIUM_COMMAND_BAR_CMD_VERTICAL_TABS" desc="Search overlay command that switches between vertical and horizontal tabs.">Toggle vertical tabs</message>
++      <message name="IDS_HELIUM_COMMAND_BAR_CMD_SHOW_BOOKMARK_BAR" desc="Search overlay command that shows the bookmarks bar.">Show bookmarks bar</message>
++      <message name="IDS_HELIUM_COMMAND_BAR_CMD_HIDE_BOOKMARK_BAR" desc="Search overlay command that hides the bookmarks bar.">Hide bookmarks bar</message>
++      <message name="IDS_HELIUM_COMMAND_BAR_CMD_FULLSCREEN" desc="Search overlay command that enters or exits full screen.">Toggle full screen</message>
++      <message name="IDS_HELIUM_COMMAND_BAR_PLACEHOLDER" desc="Placeholder text in the search overlay input.">Search <ph name="SEARCH_ENGINE_NAME">$1<ex>Google</ex></ph>, type a URL, or &gt; for commands</message>
        <message name="IDS_HELIUM_AUTO_REFRESH" desc="Submenu for this tab's automatic refresh interval.">Auto-refresh</message>
        <message name="IDS_HELIUM_AUTO_REFRESH_OFF" desc="Disable automatic refreshing of this tab.">Off</message>
        <message name="IDS_HELIUM_AUTO_REFRESH_SECONDS" desc="Refresh interval in seconds.">Every <ph name="SECONDS">$1<ex>15</ex></ph> seconds</message>
