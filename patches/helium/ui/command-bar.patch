@@ -364,7 +364,7 @@
 +}
 --- /dev/null
 +++ b/chrome/browser/ui/views/helium/command_bar_view.h
-@@ -0,0 +1,192 @@
+@@ -0,0 +1,199 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -394,6 +394,7 @@
 +
 +class BrowserWindowInterface;
 +class ChromeAutocompleteSchemeClassifier;
++class TemplateURL;
 +struct CommandBarCommand;
 +
 +namespace views {
@@ -508,6 +509,8 @@
 +  Entry CreateMatchEntry(const AutocompleteMatch& match) const;
 +  // An entry that opens the page of `tab` again rather than switching to it.
 +  Entry CreateReopenTabEntry(tabs::TabInterface* tab) const;
++  // An entry that opens the home page of the bang's site.
++  Entry CreateBangHomeEntry(const TemplateURL& bang) const;
 +  // Available commands matching `query`, best first, or all of them in their
 +  // usual order if `query` is empty. Each term must score at least
 +  // `min_term_score`; see ScoreCommandBarCommand().
@@ -537,6 +540,10 @@
 +  raw_ptr<views::Label> engine_host_ = nullptr;
 +  // The keyword of the engine shown in the chip, if any.
 +  std::u16string engine_keyword_;
++  // The bang in the current input, if any, and whether nothing else was
++  // typed. A bare bang opens the site instead of searching it.
++  std::u16string bang_keyword_;
++  bool bare_bang_ = false;
 +  base::CancelableTaskTracker engine_favicon_tracker_;
 +
 +  // What the user typed, excluding inline autocompletion.
@@ -559,7 +566,7 @@
 +#endif  // CHROME_BROWSER_UI_VIEWS_HELIUM_COMMAND_BAR_VIEW_H_
 --- /dev/null
 +++ b/chrome/browser/ui/views/helium/command_bar_view.cc
-@@ -0,0 +1,1273 @@
+@@ -0,0 +1,1310 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -1152,6 +1159,8 @@
 +  const std::u16string text(
 +      base::TrimWhitespace(user_text_, base::TRIM_LEADING));
 +  if (text.empty() || IsCommandQuery()) {
++    bang_keyword_.clear();
++    bare_bang_ = false;
 +    autocomplete_controller_->Stop(AutocompleteStopReason::kClobbered);
 +    RebuildEntries();
 +    return;
@@ -1178,6 +1187,9 @@
 +                ->GetTemplateURLForKeyword(keyword)
 +          : nullptr;
 +  const bool in_keyword_mode = bang && bang->bang_id() > 0;
++  bang_keyword_ = in_keyword_mode ? keyword : std::u16string();
++  bare_bang_ = in_keyword_mode &&
++               base::TrimWhitespace(remaining, base::TRIM_ALL).empty();
 +  const std::u16string query_text =
 +      in_keyword_mode ? base::StrCat({keyword, u" ", remaining}) : text;
 +
@@ -1256,8 +1268,20 @@
 +
 +  std::vector<Entry> match_entries;
 +  std::optional<Entry> default_entry;
++  const TemplateURL* bang =
++      bang_keyword_.empty()
++          ? nullptr
++          : template_url_service->GetTemplateURLForKeyword(bang_keyword_);
++  if (bare_bang_ && bang) {
++    default_entry = CreateBangHomeEntry(*bang);
++  }
 +  const AutocompleteResult& result = autocomplete_controller_->result();
 +  for (const AutocompleteMatch& match : result) {
++    // A bare bang has nothing to search for.
++    if (default_entry && bare_bang_ &&
++        AutocompleteMatch::IsSearchType(match.type)) {
++      continue;
++    }
 +    Entry entry;
 +    if (!AutocompleteMatch::IsSearchType(match.type)) {
 +      const GURL stripped =
@@ -1281,7 +1305,7 @@
 +      }
 +      entry = CreateMatchEntry(match);
 +    }
-+    if (&match == result.default_match()) {
++    if (&match == result.default_match() && !default_entry) {
 +      entry.is_default_match = true;
 +      default_entry = std::move(entry);
 +    } else {
@@ -1434,6 +1458,13 @@
 +      engine = match->GetTemplateURL(template_url_service);
 +    }
 +  }
++  // A typed bang decides where the search goes, whatever is selected.
++  if (!bang_keyword_.empty()) {
++    if (const TemplateURL* bang =
++            template_url_service->GetTemplateURLForKeyword(bang_keyword_)) {
++      engine = bang;
++    }
++  }
 +  if (engine == template_url_service->GetDefaultSearchProvider()) {
 +    engine = nullptr;
 +  }
@@ -1451,15 +1482,15 @@
 +        is_ai ? IDS_OMNIBOX_SELECTED_KEYWORD_ASK_TEXT
 +              : IDS_HELIUM_COMMAND_BAR_SEARCH_WITH,
 +        engine->short_name()));
-+    std::string host(match->destination_url.host());
++    const GURL home = GURL(engine->url()).GetWithEmptyPath();
++    std::string host(home.host());
 +    if (host.starts_with("www.")) {
 +      host.erase(0, 4);
 +    }
 +    engine_host_->SetText(base::UTF8ToUTF16(host));
 +    engine_host_->SetVisible(!host.empty());
 +    engine_icon_->SetImage(ui::ImageModel::FromVectorIcon(
-+        match->GetVectorIcon(/*is_bookmark=*/false, engine),
-+        kColorOmniboxResultsIcon, kIconSize));
++        vector_icons::kSearchIcon, kColorOmniboxResultsIcon, kIconSize));
 +
 +    engine_favicon_tracker_.TryCancelAll();
 +    if (favicon::FaviconService* favicon_service =
@@ -1473,8 +1504,7 @@
 +                                         &engine_favicon_tracker_);
 +      } else {
 +        favicon_service->GetFaviconImageForPageURL(
-+            match->destination_url.GetWithEmptyPath(), std::move(callback),
-+            &engine_favicon_tracker_);
++            home, std::move(callback), &engine_favicon_tracker_);
 +      }
 +    }
 +  }
@@ -1724,6 +1754,20 @@
 +    entry.action = l10n_util::GetStringUTF16(
 +        is_search ? IDS_HELIUM_COMMAND_BAR_SEARCH : IDS_HELIUM_COMMAND_BAR_OPEN);
 +  }
++  return entry;
++}
++
++CommandBarView::Entry CommandBarView::CreateBangHomeEntry(
++    const TemplateURL& bang) const {
++  AutocompleteMatch match(nullptr, 0, false,
++                          omnibox::AutocompleteMatchType::kNavsuggest);
++  match.destination_url = GURL(bang.url()).GetWithEmptyPath();
++  match.transition = ui::PAGE_TRANSITION_TYPED;
++  match.contents = FormatUrlForDisplay(match.destination_url);
++  match.description = bang.short_name();
++
++  Entry entry = CreateMatchEntry(match);
++  entry.is_default_match = true;
 +  return entry;
 +}
 +
