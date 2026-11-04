@@ -559,7 +559,7 @@
 +#endif  // CHROME_BROWSER_UI_VIEWS_HELIUM_COMMAND_BAR_VIEW_H_
 --- /dev/null
 +++ b/chrome/browser/ui/views/helium/command_bar_view.cc
-@@ -0,0 +1,1256 @@
+@@ -0,0 +1,1273 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -1166,13 +1166,30 @@
 +      mode_ == Mode::kNewTab
 +          ? metrics::OmniboxEventProto::INSTANT_NTP_WITH_OMNIBOX_AS_STARTING_FOCUS
 +          : metrics::OmniboxEventProto::OTHER;
++  // A bang anywhere in the text searches that site, like keyword mode in the
++  // address bar: the query is rewritten as "<bang> <rest of the text>".
++  std::u16string remaining;
++  const std::u16string keyword = base::i18n::ToLower(
++      AutocompleteInput::SplitKeywordFromInput(text, /*trim_leading_whitespace=*/
++                                               true, &remaining));
++  const TemplateURL* bang =
++      keyword.starts_with(u'!')
++          ? TemplateURLServiceFactory::GetForProfile(browser_->GetProfile())
++                ->GetTemplateURLForKeyword(keyword)
++          : nullptr;
++  const bool in_keyword_mode = bang && bang->bang_id() > 0;
++  const std::u16string query_text =
++      in_keyword_mode ? base::StrCat({keyword, u" ", remaining}) : text;
++
 +  input_ = AutocompleteInput(
-+      text, text.size(), page_classification, *scheme_classifier_,
++      query_text, query_text.size(), page_classification, *scheme_classifier_,
 +      base::FeatureList::IsEnabled(omnibox::kDefaultTypedNavigationsToHttps));
 +  if (mode_ == Mode::kCurrentTab) {
 +    input_.set_current_url(current_url);
 +  }
-+  input_.set_prevent_inline_autocomplete(just_deleted_text_);
++  input_.set_in_keyword_mode(in_keyword_mode);
++  input_.set_prevent_inline_autocomplete(just_deleted_text_ ||
++                                         in_keyword_mode);
 +  // Lets "keyword query" and bangs search with that engine, as when the
 +  // user presses space after a keyword in the address bar.
 +  input_.set_allow_exact_keyword_match(true);
