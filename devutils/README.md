@@ -723,14 +723,21 @@ browser restart preserved a diagnostic pane at 556 × 457, including its custom
 main ratio and inner weights. Pointer-drag automation was inconclusive, so a
 hands-on drag check remains recommended before making a standalone release.
 
-## Helium Neo orbital icon
+## Helium Neo atom icon
 
-The private fork uses a violet orbital mark instead of Helium's blue asterisk.
-`resources/branding/product_logo.svg` is the full-color master. The transparent
-foreground and modern macOS appearance settings live in
-`resources/branding/macos/AppIcon.icon`. Both the classic `app.icns` and modern
-`Assets.car` are checked in; the common resource list overrides the platform
-repository's icons after platform resources are copied.
+The private fork uses a helium atom instead of Helium's blue asterisk: two
+protons and two neutrons, an orbit that tapers and fades toward the main
+electron, a second electron, and helium's emission spectrum below on a dark
+indigo tile. The ring stops short of each electron along a circle around it.
+
+`devutils/generate_neo_icons.py` holds the geometry and writes every format from
+it: the full-color `resources/branding/product_logo.svg` master, the layers in
+`resources/branding/macos/AppIcon.icon` (glass electrons and nucleus, glass
+orbit, spectrum, glow; Icon Composer allows at most four groups), the mono and
+color Chromium vector icons, and the rasters. Edit the script, not the SVGs.
+Both the classic `app.icns` and modern `Assets.car` are checked in; the common
+resource list overrides the platform repository's icons after platform resources
+are copied.
 
 On macOS, regenerate the PNGs, wordmarks, Chromium vector paths, ICNS, and asset
 catalog using Pillow, librsvg and Xcode:
@@ -797,13 +804,12 @@ mobile/refresh setting round trips, and pinned split startup reconstruction with
 custom sizes and per-tab settings. Full regression execution still requires the
 unpruned Chromium test dependencies described above.
 
-The modern macOS icon uses a 1024-pixel transparent raster of the vector
-foreground inside Icon Composer. Apple's SVG importer filled the stroked orbit
-and reduced its size, producing the oval seen in the Dock. The generator now
-supplies `AppIcon.icon/Assets/logo.png` from `Assets/logo.svg`; both the modern
-asset catalog and classic ICNS retain the orbital design. To verify the actual
-modern rendering, use Icon Composer's bundled `ictool --export-image`, rather
-than inspecting only the fallback PNG or ICNS.
+The modern macOS icon uses 1024-pixel transparent rasters of each layer inside
+Icon Composer. Apple's SVG importer fills stroked shapes and reduces their size,
+so the generator supplies `AppIcon.icon/Assets/*.png` from the matching SVGs. To
+verify the actual modern rendering, use Icon Composer's bundled
+`ictool --export-image` for the Default, Dark, TintedLight and ClearDark
+renditions, rather than inspecting only the fallback PNG or ICNS.
 
 Validation for these changes: the persistent Apple Silicon component build
 passed, patch lint and reverse-application checks passed, and both standalone

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 256 256" fill="none">
+<defs>
+<radialGradient id="proton" cx="0" cy="0" r="1" gradientUnits="objectBoundingBox" gradientTransform="translate(.35 .3) scale(.8)"><stop stop-color="#FFF0B8"/><stop offset="1" stop-color="#F2A81D"/></radialGradient>
+<radialGradient id="neutron" cx="0" cy="0" r="1" gradientUnits="objectBoundingBox" gradientTransform="translate(.35 .3) scale(.8)"><stop stop-color="#FFFFFF"/><stop offset="1" stop-color="#B9B2E6"/></radialGradient>
+<filter id="shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="2" stdDeviation="2.5" flood-color="#000" flood-opacity=".45"/></filter>
+</defs>
+<g filter="url(#shadow)"><circle cx="119" cy="111" r="13" fill="url(#proton)"/><circle cx="137" cy="111" r="13" fill="url(#neutron)"/><circle cx="119" cy="128" r="13" fill="url(#neutron)"/><circle cx="137" cy="128" r="13" fill="url(#proton)"/></g>
+</svg>
