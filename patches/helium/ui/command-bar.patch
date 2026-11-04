@@ -375,7 +375,7 @@
 +}
 --- /dev/null
 +++ b/chrome/browser/ui/views/helium/command_bar_view.h
-@@ -0,0 +1,207 @@
+@@ -0,0 +1,212 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -435,6 +435,11 @@
 +  // showing in `mode`, it is closed instead. Returns false if the caller should
 +  // fall back to the default command behavior.
 +  static bool MaybeShow(BrowserWindowInterface* browser, Mode mode);
++
++  // Shows the overlay for an empty new tab in `browser` instead of focusing
++  // the address bar, if the user enabled it and the active tab is a new tab
++  // page. Returns false if the caller should focus the address bar.
++  static bool MaybeShowForNewTabPage(BrowserWindowInterface* browser);
 +
 +  CommandBarView(BrowserWindowInterface* browser, Mode mode);
 +  CommandBarView(const CommandBarView&) = delete;
@@ -585,7 +590,7 @@
 +#endif  // CHROME_BROWSER_UI_VIEWS_HELIUM_COMMAND_BAR_VIEW_H_
 --- /dev/null
 +++ b/chrome/browser/ui/views/helium/command_bar_view.cc
-@@ -0,0 +1,1441 @@
+@@ -0,0 +1,1490 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -687,7 +692,14 @@
 +bool IsNewTabPageUrl(const GURL& url) {
 +  return url.is_empty() || url.IsAboutBlank() ||
 +         (url.SchemeIs(content::kChromeUIScheme) &&
-+          url.host() == chrome::kChromeUINewTabHost);
++          (url.host() == chrome::kChromeUINewTabHost ||
++           url.host() == chrome::kChromeUINewTabPageHost));
++}
++
++bool IsShowingNewTabPage(BrowserWindowInterface* browser) {
++  content::WebContents* contents =
++      browser->GetTabStripModel()->GetActiveWebContents();
++  return contents && IsNewTabPageUrl(contents->GetVisibleURL());
 +}
 +
 +std::u16string FormatUrlForDisplay(const GURL& url) {
@@ -1000,6 +1012,48 @@
 +  }
 +
 +  (new Bubble(browser, browser_view, mode))->Show();
++  return true;
++}
++
++// static
++bool CommandBarView::MaybeShowForNewTabPage(BrowserWindowInterface* browser) {
++  if (!browser ||
++      browser->GetType() != BrowserWindowInterface::Type::TYPE_NORMAL ||
++      !browser->GetProfile()->GetPrefs()->GetBoolean(
++          prefs::kHeliumCommandBar) ||
++      !IsShowingNewTabPage(browser)) {
++    return false;
++  }
++  // Show it once per tab: closing the overlay can move focus back to the
++  // empty tab, which must not bring it back or reveal the toolbar.
++  static decltype(tabs::TabHandle().raw_value()) last_shown_tab = {};
++  const auto tab = browser->GetTabStripModel()->GetActiveTab()->GetHandle();
++  if (tab.raw_value() == last_shown_tab) {
++    return true;
++  }
++  last_shown_tab = tab.raw_value();
++
++  // Focus moves to the new tab while its window may still be appearing, so
++  // show the overlay once that settles. Results replace the empty tab.
++  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
++      FROM_HERE,
++      base::BindOnce(
++          [](base::WeakPtr<BrowserWindowInterface> browser) {
++            if (!browser || !IsShowingNewTabPage(browser.get())) {
++              return;
++            }
++            if (Bubble* current = Bubble::current();
++                current && current->browser() == browser.get()) {
++              return;
++            }
++            BrowserView* browser_view =
++                BrowserView::GetBrowserViewForBrowser(browser.get());
++            if (browser_view && browser_view->GetWidget() &&
++                browser_view->GetWidget()->IsVisible()) {
++              MaybeShow(browser.get(), Mode::kCurrentTab);
++            }
++          },
++          browser->GetWeakPtr()));
 +  return true;
 +}
 +
@@ -2082,6 +2136,30 @@
        if (!window()->IsLocationBarVisible()) {
          break;
        }
+--- a/chrome/browser/ui/views/frame/browser_view.cc
++++ b/chrome/browser/ui/views/frame/browser_view.cc
+@@ -185,6 +185,7 @@
+ #include "chrome/browser/ui/views/frame/tab_modal_dialog_host.h"
+ #include "chrome/browser/ui/views/frame/tab_strip_region_view.h"
+ #include "chrome/browser/ui/views/frame/top_container_view.h"
++#include "chrome/browser/ui/views/helium/command_bar_view.h"
+ #include "chrome/browser/ui/views/frame/top_controls_slide_controller.h"
+ #include "chrome/browser/ui/views/frame/vertical_tab_strip_background_blur_backdrop.h"
+ #include "chrome/browser/ui/views/frame/vertical_tab_strip_region_view.h"
+@@ -3022,6 +3023,13 @@ void BrowserView::SetFocusToLocationBar(
+     return;
+   }
+ 
++  // An empty tab in zen mode opens the search overlay instead of revealing
++  // the toolbar. The address bar still works when the user goes to it.
++  if (zen_mode_enabled_ && !is_user_initiated && !IsZenModeTopChromePinned() &&
++      CommandBarView::MaybeShowForNewTabPage(browser_.get())) {
++    return;
++  }
++
+   // In zen mode, snap the toolbar to fully shown so the omnibox is visible
+   // and can receive focus.  A synchronous layout is required so the toolbar
+   // has non-zero height before FocusLocation runs.
 --- a/chrome/browser/ui/BUILD.gn
 +++ b/chrome/browser/ui/BUILD.gn
 @@ -3573,6 +3573,10 @@ static_library("ui") {
