@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 256 256" fill="none">
+<defs>
+<radialGradient id="electron" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(198.724 64.378) scale(14)"><stop stop-color="#FFFFFF"/><stop offset=".7" stop-color="#FFFDF4"/><stop offset="1" stop-color="#FFF1C4"/></radialGradient>
+</defs>
+<circle cx="201.724" cy="67.378" r="10" fill="url(#electron)"/>
+<circle cx="54.276" cy="170.622" r="7" fill="#FFFFFF" fill-opacity=".9"/>
+</svg>
