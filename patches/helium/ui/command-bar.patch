@@ -1,6 +1,6 @@
 --- /dev/null
 +++ b/chrome/browser/ui/views/helium/command_bar_view.h
-@@ -0,0 +1,157 @@
+@@ -0,0 +1,166 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -32,6 +32,7 @@
 +class ChromeAutocompleteSchemeClassifier;
 +
 +namespace views {
++class ImageView;
 +class Textfield;
 +}  // namespace views
 +
@@ -98,6 +99,11 @@
 +    ui::ImageModel icon;
 +    // The page whose favicon should replace `icon`, if any.
 +    GURL favicon_url;
++    // What pressing Enter on this entry does, e.g. "Switch to tab".
++    std::u16string action;
++    // Whether `action` is shown when the entry isn't selected, for entries
++    // that are easy to confuse with their neighbors.
++    bool always_show_action = false;
 +  };
 +
 +  struct ScoredTab {
@@ -123,6 +129,8 @@
 +  std::vector<ScoredTab> GetTabs(const std::u16string& query) const;
 +  Entry CreateTabEntry(tabs::TabInterface* tab) const;
 +  Entry CreateMatchEntry(const AutocompleteMatch& match) const;
++  // An entry that opens the page of `tab` again rather than switching to it.
++  Entry CreateReopenTabEntry(tabs::TabInterface* tab) const;
 +  std::string GetEntryKey(const Entry& entry) const;
 +  void FetchFavicons();
 +  void OnFaviconFetched(size_t index,
@@ -136,6 +144,7 @@
 +  std::unique_ptr<AutocompleteController> autocomplete_controller_;
 +  AutocompleteInput input_;
 +
++  raw_ptr<views::ImageView> input_icon_ = nullptr;
 +  raw_ptr<views::Textfield> textfield_ = nullptr;
 +  raw_ptr<views::View> results_ = nullptr;
 +  raw_ptr<views::View> separator_ = nullptr;
@@ -160,7 +169,7 @@
 +#endif  // CHROME_BROWSER_UI_VIEWS_HELIUM_COMMAND_BAR_VIEW_H_
 --- /dev/null
 +++ b/chrome/browser/ui/views/helium/command_bar_view.cc
-@@ -0,0 +1,975 @@
+@@ -0,0 +1,1054 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -224,6 +233,7 @@
 +#include "ui/gfx/font_list.h"
 +#include "ui/gfx/geometry/insets.h"
 +#include "ui/gfx/text_elider.h"
++#include "ui/gfx/vector_icon_types.h"
 +#include "ui/views/background.h"
 +#include "ui/views/bubble/bubble_dialog_delegate_view.h"
 +#include "ui/views/border.h"
@@ -244,6 +254,7 @@
 +constexpr int kCornerRadius = 16;
 +constexpr int kRowCornerRadius = 10;
 +constexpr int kIconSize = 16;
++constexpr int kActionIconSize = 14;
 +constexpr size_t kMaxEntries = 8;
 +constexpr size_t kMaxTabsWithQuery = 4;
 +constexpr size_t kMaxTabsWithoutQuery = 6;
@@ -334,10 +345,27 @@
 +    static_cast<views::BoxLayout*>(GetLayoutManager())
 +        ->SetFlexForView(text, 1);
 +
-+    if (entry.tab.Get()) {
-+      hint_ = AddChildView(std::make_unique<views::Label>(
-+          l10n_util::GetStringUTF16(IDS_OMNIBOX_TAB_SUGGEST_HINT)));
-+      hint_->SetFontList(hint_->font_list().DeriveWithSizeDelta(-1));
++    // What Enter does. Switching to a tab and opening a page again are shown
++    // as outlined chips on every row; other actions only on the selected row.
++    if (!entry.action.empty()) {
++      emphasized_ = entry.always_show_action;
++      action_ = AddChildView(std::make_unique<views::BoxLayoutView>());
++      action_->SetBetweenChildSpacing(6);
++      action_->SetCrossAxisAlignment(
++          views::BoxLayout::CrossAxisAlignment::kCenter);
++      if (emphasized_) {
++        action_->SetInsideBorderInsets(gfx::Insets::VH(3, 9));
++        action_icon_ =
++            action_->AddChildView(std::make_unique<views::ImageView>());
++        action_vector_icon_ =
++            entry.tab.Get() ? &omnibox::kTabIcon : &vector_icons::kAdd2Icon;
++      }
++      action_label_ =
++          action_->AddChildView(std::make_unique<views::Label>(entry.action));
++      action_label_->SetFontList(
++          action_label_->font_list().DeriveWithSizeDelta(-1));
++      enter_label_ =
++          action_->AddChildView(std::make_unique<views::Label>(u"\u21B5"));
 +    }
 +
 +    GetViewAccessibility().SetName(
@@ -384,14 +412,27 @@
 +    }
 +    title_->SetEnabledColor(selected_ ? kColorOmniboxResultsTextSelected
 +                                      : kColorOmniboxText);
-+    if (detail_) {
-+      detail_->SetEnabledColor(selected_
++    const ui::ColorId dimmed = selected_
 +                                   ? kColorOmniboxResultsTextDimmedSelected
-+                                   : kColorOmniboxResultsTextDimmed);
++                                   : kColorOmniboxResultsTextDimmed;
++    if (detail_) {
++      detail_->SetEnabledColor(dimmed);
 +    }
-+    if (hint_) {
-+      hint_->SetEnabledColor(selected_ ? kColorOmniboxResultsUrlSelected
-+                                       : kColorOmniboxResultsUrl);
++    if (action_) {
++      action_->SetVisible(emphasized_ || selected_);
++      enter_label_->SetVisible(selected_);
++      const ui::ColorId action_color =
++          !emphasized_ ? dimmed
++          : selected_  ? kColorOmniboxResultsUrlSelected
++                       : kColorOmniboxResultsUrl;
++      action_label_->SetEnabledColor(action_color);
++      enter_label_->SetEnabledColor(action_color);
++      if (emphasized_) {
++        action_->SetBorder(views::CreateRoundedRectBorder(
++            1, kRowCornerRadius, action_color));
++        action_icon_->SetImage(ui::ImageModel::FromVectorIcon(
++            *action_vector_icon_, action_color, kActionIconSize));
++      }
 +    }
 +  }
 +
@@ -400,7 +441,12 @@
 +  raw_ptr<views::ImageView> icon_ = nullptr;
 +  raw_ptr<views::Label> title_ = nullptr;
 +  raw_ptr<views::Label> detail_ = nullptr;
-+  raw_ptr<views::Label> hint_ = nullptr;
++  bool emphasized_ = false;
++  raw_ptr<views::BoxLayoutView> action_ = nullptr;
++  raw_ptr<views::ImageView> action_icon_ = nullptr;
++  raw_ptr<const gfx::VectorIcon> action_vector_icon_ = nullptr;
++  raw_ptr<views::Label> action_label_ = nullptr;
++  raw_ptr<views::Label> enter_label_ = nullptr;
 +};
 +
 +BEGIN_METADATA(CommandBarView, RowView)
@@ -543,9 +589,8 @@
 +  input_row->SetBetweenChildSpacing(12);
 +  input_row->SetCrossAxisAlignment(
 +      views::BoxLayout::CrossAxisAlignment::kCenter);
-+  auto* search_icon =
-+      input_row->AddChildView(std::make_unique<views::ImageView>());
-+  search_icon->SetImage(ui::ImageModel::FromVectorIcon(
++  input_icon_ = input_row->AddChildView(std::make_unique<views::ImageView>());
++  input_icon_->SetImage(ui::ImageModel::FromVectorIcon(
 +      vector_icons::kSearchIcon, kColorOmniboxResultsIcon, 20));
 +
 +  std::u16string placeholder;
@@ -829,6 +874,13 @@
 +  for (Entry& entry : match_entries) {
 +    entries_.push_back(std::move(entry));
 +  }
++  // When Enter would switch to a tab, offer opening its page in a new tab
++  // right below.
++  if (!entries_.empty()) {
++    if (tabs::TabInterface* tab = entries_.front().tab.Get()) {
++      entries_.insert(entries_.begin() + 1, CreateReopenTabEntry(tab));
++    }
++  }
 +  if (entries_.size() > kMaxEntries) {
 +    entries_.resize(kMaxEntries);
 +  }
@@ -884,6 +936,12 @@
 +  for (size_t i = 0; i < rows_.size(); ++i) {
 +    rows_[i]->SetSelected(index == i);
 +  }
++  // The input icon mirrors whether Enter switches tabs.
++  const bool switches_tab = index && *index < entries_.size() &&
++                            entries_[*index].tab.Get();
++  input_icon_->SetImage(ui::ImageModel::FromVectorIcon(
++      switches_tab ? omnibox::kTabIcon : vector_icons::kSearchIcon,
++      kColorOmniboxResultsIcon, 20));
 +  ApplyInlineAutocompletion();
 +}
 +
@@ -1066,6 +1124,9 @@
 +                   ? ui::ImageModel::FromVectorIcon(
 +                         omnibox::kTabIcon, kColorOmniboxResultsIcon, kIconSize)
 +                   : ui::ImageModel::FromImage(favicon);
++  entry.action =
++      l10n_util::GetStringUTF16(IDS_HELIUM_COMMAND_BAR_SWITCH_TO_TAB);
++  entry.always_show_action = true;
 +  return entry;
 +}
 +
@@ -1090,6 +1151,33 @@
 +      match.GetVectorIcon(/*is_bookmark=*/false,
 +                          match.GetTemplateURL(template_url_service)),
 +      kColorOmniboxResultsIcon, kIconSize);
++  const bool is_search = AutocompleteMatch::IsSearchType(match.type);
++  if (mode_ == Mode::kNewTab) {
++    entry.action = l10n_util::GetStringUTF16(
++        is_search ? IDS_HELIUM_COMMAND_BAR_SEARCH_IN_NEW_TAB
++                  : IDS_HELIUM_COMMAND_BAR_OPEN_IN_NEW_TAB);
++  } else {
++    entry.action = l10n_util::GetStringUTF16(
++        is_search ? IDS_HELIUM_COMMAND_BAR_SEARCH : IDS_HELIUM_COMMAND_BAR_OPEN);
++  }
++  return entry;
++}
++
++CommandBarView::Entry CommandBarView::CreateReopenTabEntry(
++    tabs::TabInterface* tab) const {
++  content::WebContents* contents = tab->GetContents();
++  AutocompleteMatch match(nullptr, 0, false,
++                          omnibox::AutocompleteMatchType::kHistoryUrl);
++  match.destination_url = contents->GetLastCommittedURL();
++  match.transition = ui::PAGE_TRANSITION_TYPED;
++  match.contents = FormatUrlForDisplay(match.destination_url);
++  match.description = contents->GetTitle();
++
++  // Lead with the address so the row reads differently from the tab above.
++  Entry entry = CreateMatchEntry(match);
++  entry.title = match.contents;
++  entry.detail = match.description;
++  entry.always_show_action = true;
 +  return entry;
 +}
 +
@@ -1228,6 +1316,20 @@
      <message name="IDS_SETTINGS_SHOW_PROGRESS_BAR" desc="Label for the toggle that shows loading progress in the address bar.">
        Show loading progress in the address bar
      </message>
+--- a/chrome/app/generated_resources.grd
++++ b/chrome/app/generated_resources.grd
+@@ -292,6 +292,11 @@
+       <message name="IDS_HELIUM_MOBILE_PREVIEW" desc="Toggle clean mobile device emulation for this tab.">Mobile preview (402 × 874)</message>
+       <message name="IDS_HELIUM_CREATE_PREVIEW_WORKSPACE" desc="Create a pinned tab group containing desktop and mobile copies of this page.">Create desktop/mobile workspace</message>
+       <message name="IDS_HELIUM_PREVIEW_WORKSPACE_TITLE" desc="Default name for a desktop and mobile preview tab group.">Desktop + mobile</message>
++      <message name="IDS_HELIUM_COMMAND_BAR_SWITCH_TO_TAB" desc="Action shown on a search overlay result that switches to a tab that is already open.">Switch to tab</message>
++      <message name="IDS_HELIUM_COMMAND_BAR_OPEN_IN_NEW_TAB" desc="Action shown on a search overlay result that opens a page in a new tab.">Open in new tab</message>
++      <message name="IDS_HELIUM_COMMAND_BAR_OPEN" desc="Action shown on a search overlay result that opens a page in the current tab.">Open</message>
++      <message name="IDS_HELIUM_COMMAND_BAR_SEARCH_IN_NEW_TAB" desc="Action shown on a search overlay result that searches in a new tab.">Search in new tab</message>
++      <message name="IDS_HELIUM_COMMAND_BAR_SEARCH" desc="Action shown on a search overlay result that searches in the current tab.">Search</message>
+       <message name="IDS_HELIUM_AUTO_REFRESH" desc="Submenu for this tab's automatic refresh interval.">Auto-refresh</message>
+       <message name="IDS_HELIUM_AUTO_REFRESH_OFF" desc="Disable automatic refreshing of this tab.">Off</message>
+       <message name="IDS_HELIUM_AUTO_REFRESH_SECONDS" desc="Refresh interval in seconds.">Every <ph name="SECONDS">$1<ex>15</ex></ph> seconds</message>
 --- a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
 +++ b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
 @@ -630,6 +630,8 @@ void AddAppearanceStrings(content::WebUI
