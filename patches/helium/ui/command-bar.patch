@@ -1,6 +1,6 @@
 --- /dev/null
 +++ b/chrome/browser/ui/views/helium/command_bar_commands.h
-@@ -0,0 +1,72 @@
+@@ -0,0 +1,74 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -46,6 +46,8 @@
 +  const char* keywords = "";
 +  // Points at a static icon; the commands live in a constant table.
 +  RAW_PTR_EXCLUSION const gfx::VectorIcon* icon = nullptr;
++  // Instead of running anything, lists bangs in the overlay.
++  bool lists_bangs = false;
 +};
 +
 +// All commands in display order.
@@ -75,7 +77,7 @@
 +#endif  // CHROME_BROWSER_UI_VIEWS_HELIUM_COMMAND_BAR_COMMANDS_H_
 --- /dev/null
 +++ b/chrome/browser/ui/views/helium/command_bar_commands.cc
-@@ -0,0 +1,286 @@
+@@ -0,0 +1,295 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -97,6 +99,7 @@
 +#include "chrome/common/pref_names.h"
 +#include "chrome/grit/generated_resources.h"
 +#include "components/bookmarks/common/bookmark_pref_names.h"
++#include "components/helium_services/helium_services_helpers.h"
 +#include "components/omnibox/browser/vector_icons.h"
 +#include "components/prefs/pref_service.h"
 +#include "components/vector_icons/vector_icons.h"
@@ -109,6 +112,11 @@
 +using State = CommandBarCommand::State;
 +
 +constexpr CommandBarCommand kCommands[] = {
++    {.label_id = IDS_HELIUM_COMMAND_BAR_CMD_BROWSE_BANGS,
++     .keywords = "search engines shortcuts sites",
++     .icon = &vector_icons::kSearchIcon,
++     .lists_bangs = true},
++
 +    // Tabs.
 +    {.command_id = IDC_RESTORE_TAB,
 +     .label_id = IDS_HELIUM_COMMAND_BAR_CMD_REOPEN_TAB,
@@ -298,6 +306,9 @@
 +  if (command.command_id) {
 +    return chrome::IsCommandEnabled(browser, command.command_id);
 +  }
++  if (command.lists_bangs) {
++    return helium::ShouldFetchBangs(*browser->GetProfile()->GetPrefs());
++  }
 +  return command.toggle_pref != nullptr;
 +}
 +
@@ -364,7 +375,7 @@
 +}
 --- /dev/null
 +++ b/chrome/browser/ui/views/helium/command_bar_view.h
-@@ -0,0 +1,199 @@
+@@ -0,0 +1,207 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -461,8 +472,10 @@
 +    std::optional<AutocompleteMatch> match;
 +    // Set when the entry runs a browser command.
 +    raw_ptr<const CommandBarCommand> command = nullptr;
-+    // The command's keyboard shortcut, if any.
++    // The command's keyboard shortcut or the bang, if any.
 +    std::u16string shortcut;
++    // Replaces the input when chosen, instead of opening anything.
++    std::u16string fill_text;
 +    // Whether this is the autocomplete result's default match.
 +    bool is_default_match = false;
 +    std::u16string title;
@@ -485,6 +498,8 @@
 +
 +  // Whether the input starts with ">", which lists only commands.
 +  bool IsCommandQuery() const;
++  // Whether the input is a single word starting with "!", which lists bangs.
++  bool IsBangQuery() const;
 +  void StartQuery();
 +  void RebuildEntries();
 +  void RebuildRows();
@@ -511,6 +526,10 @@
 +  Entry CreateReopenTabEntry(tabs::TabInterface* tab) const;
 +  // An entry that opens the home page of the bang's site.
 +  Entry CreateBangHomeEntry(const TemplateURL& bang) const;
++  // Bangs whose keyword starts with `token`, such as "!y", or whose name
++  // contains the rest of it, best and most used first.
++  std::vector<Entry> GetBangEntries(const std::u16string& token,
++                                    size_t max_entries) const;
 +  // Available commands matching `query`, best first, or all of them in their
 +  // usual order if `query` is empty. Each term must score at least
 +  // `min_term_score`; see ScoreCommandBarCommand().
@@ -566,7 +585,7 @@
 +#endif  // CHROME_BROWSER_UI_VIEWS_HELIUM_COMMAND_BAR_VIEW_H_
 --- /dev/null
 +++ b/chrome/browser/ui/views/helium/command_bar_view.cc
-@@ -0,0 +1,1312 @@
+@@ -0,0 +1,1441 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -1137,6 +1156,23 @@
 +        Dismiss();
 +      }
 +      return true;
++    case ui::VKEY_TAB: {
++      // Tab completes a bang, like in the address bar.
++      if (key_event.IsShiftDown()) {
++        return false;
++      }
++      if (selected_index_ && !entries_[*selected_index_].fill_text.empty()) {
++        OpenEntry(*selected_index_, WindowOpenDisposition::CURRENT_TAB);
++        return true;
++      }
++      if (bare_bang_ && !bang_keyword_.empty()) {
++        const std::u16string text = base::StrCat({bang_keyword_, u" "});
++        textfield_->SetText(text);
++        ContentsChanged(textfield_, text);
++        return true;
++      }
++      return false;
++    }
 +    case ui::VKEY_ESCAPE:
 +      Dismiss();
 +      return true;
@@ -1153,6 +1189,13 @@
 +bool CommandBarView::IsCommandQuery() const {
 +  return user_edited_ &&
 +         base::TrimWhitespace(user_text_, base::TRIM_LEADING).starts_with(u">");
++}
++
++bool CommandBarView::IsBangQuery() const {
++  const std::u16string text(
++      base::TrimWhitespace(user_text_, base::TRIM_LEADING));
++  return user_edited_ && text.starts_with(u"!") &&
++         text.find_first_of(base::kWhitespaceUTF16) == std::u16string::npos;
 +}
 +
 +void CommandBarView::StartQuery() {
@@ -1242,10 +1285,38 @@
 +    return;
 +  }
 +
-+  // Autocomplete matches that open a page that is already open in a tab
-+  // switch to that tab instead.
 +  TemplateURLService* template_url_service =
 +      TemplateURLServiceFactory::GetForProfile(browser_->GetProfile());
++
++  // While the bang is being typed, list matching bangs. Enter on a complete
++  // bang still opens its site.
++  if (IsBangQuery()) {
++    const TemplateURL* bang =
++        bare_bang_
++            ? template_url_service->GetTemplateURLForKeyword(bang_keyword_)
++            : nullptr;
++    std::vector<Entry> bangs =
++        GetBangEntries(base::i18n::ToLower(query), kMaxEntries);
++    if (bang || !bangs.empty()) {
++      if (bang) {
++        entries_.push_back(CreateBangHomeEntry(*bang));
++      }
++      for (Entry& entry : bangs) {
++        if (entries_.size() == kMaxEntries) {
++          break;
++        }
++        if (!bang || entry.shortcut != bang->keyword()) {
++          entries_.push_back(std::move(entry));
++        }
++      }
++      RebuildRows();
++      RestoreSelection(selected_key);
++      return;
++    }
++  }
++
++  // Autocomplete matches that open a page that is already open in a tab
++  // switch to that tab instead.
 +  std::vector<std::pair<GURL, tabs::TabHandle>> open_urls;
 +  for (BrowserWindowInterface* window : GetAllBrowserWindowInterfaces()) {
 +    if (window->GetProfile() != browser_->GetProfile()) {
@@ -1544,6 +1615,11 @@
 +  }
 +  // Copy, since opening may rebuild or destroy this view.
 +  const Entry entry = entries_[index];
++  if (!entry.fill_text.empty()) {
++    textfield_->SetText(entry.fill_text);
++    ContentsChanged(textfield_, entry.fill_text);
++    return;
++  }
 +  if (tabs::TabInterface* tab = entry.tab.Get()) {
 +    BrowserWindowInterface* window = tab->GetBrowserWindowInterface();
 +    if (window) {
@@ -1817,6 +1893,11 @@
 +    entry.icon = ui::ImageModel::FromVectorIcon(
 +        *command.icon, kColorOmniboxResultsIcon, kIconSize);
 +    entry.action = l10n_util::GetStringUTF16(IDS_HELIUM_COMMAND_BAR_RUN);
++    if (command.lists_bangs) {
++      entry.command = nullptr;
++      entry.fill_text = u"!";
++      entry.shortcut = u"!";
++    }
 +    scored.emplace_back(score, std::move(entry));
 +  }
 +  std::ranges::stable_sort(scored, std::ranges::greater(),
@@ -1832,7 +1913,74 @@
 +  return entries;
 +}
 +
++std::vector<CommandBarView::Entry> CommandBarView::GetBangEntries(
++    const std::u16string& token,
++    size_t max_entries) const {
++  if (!token.starts_with(u"!")) {
++    return {};
++  }
++  const std::u16string name_term = token.substr(1);
++
++  struct Candidate {
++    // 0 for an exact keyword, 1 for a keyword prefix, 2 for a name match.
++    int rank;
++    raw_ptr<const TemplateURL> bang;
++  };
++  std::vector<Candidate> candidates;
++  TemplateURLService* template_url_service =
++      TemplateURLServiceFactory::GetForProfile(browser_->GetProfile());
++  for (const TemplateURL* turl : template_url_service->GetTemplateURLs()) {
++    if (turl->bang_id() <= 0) {
++      continue;
++    }
++    const std::u16string& keyword = turl->keyword();
++    if (keyword == token) {
++      candidates.push_back({0, turl});
++    } else if (keyword.starts_with(token)) {
++      candidates.push_back({1, turl});
++    } else if (name_term.size() >= 2 &&
++               base::i18n::ToLower(turl->short_name()).find(name_term) !=
++                   std::u16string::npos) {
++      candidates.push_back({2, turl});
++    }
++  }
++  const auto better = [](const Candidate& a, const Candidate& b) {
++    if (a.rank != b.rank) {
++      return a.rank < b.rank;
++    }
++    if (a.bang->usage_count() != b.bang->usage_count()) {
++      return a.bang->usage_count() > b.bang->usage_count();
++    }
++    if (a.bang->keyword().size() != b.bang->keyword().size()) {
++      return a.bang->keyword().size() < b.bang->keyword().size();
++    }
++    return a.bang->keyword() < b.bang->keyword();
++  };
++  const size_t count = std::min(max_entries, candidates.size());
++  std::ranges::partial_sort(candidates, candidates.begin() + count, better);
++
++  std::vector<Entry> entries;
++  for (size_t i = 0; i < count; ++i) {
++    const TemplateURL& bang = *candidates[i].bang;
++    const GURL home = GURL(bang.url()).GetWithEmptyPath();
++    Entry entry;
++    entry.title = bang.short_name();
++    entry.detail = FormatUrlForDisplay(home);
++    entry.shortcut = bang.keyword();
++    entry.fill_text = base::StrCat({bang.keyword(), u" "});
++    entry.icon = ui::ImageModel::FromVectorIcon(
++        vector_icons::kSearchIcon, kColorOmniboxResultsIcon, kIconSize);
++    entry.favicon_url = home;
++    entry.action = l10n_util::GetStringUTF16(IDS_HELIUM_COMMAND_BAR_USE_BANG);
++    entries.push_back(std::move(entry));
++  }
++  return entries;
++}
++
 +std::string CommandBarView::GetEntryKey(const Entry& entry) const {
++  if (!entry.fill_text.empty()) {
++    return base::StrCat({"fill:", base::UTF16ToUTF8(entry.fill_text)});
++  }
 +  if (entry.command) {
 +    return base::StrCat(
 +        {"command:", base::NumberToString(entry.command->label_id)});
@@ -1947,6 +2095,14 @@
        "views/helium/frame_corner_radius.cc",
        "views/helium/frame_corner_radius.h",
        "views/helium/native_frame_materials.cc",
+@@ -3824,6 +3828,7 @@ static_library("ui") {
+       "//chrome/browser/ui/views/frame:opaque_browser_frame_view_layout_delegate",
+       "//chrome/browser/ui/views/frame:picture_in_picture_browser_frame_view",
+       "//chrome/browser/ui/views/frame:safe_invoke",
++      "//components/helium_services",
+       "//chrome/browser/ui/views/frame:scrim_view",
+       "//chrome/browser/ui/views/frame:scrim_view_controller",
+       "//chrome/browser/ui/views/frame:scrim_view_controller_impl",
 --- a/chrome/browser/extensions/api/settings_private/prefs_util.cc
 +++ b/chrome/browser/extensions/api/settings_private/prefs_util.cc
 @@ -226,6 +226,8 @@ const PrefsUtil::TypedPrefMap& PrefsUtil
@@ -1975,7 +2131,7 @@
      </message>
 --- a/chrome/app/generated_resources.grd
 +++ b/chrome/app/generated_resources.grd
-@@ -292,6 +292,53 @@
+@@ -292,6 +292,55 @@
        <message name="IDS_HELIUM_MOBILE_PREVIEW" desc="Toggle clean mobile device emulation for this tab.">Mobile preview (402 × 874)</message>
        <message name="IDS_HELIUM_CREATE_PREVIEW_WORKSPACE" desc="Create a pinned tab group containing desktop and mobile copies of this page.">Create desktop/mobile workspace</message>
        <message name="IDS_HELIUM_PREVIEW_WORKSPACE_TITLE" desc="Default name for a desktop and mobile preview tab group.">Desktop + mobile</message>
@@ -1985,6 +2141,8 @@
 +      <message name="IDS_HELIUM_COMMAND_BAR_SEARCH_IN_NEW_TAB" desc="Action shown on a search overlay result that searches in a new tab.">Search in new tab</message>
 +      <message name="IDS_HELIUM_COMMAND_BAR_SEARCH" desc="Action shown on a search overlay result that searches in the current tab.">Search</message>
 +      <message name="IDS_HELIUM_COMMAND_BAR_SEARCH_WITH" desc="Shown below the search overlay input when a bang or keyword sends the search to another site.">Search with <ph name="SITE_NAME">$1<ex>YouTube</ex></ph></message>
++      <message name="IDS_HELIUM_COMMAND_BAR_USE_BANG" desc="Action shown on a search overlay result that puts a bang, a shortcut for searching a site, into the input.">Use bang</message>
++      <message name="IDS_HELIUM_COMMAND_BAR_CMD_BROWSE_BANGS" desc="Search overlay command that lists bangs, shortcuts for searching other sites.">Browse bangs</message>
 +      <message name="IDS_HELIUM_COMMAND_BAR_RUN" desc="Action shown on a search overlay result that runs a browser command.">Run</message>
 +      <message name="IDS_HELIUM_COMMAND_BAR_CMD_REOPEN_TAB" desc="Search overlay command that reopens the most recently closed tab.">Reopen closed tab</message>
 +      <message name="IDS_HELIUM_COMMAND_BAR_CMD_DUPLICATE_TAB" desc="Search overlay command that duplicates the current tab.">Duplicate tab</message>
