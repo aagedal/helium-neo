@@ -1,0 +1,1255 @@
+--- /dev/null
++++ b/chrome/browser/ui/views/helium/command_bar_view.h
+@@ -0,0 +1,157 @@
++// Copyright 2026 The Helium Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_VIEWS_HELIUM_COMMAND_BAR_VIEW_H_
++#define CHROME_BROWSER_UI_VIEWS_HELIUM_COMMAND_BAR_VIEW_H_
++
++#include <memory>
++#include <optional>
++#include <string>
++#include <vector>
++
++#include "base/memory/raw_ptr.h"
++#include "base/memory/weak_ptr.h"
++#include "base/task/cancelable_task_tracker.h"
++#include "components/favicon_base/favicon_types.h"
++#include "components/omnibox/browser/autocomplete_controller.h"
++#include "components/omnibox/browser/autocomplete_input.h"
++#include "components/omnibox/browser/autocomplete_match.h"
++#include "components/tabs/public/tab_interface.h"
++#include "ui/base/metadata/metadata_header_macros.h"
++#include "ui/base/models/image_model.h"
++#include "ui/base/window_open_disposition.h"
++#include "ui/views/controls/textfield/textfield_controller.h"
++#include "ui/views/view.h"
++#include "url/gurl.h"
++
++class BrowserWindowInterface;
++class ChromeAutocompleteSchemeClassifier;
++
++namespace views {
++class Textfield;
++}  // namespace views
++
++// The contents of a large search overlay centered over the browser window.
++// When enabled, it replaces the integrated address bar for the new tab and
++// focus address bar commands, and suggests open tabs alongside the regular
++// autocomplete results.
++class CommandBarView : public views::View,
++                       public views::TextfieldController,
++                       public AutocompleteController::Observer {
++  METADATA_HEADER(CommandBarView, views::View)
++
++ public:
++  enum class Mode {
++    // Results open in a new tab. Dismissing the overlay creates nothing.
++    kNewTab,
++    // Results replace the current tab, which starts with its URL selected.
++    kCurrentTab,
++  };
++
++  // Shows the overlay for `browser` if the user enabled it. If it is already
++  // showing in `mode`, it is closed instead. Returns false if the caller should
++  // fall back to the default command behavior.
++  static bool MaybeShow(BrowserWindowInterface* browser, Mode mode);
++
++  CommandBarView(BrowserWindowInterface* browser, Mode mode);
++  CommandBarView(const CommandBarView&) = delete;
++  CommandBarView& operator=(const CommandBarView&) = delete;
++  ~CommandBarView() override;
++
++  views::Textfield* textfield() { return textfield_; }
++
++  // views::View:
++  void RemovedFromWidget() override;
++
++  // views::TextfieldController:
++  void ContentsChanged(views::Textfield* sender,
++                       const std::u16string& new_contents) override;
++  bool HandleKeyEvent(views::Textfield* sender,
++                      const ui::KeyEvent& key_event) override;
++
++  // AutocompleteController::Observer:
++  void OnResultChanged(AutocompleteController* controller,
++                       bool default_match_changed) override;
++
++ private:
++  class Bubble;
++  class RowView;
++
++  struct Entry {
++    Entry();
++    Entry(const Entry&);
++    Entry& operator=(const Entry&);
++    ~Entry();
++
++    // Set when the entry switches to an open tab.
++    tabs::TabHandle tab;
++    // Set when the entry opens an autocomplete match.
++    std::optional<AutocompleteMatch> match;
++    // Whether this is the autocomplete result's default match.
++    bool is_default_match = false;
++    std::u16string title;
++    std::u16string detail;
++    ui::ImageModel icon;
++    // The page whose favicon should replace `icon`, if any.
++    GURL favicon_url;
++  };
++
++  struct ScoredTab {
++    tabs::TabHandle tab;
++    int score = 0;
++    base::Time last_active;
++  };
++
++  void StartQuery();
++  void RebuildEntries();
++  void RebuildRows();
++  void SetSelectedIndex(std::optional<size_t> index);
++  void ApplyInlineAutocompletion();
++  void OpenEntry(size_t index, WindowOpenDisposition disposition);
++  void OpenMatch(const AutocompleteMatch& match,
++                 WindowOpenDisposition disposition);
++  void OpenNewTabPage();
++  void Dismiss();
++  WindowOpenDisposition DispositionForFlags(int event_flags) const;
++
++  // Open tabs in this profile, most recently used first. The active tab of
++  // this window is skipped.
++  std::vector<ScoredTab> GetTabs(const std::u16string& query) const;
++  Entry CreateTabEntry(tabs::TabInterface* tab) const;
++  Entry CreateMatchEntry(const AutocompleteMatch& match) const;
++  std::string GetEntryKey(const Entry& entry) const;
++  void FetchFavicons();
++  void OnFaviconFetched(size_t index,
++                        int generation,
++                        const favicon_base::FaviconImageResult& result);
++
++  const raw_ptr<BrowserWindowInterface> browser_;
++  const Mode mode_;
++
++  std::unique_ptr<ChromeAutocompleteSchemeClassifier> scheme_classifier_;
++  std::unique_ptr<AutocompleteController> autocomplete_controller_;
++  AutocompleteInput input_;
++
++  raw_ptr<views::Textfield> textfield_ = nullptr;
++  raw_ptr<views::View> results_ = nullptr;
++  raw_ptr<views::View> separator_ = nullptr;
++
++  // What the user typed, excluding inline autocompletion.
++  std::u16string user_text_;
++  // Whether the pending edit comes from a delete key.
++  bool deleting_ = false;
++  bool just_deleted_text_ = false;
++  bool user_edited_ = false;
++  bool user_moved_selection_ = false;
++
++  std::vector<Entry> entries_;
++  std::vector<raw_ptr<RowView>> rows_;
++  std::optional<size_t> selected_index_;
++  int generation_ = 0;
++  base::CancelableTaskTracker favicon_tracker_;
++
++  base::WeakPtrFactory<CommandBarView> weak_factory_{this};
++};
++
++#endif  // CHROME_BROWSER_UI_VIEWS_HELIUM_COMMAND_BAR_VIEW_H_
+--- /dev/null
++++ b/chrome/browser/ui/views/helium/command_bar_view.cc
+@@ -0,0 +1,975 @@
++// Copyright 2026 The Helium Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#include "chrome/browser/ui/views/helium/command_bar_view.h"
++
++#include <algorithm>
++#include <utility>
++
++#include "base/feature_list.h"
++#include "base/functional/bind.h"
++#include "base/i18n/case_conversion.h"
++#include "base/strings/strcat.h"
++#include "base/strings/string_number_conversions.h"
++#include "base/strings/string_split.h"
++#include "base/strings/string_util.h"
++#include "base/strings/utf_string_conversions.h"
++#include "base/task/single_thread_task_runner.h"
++#include "chrome/browser/autocomplete/chrome_autocomplete_provider_client.h"
++#include "chrome/browser/autocomplete/chrome_autocomplete_scheme_classifier.h"
++#include "chrome/browser/favicon/favicon_service_factory.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/search_engines/template_url_service_factory.h"
++#include "chrome/browser/ui/browser_commands.h"
++#include "chrome/browser/ui/browser_window.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_interface_iterator.h"
++#include "chrome/browser/ui/color/chrome_color_id.h"
++#include "chrome/browser/ui/location_bar/location_bar.h"
++#include "chrome/browser/ui/navigator/browser_navigator.h"
++#include "chrome/browser/ui/navigator/browser_navigator_params.h"
++#include "chrome/browser/ui/tabs/tab_strip_model.h"
++#include "chrome/browser/ui/views/frame/browser_view.h"
++#include "chrome/common/pref_names.h"
++#include "chrome/common/webui_url_constants.h"
++#include "chrome/grit/generated_resources.h"
++#include "components/favicon/content/content_favicon_driver.h"
++#include "components/favicon/core/favicon_service.h"
++#include "components/keyed_service/core/service_access_type.h"
++#include "components/omnibox/browser/autocomplete_classifier.h"
++#include "components/omnibox/browser/autocomplete_controller_config.h"
++#include "components/omnibox/browser/autocomplete_result.h"
++#include "components/omnibox/browser/vector_icons.h"
++#include "components/omnibox/common/omnibox_features.h"
++#include "components/prefs/pref_service.h"
++#include "components/search_engines/template_url.h"
++#include "components/search_engines/template_url_service.h"
++#include "components/strings/grit/components_strings.h"
++#include "components/url_formatter/url_formatter.h"
++#include "components/vector_icons/vector_icons.h"
++#include "content/public/browser/web_contents.h"
++#include "content/public/common/url_constants.h"
++#include "third_party/metrics_proto/omnibox_event.pb.h"
++#include "ui/base/l10n/l10n_util.h"
++#include "ui/base/metadata/metadata_impl_macros.h"
++#include "ui/base/mojom/dialog_button.mojom.h"
++#include "ui/base/page_transition_types.h"
++#include "ui/base/window_open_disposition_utils.h"
++#include "ui/events/event.h"
++#include "ui/events/keycodes/keyboard_codes.h"
++#include "ui/gfx/font_list.h"
++#include "ui/gfx/geometry/insets.h"
++#include "ui/gfx/text_elider.h"
++#include "ui/views/background.h"
++#include "ui/views/bubble/bubble_dialog_delegate_view.h"
++#include "ui/views/border.h"
++#include "ui/views/controls/button/button.h"
++#include "ui/views/controls/image_view.h"
++#include "ui/views/controls/label.h"
++#include "ui/views/controls/separator.h"
++#include "ui/views/controls/textfield/textfield.h"
++#include "ui/views/layout/box_layout.h"
++#include "ui/views/layout/box_layout_view.h"
++#include "ui/views/widget/widget.h"
++
++namespace {
++
++constexpr int kMaxWidth = 720;
++constexpr int kMinWidth = 360;
++constexpr int kHorizontalWindowMargin = 32;
++constexpr int kCornerRadius = 16;
++constexpr int kRowCornerRadius = 10;
++constexpr int kIconSize = 16;
++constexpr size_t kMaxEntries = 8;
++constexpr size_t kMaxTabsWithQuery = 4;
++constexpr size_t kMaxTabsWithoutQuery = 6;
++
++bool IsNewTabPageUrl(const GURL& url) {
++  return url.is_empty() || url.IsAboutBlank() ||
++         (url.SchemeIs(content::kChromeUIScheme) &&
++          url.host() == chrome::kChromeUINewTabHost);
++}
++
++std::u16string FormatUrlForDisplay(const GURL& url) {
++  return url_formatter::FormatUrl(
++      url,
++      AutocompleteMatch::GetFormatTypes(/*preserve_scheme=*/false,
++                                        /*preserve_subdomain=*/false),
++      base::UnescapeRule::SPACES, nullptr, nullptr, nullptr);
++}
++
++// Scores how well an open tab matches `terms`. Every term must appear in the
++// tab's title or URL. Prefix matches on title words and host matches count
++// three times as much as other substring matches. Returns 0 for no match.
++int ScoreTab(const std::vector<std::u16string>& terms,
++             const std::u16string& title,
++             const GURL& url) {
++  const std::u16string lower_title = base::i18n::ToLower(title);
++  const std::u16string lower_host =
++      base::i18n::ToLower(base::UTF8ToUTF16(url.host()));
++  const std::u16string lower_url =
++      base::i18n::ToLower(base::UTF8ToUTF16(url.spec()));
++  const std::vector<std::u16string> title_words = base::SplitString(
++      lower_title, u" \t-_|:/.,()[]", base::TRIM_WHITESPACE,
++      base::SPLIT_WANT_NONEMPTY);
++
++  int score = 0;
++  for (const auto& term : terms) {
++    const bool title_prefix =
++        std::ranges::any_of(title_words, [&](const std::u16string& word) {
++          return word.starts_with(term);
++        });
++    if (title_prefix || lower_host.find(term) != std::u16string::npos) {
++      score += 3;
++    } else if (lower_title.find(term) != std::u16string::npos ||
++               lower_url.find(term) != std::u16string::npos) {
++      score += 1;
++    } else {
++      return 0;
++    }
++  }
++  return score;
++}
++
++}  // namespace
++
++// A single result row.
++class CommandBarView::RowView : public views::Button {
++  METADATA_HEADER(RowView, views::Button)
++
++ public:
++  RowView(const Entry& entry,
++          PressedCallback pressed,
++          base::RepeatingClosure hovered)
++      : views::Button(std::move(pressed)), hovered_(std::move(hovered)) {
++    SetLayoutManager(std::make_unique<views::BoxLayout>(
++                         views::BoxLayout::Orientation::kHorizontal,
++                         gfx::Insets::VH(8, 12), 12))
++        ->set_cross_axis_alignment(
++            views::BoxLayout::CrossAxisAlignment::kCenter);
++    // The textfield keeps focus; rows are activated with the arrow keys.
++    SetFocusBehavior(FocusBehavior::NEVER);
++
++    icon_ = AddChildView(std::make_unique<views::ImageView>());
++    icon_->SetImageSize(gfx::Size(kIconSize, kIconSize));
++    icon_->SetImage(entry.icon);
++
++    auto* text = AddChildView(std::make_unique<views::BoxLayoutView>());
++    text->SetOrientation(views::BoxLayout::Orientation::kVertical);
++    title_ = text->AddChildView(std::make_unique<views::Label>(entry.title));
++    title_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
++    title_->SetElideBehavior(gfx::ELIDE_TAIL);
++    if (!entry.detail.empty()) {
++      detail_ =
++          text->AddChildView(std::make_unique<views::Label>(entry.detail));
++      detail_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
++      detail_->SetElideBehavior(gfx::ELIDE_MIDDLE);
++      detail_->SetFontList(
++          detail_->font_list().DeriveWithSizeDelta(-1));
++    }
++    static_cast<views::BoxLayout*>(GetLayoutManager())
++        ->SetFlexForView(text, 1);
++
++    if (entry.tab.Get()) {
++      hint_ = AddChildView(std::make_unique<views::Label>(
++          l10n_util::GetStringUTF16(IDS_OMNIBOX_TAB_SUGGEST_HINT)));
++      hint_->SetFontList(hint_->font_list().DeriveWithSizeDelta(-1));
++    }
++
++    GetViewAccessibility().SetName(
++        entry.detail.empty() ? entry.title
++                             : base::StrCat({entry.title, u", ",
++                                             entry.detail}));
++    UpdateColors();
++  }
++
++  void SetSelected(bool selected) {
++    if (selected_ == selected) {
++      return;
++    }
++    selected_ = selected;
++    UpdateColors();
++  }
++
++  void SetIcon(const ui::ImageModel& icon) { icon_->SetImage(icon); }
++
++  // views::Button:
++  void OnMouseMoved(const ui::MouseEvent& event) override {
++    // Only real pointer movement selects a row, so rows rebuilt under a
++    // resting pointer don't steal the keyboard selection.
++    hovered_.Run();
++    views::Button::OnMouseMoved(event);
++  }
++
++  void StateChanged(ButtonState old_state) override {
++    views::Button::StateChanged(old_state);
++    UpdateColors();
++  }
++
++ private:
++  void UpdateColors() {
++    const bool hovered = GetState() == STATE_HOVERED;
++    if (selected_) {
++      SetBackground(views::CreateRoundedRectBackground(
++          kColorOmniboxResultsBackgroundSelected, kRowCornerRadius));
++    } else if (hovered) {
++      SetBackground(views::CreateRoundedRectBackground(
++          kColorOmniboxResultsBackgroundHovered, kRowCornerRadius));
++    } else {
++      SetBackground(nullptr);
++    }
++    title_->SetEnabledColor(selected_ ? kColorOmniboxResultsTextSelected
++                                      : kColorOmniboxText);
++    if (detail_) {
++      detail_->SetEnabledColor(selected_
++                                   ? kColorOmniboxResultsTextDimmedSelected
++                                   : kColorOmniboxResultsTextDimmed);
++    }
++    if (hint_) {
++      hint_->SetEnabledColor(selected_ ? kColorOmniboxResultsUrlSelected
++                                       : kColorOmniboxResultsUrl);
++    }
++  }
++
++  base::RepeatingClosure hovered_;
++  bool selected_ = false;
++  raw_ptr<views::ImageView> icon_ = nullptr;
++  raw_ptr<views::Label> title_ = nullptr;
++  raw_ptr<views::Label> detail_ = nullptr;
++  raw_ptr<views::Label> hint_ = nullptr;
++};
++
++BEGIN_METADATA(CommandBarView, RowView)
++END_METADATA
++
++CommandBarView::Entry::Entry() = default;
++CommandBarView::Entry::Entry(const Entry&) = default;
++CommandBarView::Entry& CommandBarView::Entry::operator=(const Entry&) = default;
++CommandBarView::Entry::~Entry() = default;
++
++// Hosts the overlay contents in a bubble centered over the browser window.
++class CommandBarView::Bubble : public views::BubbleDialogDelegate {
++ public:
++  Bubble(BrowserWindowInterface* browser, views::View* anchor_view, Mode mode)
++      : views::BubbleDialogDelegate(anchor_view, views::BubbleBorder::FLOAT),
++        browser_(browser),
++        mode_(mode) {
++    current_ = this;
++    SetButtons(static_cast<int>(ui::mojom::DialogButton::kNone));
++    SetShowCloseButton(false);
++    SetShowTitle(false);
++    set_margins(gfx::Insets::VH(8, 8));
++    set_corner_radius(kCornerRadius);
++    set_adjust_if_offscreen(false);
++    SetBackgroundColor(kColorOmniboxResultsBackground);
++    set_fixed_width(std::clamp(
++        anchor_view->width() - 2 * kHorizontalWindowMargin, kMinWidth,
++        kMaxWidth));
++    contents_ = SetContentsView(std::make_unique<CommandBarView>(browser, mode));
++    SetTitle(std::u16string(contents_->textfield()->GetPlaceholderText()));
++  }
++  Bubble(const Bubble&) = delete;
++  Bubble& operator=(const Bubble&) = delete;
++  ~Bubble() override {
++    if (current_ == this) {
++      current_ = nullptr;
++    }
++  }
++
++  static Bubble* current() { return current_; }
++  BrowserWindowInterface* browser() const { return browser_; }
++  Mode mode() const { return mode_; }
++
++  void Show() {
++    widget_ = views::BubbleDialogDelegate::CreateBubble(
++        this, base::BindOnce(&Bubble::OnClosed, base::Unretained(this)));
++    widget_->Show();
++  }
++
++  void Close() {
++    if (current_ == this) {
++      current_ = nullptr;
++    }
++    if (widget_) {
++      widget_->Close();
++    }
++  }
++
++  // views::BubbleDialogDelegate:
++  gfx::Rect GetBubbleBounds() override {
++    gfx::Rect bounds = views::BubbleDialogDelegate::GetBubbleBounds();
++    views::View* anchor = GetAnchorView();
++    if (!anchor) {
++      return bounds;
++    }
++    // Keep the top edge fixed so the overlay grows downwards as results
++    // arrive.
++    const gfx::Rect anchor_bounds = anchor->GetBoundsInScreen();
++    bounds.set_x(anchor_bounds.CenterPoint().x() - bounds.width() / 2);
++    bounds.set_y(anchor_bounds.y() +
++                 std::max(48, anchor_bounds.height() / 6));
++    return bounds;
++  }
++
++  views::View* GetInitiallyFocusedView() override {
++    return contents_->textfield();
++  }
++
++ private:
++  void OnClosed(views::Widget::ClosedReason reason) {
++    if (current_ == this) {
++      current_ = nullptr;
++    }
++    // The delegate must outlive the widget, so delete both after the close
++    // finishes.
++    base::SingleThreadTaskRunner::GetCurrentDefault()->DeleteSoon(FROM_HERE,
++                                                                  this);
++  }
++
++  static inline Bubble* current_ = nullptr;
++
++  const raw_ptr<BrowserWindowInterface> browser_;
++  const Mode mode_;
++  raw_ptr<CommandBarView> contents_ = nullptr;
++  std::unique_ptr<views::Widget> widget_;
++};
++
++// static
++bool CommandBarView::MaybeShow(BrowserWindowInterface* browser, Mode mode) {
++  if (!browser ||
++      browser->GetType() != BrowserWindowInterface::Type::TYPE_NORMAL ||
++      !browser->GetProfile()->GetPrefs()->GetBoolean(
++          prefs::kHeliumCommandBar)) {
++    return false;
++  }
++  BrowserView* browser_view = BrowserView::GetBrowserViewForBrowser(browser);
++  if (!browser_view || !browser_view->GetWidget()) {
++    return false;
++  }
++
++  if (Bubble* current = Bubble::current()) {
++    const bool same = current->browser() == browser && current->mode() == mode;
++    current->Close();
++    if (same) {
++      return true;
++    }
++  }
++
++  (new Bubble(browser, browser_view, mode))->Show();
++  return true;
++}
++
++CommandBarView::CommandBarView(BrowserWindowInterface* browser, Mode mode)
++    : browser_(browser), mode_(mode) {
++  Profile* profile = browser_->GetProfile();
++  scheme_classifier_ =
++      std::make_unique<ChromeAutocompleteSchemeClassifier>(profile);
++  autocomplete_controller_ = std::make_unique<AutocompleteController>(
++      std::make_unique<ChromeAutocompleteProviderClient>(profile),
++      AutocompleteControllerConfig{
++          .provider_types = AutocompleteClassifier::DefaultOmniboxProviders()});
++  autocomplete_controller_->AddObserver(this);
++
++  SetLayoutManager(std::make_unique<views::BoxLayout>(
++      views::BoxLayout::Orientation::kVertical));
++
++  auto* input_row = AddChildView(std::make_unique<views::BoxLayoutView>());
++  input_row->SetOrientation(views::BoxLayout::Orientation::kHorizontal);
++  input_row->SetInsideBorderInsets(gfx::Insets::VH(10, 12));
++  input_row->SetBetweenChildSpacing(12);
++  input_row->SetCrossAxisAlignment(
++      views::BoxLayout::CrossAxisAlignment::kCenter);
++  auto* search_icon =
++      input_row->AddChildView(std::make_unique<views::ImageView>());
++  search_icon->SetImage(ui::ImageModel::FromVectorIcon(
++      vector_icons::kSearchIcon, kColorOmniboxResultsIcon, 20));
++
++  std::u16string placeholder;
++  if (const TemplateURL* default_search =
++          TemplateURLServiceFactory::GetForProfile(profile)
++              ->GetDefaultSearchProvider()) {
++    placeholder = l10n_util::GetStringFUTF16(IDS_OMNIBOX_PLACEHOLDER_TEXT,
++                                             default_search->short_name());
++  }
++
++  textfield_ = input_row->AddChildView(std::make_unique<views::Textfield>());
++  textfield_->set_controller(this);
++  textfield_->SetBorder(views::NullBorder());
++  textfield_->SetBackgroundEnabled(false);
++  textfield_->SetFontList(gfx::FontList().DeriveWithSizeDelta(7));
++  textfield_->SetTextColorId(kColorOmniboxText);
++  textfield_->SetPlaceholderTextColorId(kColorOmniboxTextDimmed);
++  textfield_->SetPlaceholderText(placeholder);
++  textfield_->GetViewAccessibility().SetName(placeholder);
++  input_row->SetFlexForView(textfield_, 1);
++
++  separator_ = AddChildView(std::make_unique<views::Separator>());
++  separator_->SetBorder(views::CreateEmptyBorder(gfx::Insets::VH(4, 4)));
++
++  results_ = AddChildView(std::make_unique<views::BoxLayoutView>());
++  static_cast<views::BoxLayoutView*>(results_.get())
++      ->SetOrientation(views::BoxLayout::Orientation::kVertical);
++
++  if (mode_ == Mode::kCurrentTab) {
++    if (content::WebContents* contents =
++            browser_->GetTabStripModel()->GetActiveWebContents()) {
++      const GURL& url = contents->GetLastCommittedURL();
++      if (!IsNewTabPageUrl(url)) {
++        textfield_->SetText(base::UTF8ToUTF16(url.spec()));
++        textfield_->SelectAll(/*reversed=*/false);
++      }
++    }
++  }
++  user_text_ = textfield_->GetText();
++
++  RebuildEntries();
++}
++
++CommandBarView::~CommandBarView() {
++  autocomplete_controller_->RemoveObserver(this);
++}
++
++void CommandBarView::RemovedFromWidget() {
++  // Results that arrive after the overlay closed must not touch the browser,
++  // which may be closing too.
++  autocomplete_controller_->RemoveObserver(this);
++  autocomplete_controller_->Stop(AutocompleteStopReason::kInteraction);
++}
++
++void CommandBarView::ContentsChanged(views::Textfield* sender,
++                                     const std::u16string& new_contents) {
++  just_deleted_text_ = deleting_;
++  deleting_ = false;
++  user_text_ = new_contents;
++  user_edited_ = true;
++  user_moved_selection_ = false;
++  StartQuery();
++}
++
++bool CommandBarView::HandleKeyEvent(views::Textfield* sender,
++                                    const ui::KeyEvent& key_event) {
++  if (key_event.type() != ui::EventType::kKeyPressed) {
++    return false;
++  }
++  // Remember deletions so they don't bring back inline autocompletion.
++  deleting_ = key_event.key_code() == ui::VKEY_BACK ||
++              key_event.key_code() == ui::VKEY_DELETE;
++
++  const bool control = key_event.IsControlDown();
++  switch (key_event.key_code()) {
++    case ui::VKEY_UP:
++    case ui::VKEY_DOWN:
++    case ui::VKEY_N:
++    case ui::VKEY_P: {
++      const bool is_arrow = key_event.key_code() == ui::VKEY_UP ||
++                            key_event.key_code() == ui::VKEY_DOWN;
++      if ((!is_arrow && !control) || entries_.empty()) {
++        return false;
++      }
++      const bool down = key_event.key_code() == ui::VKEY_DOWN ||
++                        key_event.key_code() == ui::VKEY_N;
++      size_t index;
++      if (!selected_index_) {
++        index = down ? 0 : entries_.size() - 1;
++      } else if (down) {
++        index = (*selected_index_ + 1) % entries_.size();
++      } else {
++        index = (*selected_index_ + entries_.size() - 1) % entries_.size();
++      }
++      user_moved_selection_ = true;
++      SetSelectedIndex(index);
++      return true;
++    }
++    case ui::VKEY_RETURN:
++      if (selected_index_) {
++        OpenEntry(*selected_index_, DispositionForFlags(key_event.flags()));
++      } else if (mode_ == Mode::kNewTab && user_text_.empty()) {
++        OpenNewTabPage();
++      } else {
++        Dismiss();
++      }
++      return true;
++    case ui::VKEY_ESCAPE:
++      Dismiss();
++      return true;
++    default:
++      return false;
++  }
++}
++
++void CommandBarView::OnResultChanged(AutocompleteController* controller,
++                                     bool default_match_changed) {
++  RebuildEntries();
++}
++
++void CommandBarView::StartQuery() {
++  const std::u16string text(
++      base::TrimWhitespace(user_text_, base::TRIM_LEADING));
++  if (text.empty()) {
++    autocomplete_controller_->Stop(AutocompleteStopReason::kClobbered);
++    RebuildEntries();
++    return;
++  }
++
++  GURL current_url;
++  if (content::WebContents* contents =
++          browser_->GetTabStripModel()->GetActiveWebContents()) {
++    current_url = contents->GetLastCommittedURL();
++  }
++  const auto page_classification =
++      mode_ == Mode::kNewTab
++          ? metrics::OmniboxEventProto::INSTANT_NTP_WITH_OMNIBOX_AS_STARTING_FOCUS
++          : metrics::OmniboxEventProto::OTHER;
++  input_ = AutocompleteInput(
++      text, text.size(), page_classification, *scheme_classifier_,
++      base::FeatureList::IsEnabled(omnibox::kDefaultTypedNavigationsToHttps));
++  if (mode_ == Mode::kCurrentTab) {
++    input_.set_current_url(current_url);
++  }
++  input_.set_prevent_inline_autocomplete(just_deleted_text_);
++  // Lets "keyword query" and bangs search with that engine, as when the
++  // user presses space after a keyword in the address bar.
++  input_.set_allow_exact_keyword_match(true);
++  autocomplete_controller_->Start(input_);
++}
++
++void CommandBarView::RebuildEntries() {
++  std::optional<std::string> selected_key;
++  if (user_moved_selection_ && selected_index_ &&
++      *selected_index_ < entries_.size()) {
++    selected_key = GetEntryKey(entries_[*selected_index_]);
++  }
++
++  entries_.clear();
++  const std::u16string query(
++      base::TrimWhitespace(user_text_, base::TRIM_ALL));
++  std::vector<ScoredTab> tabs =
++      GetTabs(user_edited_ ? query : std::u16string());
++
++  if (!user_edited_ || query.empty()) {
++    // Without a query, list recently used tabs.
++    for (const ScoredTab& scored : tabs) {
++      if (entries_.size() == kMaxTabsWithoutQuery) {
++        break;
++      }
++      entries_.push_back(CreateTabEntry(scored.tab.Get()));
++    }
++    RebuildRows();
++    SetSelectedIndex(std::nullopt);
++    return;
++  }
++
++  // Autocomplete matches that open a page that is already open in a tab
++  // switch to that tab instead.
++  TemplateURLService* template_url_service =
++      TemplateURLServiceFactory::GetForProfile(browser_->GetProfile());
++  std::vector<std::pair<GURL, tabs::TabHandle>> open_urls;
++  for (BrowserWindowInterface* window : GetAllBrowserWindowInterfaces()) {
++    if (window->GetProfile() != browser_->GetProfile()) {
++      continue;
++    }
++    TabStripModel* tab_strip = window->GetTabStripModel();
++    for (int i = 0; i < tab_strip->count(); ++i) {
++      tabs::TabInterface* tab = tab_strip->GetTabAtIndex(i);
++      if (window == browser_.get() && tab == tab_strip->GetActiveTab()) {
++        continue;
++      }
++      open_urls.emplace_back(
++          AutocompleteMatch::GURLToStrippedGURL(
++              tab->GetContents()->GetLastCommittedURL(), input_,
++              template_url_service, std::u16string(),
++              /*keep_search_intent_params=*/true),
++          tab->GetHandle());
++    }
++  }
++
++  std::vector<Entry> match_entries;
++  std::optional<Entry> default_entry;
++  const AutocompleteResult& result = autocomplete_controller_->result();
++  for (const AutocompleteMatch& match : result) {
++    Entry entry;
++    if (!AutocompleteMatch::IsSearchType(match.type)) {
++      const GURL stripped =
++          match.stripped_destination_url.is_valid()
++              ? match.stripped_destination_url
++              : AutocompleteMatch::GURLToStrippedGURL(
++                    match.destination_url, input_, template_url_service,
++                    std::u16string(), /*keep_search_intent_params=*/true);
++      auto it = std::ranges::find(open_urls, stripped,
++                                  &std::pair<GURL, tabs::TabHandle>::first);
++      if (it != open_urls.end() && it->second.Get()) {
++        entry = CreateTabEntry(it->second.Get());
++        std::erase_if(tabs, [&](const ScoredTab& scored) {
++          return scored.tab == it->second;
++        });
++      }
++    }
++    if (!entry.tab.Get()) {
++      if (!match.destination_url.is_valid()) {
++        continue;
++      }
++      entry = CreateMatchEntry(match);
++    }
++    if (&match == result.default_match()) {
++      entry.is_default_match = true;
++      default_entry = std::move(entry);
++    } else {
++      match_entries.push_back(std::move(entry));
++    }
++  }
++  // A tab can appear through several matches; keep its first one.
++  std::vector<tabs::TabHandle> seen_tabs;
++  if (default_entry && default_entry->tab.Get()) {
++    seen_tabs.push_back(default_entry->tab);
++  }
++  std::erase_if(match_entries, [&](const Entry& entry) {
++    if (!entry.tab.Get()) {
++      return false;
++    }
++    if (std::ranges::contains(seen_tabs, entry.tab)) {
++      return true;
++    }
++    seen_tabs.push_back(entry.tab);
++    return false;
++  });
++  std::erase_if(tabs, [&](const ScoredTab& scored) {
++    return std::ranges::contains(seen_tabs, scored.tab);
++  });
++  if (tabs.size() > kMaxTabsWithQuery) {
++    tabs.resize(kMaxTabsWithQuery);
++  }
++
++  // Tabs whose title or host matches every term are listed before a default
++  // search, so typing part of a tab's name and pressing Enter switches to it.
++  // A default URL match stays first, as in the address bar.
++  const size_t term_count =
++      base::SplitString(query, base::kWhitespaceUTF16, base::TRIM_WHITESPACE,
++                        base::SPLIT_WANT_NONEMPTY)
++          .size();
++  const bool tabs_first =
++      !tabs.empty() && tabs.front().score >= static_cast<int>(3 * term_count) &&
++      (!default_entry ||
++       (default_entry->match &&
++        AutocompleteMatch::IsSearchType(default_entry->match->type)));
++
++  if (!tabs_first && default_entry) {
++    entries_.push_back(std::move(*default_entry));
++    default_entry.reset();
++  }
++  for (const ScoredTab& scored : tabs) {
++    entries_.push_back(CreateTabEntry(scored.tab.Get()));
++  }
++  if (default_entry) {
++    entries_.push_back(std::move(*default_entry));
++  }
++  for (Entry& entry : match_entries) {
++    entries_.push_back(std::move(entry));
++  }
++  if (entries_.size() > kMaxEntries) {
++    entries_.resize(kMaxEntries);
++  }
++
++  RebuildRows();
++
++  std::optional<size_t> selection;
++  if (!entries_.empty()) {
++    selection = 0;
++  }
++  if (selected_key) {
++    for (size_t i = 0; i < entries_.size(); ++i) {
++      if (GetEntryKey(entries_[i]) == *selected_key) {
++        selection = i;
++        break;
++      }
++    }
++  }
++  SetSelectedIndex(selection);
++}
++
++void CommandBarView::RebuildRows() {
++  ++generation_;
++  favicon_tracker_.TryCancelAll();
++  rows_.clear();
++  results_->RemoveAllChildViews();
++  for (size_t i = 0; i < entries_.size(); ++i) {
++    rows_.push_back(results_->AddChildView(std::make_unique<RowView>(
++        entries_[i],
++        base::BindRepeating(
++            [](CommandBarView* view, size_t index, const ui::Event& event) {
++              view->OpenEntry(index, view->DispositionForFlags(event.flags()));
++            },
++            base::Unretained(this), i),
++        base::BindRepeating(
++            [](CommandBarView* view, size_t index) {
++              if (view->selected_index_ != index) {
++                view->user_moved_selection_ = true;
++                view->SetSelectedIndex(index);
++              }
++            },
++            base::Unretained(this), i))));
++  }
++  separator_->SetVisible(!entries_.empty());
++  FetchFavicons();
++  if (views::Widget* widget = GetWidget()) {
++    widget->widget_delegate()->AsBubbleDialogDelegate()->SizeToContents();
++  }
++}
++
++void CommandBarView::SetSelectedIndex(std::optional<size_t> index) {
++  selected_index_ = index;
++  for (size_t i = 0; i < rows_.size(); ++i) {
++    rows_[i]->SetSelected(index == i);
++  }
++  ApplyInlineAutocompletion();
++}
++
++void CommandBarView::ApplyInlineAutocompletion() {
++  if (!user_edited_) {
++    return;
++  }
++  std::u16string inline_autocompletion;
++  if (selected_index_ == 0 && !entries_.empty() &&
++      entries_[0].is_default_match && entries_[0].match &&
++      !just_deleted_text_ &&
++      textfield_->GetCursorPosition() >= user_text_.size()) {
++    inline_autocompletion = entries_[0].match->inline_autocompletion;
++  }
++  const std::u16string text = user_text_ + inline_autocompletion;
++  if (textfield_->GetText() == text) {
++    return;
++  }
++  textfield_->SetText(text);
++  textfield_->SetSelectedRange(gfx::Range(text.size(), user_text_.size()));
++}
++
++void CommandBarView::OpenEntry(size_t index,
++                               WindowOpenDisposition disposition) {
++  if (index >= entries_.size()) {
++    return;
++  }
++  // Copy, since opening may rebuild or destroy this view.
++  const Entry entry = entries_[index];
++  if (tabs::TabInterface* tab = entry.tab.Get()) {
++    BrowserWindowInterface* window = tab->GetBrowserWindowInterface();
++    if (window) {
++      TabStripModel* tab_strip = window->GetTabStripModel();
++      tab_strip->ActivateTab(
++          tab, TabStripUserGestureDetails(
++                   TabStripUserGestureDetails::GestureType::kKeyboard));
++      if (window != browser_.get()) {
++        window->GetWindow()->Activate();
++      }
++    }
++    Dismiss();
++    return;
++  }
++  if (entry.match) {
++    autocomplete_controller_->Stop(AutocompleteStopReason::kInteraction);
++    OpenMatch(*entry.match, disposition);
++  }
++  Dismiss();
++}
++
++void CommandBarView::OpenMatch(const AutocompleteMatch& match,
++                               WindowOpenDisposition disposition) {
++  if (!match.destination_url.is_valid()) {
++    return;
++  }
++
++  TemplateURLService* template_url_service =
++      TemplateURLServiceFactory::GetForProfile(browser_->GetProfile());
++  if (TemplateURL* template_url = match.GetTemplateURL(template_url_service);
++      template_url && ui::PageTransitionTypeIncludingQualifiersIs(
++                          match.transition, ui::PAGE_TRANSITION_KEYWORD)) {
++    template_url_service->IncrementUsageCount(template_url);
++  }
++
++  std::string extra_headers;
++  for (const auto& header : match.extra_headers) {
++    base::StrAppend(&extra_headers,
++                    {header.first, ": ", header.second, "\r\n"});
++  }
++
++  const ui::PageTransition transition = ui::PageTransitionFromInt(
++      match.transition | ui::PAGE_TRANSITION_FROM_ADDRESS_BAR);
++  const bool typed_without_scheme = input_.added_default_scheme_to_typed_url();
++  const bool typed_with_http_scheme =
++      input_.typed_url_had_http_scheme() &&
++      match.type == omnibox::AutocompleteMatchType::kUrlWhatYouTyped;
++
++  // Go through the location bar so navigations get the same handling as
++  // address bar navigations.
++  BrowserWindow* window = BrowserWindow::FromBrowser(browser_);
++  if (LocationBar* location_bar = window ? window->GetLocationBar() : nullptr) {
++    location_bar->set_navigation_params(LocationBar::NavigationParams{
++        .destination_url = match.destination_url,
++        .disposition = disposition,
++        .transition = transition,
++        .match_selection_timestamp = base::TimeTicks::Now(),
++        .url_typed_without_scheme = typed_without_scheme,
++        .url_typed_with_http_scheme = typed_with_http_scheme,
++        .extra_headers = extra_headers,
++    });
++    chrome::OpenCurrentURL(browser_);
++    return;
++  }
++
++  NavigateParams params(browser_, match.destination_url, transition);
++  params.disposition = disposition;
++  params.is_using_https_as_default_scheme = typed_without_scheme;
++  params.url_typed_with_http_scheme = typed_with_http_scheme;
++  params.extra_headers = extra_headers;
++  Navigate(&params);
++}
++
++void CommandBarView::OpenNewTabPage() {
++  BrowserWindowInterface* browser = browser_;
++  Dismiss();
++  chrome::NewTab(browser, NewTabTypes::kNewTabCommand);
++}
++
++void CommandBarView::Dismiss() {
++  if (views::Widget* widget = GetWidget()) {
++    widget->Close();
++  }
++}
++
++WindowOpenDisposition CommandBarView::DispositionForFlags(
++    int event_flags) const {
++  return ui::DispositionFromEventFlags(
++      event_flags, mode_ == Mode::kNewTab
++                       ? WindowOpenDisposition::NEW_FOREGROUND_TAB
++                       : WindowOpenDisposition::CURRENT_TAB);
++}
++
++std::vector<CommandBarView::ScoredTab> CommandBarView::GetTabs(
++    const std::u16string& query) const {
++  const std::vector<std::u16string> terms =
++      base::SplitString(base::i18n::ToLower(query), base::kWhitespaceUTF16,
++                        base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
++
++  std::vector<ScoredTab> tabs;
++  for (BrowserWindowInterface* window : GetAllBrowserWindowInterfaces()) {
++    if (window->GetProfile() != browser_->GetProfile()) {
++      continue;
++    }
++    TabStripModel* tab_strip = window->GetTabStripModel();
++    for (int i = 0; i < tab_strip->count(); ++i) {
++      tabs::TabInterface* tab = tab_strip->GetTabAtIndex(i);
++      if (window == browser_.get() && tab == tab_strip->GetActiveTab()) {
++        continue;
++      }
++      content::WebContents* contents = tab->GetContents();
++      const GURL& url = contents->GetLastCommittedURL();
++      int score = 1;
++      if (!terms.empty()) {
++        score = ScoreTab(terms, contents->GetTitle(), url);
++      } else if (IsNewTabPageUrl(url)) {
++        score = 0;
++      }
++      if (score > 0) {
++        tabs.push_back({tab->GetHandle(), score, contents->GetLastActiveTime()});
++      }
++    }
++  }
++  std::ranges::sort(tabs, [](const ScoredTab& a, const ScoredTab& b) {
++    if (a.score != b.score) {
++      return a.score > b.score;
++    }
++    return a.last_active > b.last_active;
++  });
++  return tabs;
++}
++
++CommandBarView::Entry CommandBarView::CreateTabEntry(
++    tabs::TabInterface* tab) const {
++  Entry entry;
++  entry.tab = tab->GetHandle();
++  content::WebContents* contents = tab->GetContents();
++  const GURL& url = contents->GetLastCommittedURL();
++  entry.title = contents->GetTitle();
++  if (entry.title.empty()) {
++    entry.title = FormatUrlForDisplay(url);
++  }
++  entry.detail = FormatUrlForDisplay(url);
++
++  gfx::Image favicon;
++  if (auto* driver =
++          favicon::ContentFaviconDriver::FromWebContents(contents)) {
++    favicon = driver->GetFavicon();
++  }
++  entry.icon = favicon.IsEmpty()
++                   ? ui::ImageModel::FromVectorIcon(
++                         omnibox::kTabIcon, kColorOmniboxResultsIcon, kIconSize)
++                   : ui::ImageModel::FromImage(favicon);
++  return entry;
++}
++
++CommandBarView::Entry CommandBarView::CreateMatchEntry(
++    const AutocompleteMatch& match) const {
++  Entry entry;
++  entry.match = match;
++  if (AutocompleteMatch::IsSearchType(match.type)) {
++    entry.title = match.contents;
++    entry.detail = match.description;
++  } else {
++    entry.title = match.description.empty() ? match.contents
++                                            : match.description;
++    entry.detail = match.description.empty() ? std::u16string()
++                                             : match.contents;
++    entry.favicon_url = match.destination_url;
++  }
++
++  TemplateURLService* template_url_service =
++      TemplateURLServiceFactory::GetForProfile(browser_->GetProfile());
++  entry.icon = ui::ImageModel::FromVectorIcon(
++      match.GetVectorIcon(/*is_bookmark=*/false,
++                          match.GetTemplateURL(template_url_service)),
++      kColorOmniboxResultsIcon, kIconSize);
++  return entry;
++}
++
++std::string CommandBarView::GetEntryKey(const Entry& entry) const {
++  if (entry.tab.Get()) {
++    return base::StrCat({"tab:", base::NumberToString(entry.tab.raw_value())});
++  }
++  if (entry.match) {
++    return base::StrCat({"url:", entry.match->destination_url.spec()});
++  }
++  return std::string();
++}
++
++void CommandBarView::FetchFavicons() {
++  favicon::FaviconService* favicon_service =
++      FaviconServiceFactory::GetForProfile(browser_->GetProfile(),
++                                           ServiceAccessType::EXPLICIT_ACCESS);
++  if (!favicon_service) {
++    return;
++  }
++  for (size_t i = 0; i < entries_.size(); ++i) {
++    if (!entries_[i].favicon_url.is_valid()) {
++      continue;
++    }
++    favicon_service->GetFaviconImageForPageURL(
++        entries_[i].favicon_url,
++        base::BindOnce(&CommandBarView::OnFaviconFetched,
++                       weak_factory_.GetWeakPtr(), i, generation_),
++        &favicon_tracker_);
++  }
++}
++
++void CommandBarView::OnFaviconFetched(
++    size_t index,
++    int generation,
++    const favicon_base::FaviconImageResult& result) {
++  if (generation != generation_ || index >= rows_.size() ||
++      result.image.IsEmpty()) {
++    return;
++  }
++  entries_[index].icon = ui::ImageModel::FromImage(result.image);
++  rows_[index]->SetIcon(entries_[index].icon);
++}
++
++BEGIN_METADATA(CommandBarView)
++END_METADATA
+--- a/chrome/common/pref_names.h
++++ b/chrome/common/pref_names.h
+@@ -654,6 +654,10 @@ inline constexpr char kHeliumCenteredLoc
+ inline constexpr char kHeliumMinimalLocationBar[] =
+     "helium.browser.minimal_location_bar";
+ 
++// A boolean pref set to true if the new tab and address bar shortcuts should
++// open the search overlay instead of the integrated address bar.
++inline constexpr char kHeliumCommandBar[] = "helium.browser.command_bar";
++
+ // A boolean pref set to true if loading progress should be shown in the
+ // location bar.
+ inline constexpr char kHeliumShowProgressBar[] =
+--- a/chrome/browser/ui/browser_ui_prefs.cc
++++ b/chrome/browser/ui/browser_ui_prefs.cc
+@@ -141,6 +141,8 @@ void RegisterBrowserUserPrefs(user_prefs
+ 
+   registry->RegisterBooleanPref(prefs::kHeliumMinimalLocationBar, false);
+ 
++  registry->RegisterBooleanPref(prefs::kHeliumCommandBar, false);
++
+   registry->RegisterBooleanPref(prefs::kHeliumShowProgressBar, true);
+ 
+   registry->RegisterBooleanPref(prefs::kHomePageIsNewTabPage, true,
+--- a/chrome/browser/ui/browser_command_controller.cc
++++ b/chrome/browser/ui/browser_command_controller.cc
+@@ -97,6 +97,7 @@
+ #include "chrome/browser/ui/user_education/browser_user_education_interface.h"
+ #include "chrome/browser/ui/views/download/bubble/download_toolbar_ui_controller.h"
+ #include "chrome/browser/ui/views/frame/browser_view.h"
++#include "chrome/browser/ui/views/helium/command_bar_view.h"
+ #include "chrome/browser/ui/views/side_panel/tabs_from_other_devices/tabs_from_other_devices_side_panel_coordinator.h"
+ #include "chrome/browser/ui/web_applications/app_browser_controller.h"
+ #include "chrome/browser/ui/web_applications/web_app_dialog_utils.h"
+@@ -771,6 +772,9 @@ void BrowserCommandController::HandleCom
+       CloseWindow(browser_);
+       break;
+     case IDC_NEW_TAB: {
++      if (CommandBarView::MaybeShow(browser_, CommandBarView::Mode::kNewTab)) {
++        break;
++      }
+       NewTab(browser_, NewTabTypes::kNewTabCommand);
+       break;
+     }
+@@ -1138,6 +1142,10 @@ void BrowserCommandController::HandleCom
+       FocusToolbar(browser_);
+       break;
+     case IDC_FOCUS_LOCATION:
++      if (CommandBarView::MaybeShow(browser_,
++                                    CommandBarView::Mode::kCurrentTab)) {
++        break;
++      }
+       if (!window()->IsLocationBarVisible()) {
+         break;
+       }
+--- a/chrome/browser/ui/BUILD.gn
++++ b/chrome/browser/ui/BUILD.gn
+@@ -3573,6 +3573,8 @@ static_library("ui") {
+       "views/frame/horizontal_tab_strip_region_view.h",
+       "views/frame/vertical_tab_strip_region_view.cc",
+       "views/frame/vertical_tab_strip_region_view.h",
++      "views/helium/command_bar_view.cc",
++      "views/helium/command_bar_view.h",
+       "views/helium/frame_corner_radius.cc",
+       "views/helium/frame_corner_radius.h",
+       "views/helium/native_frame_materials.cc",
+--- a/chrome/browser/extensions/api/settings_private/prefs_util.cc
++++ b/chrome/browser/extensions/api/settings_private/prefs_util.cc
+@@ -226,6 +226,8 @@ const PrefsUtil::TypedPrefMap& PrefsUtil
+       settings_api::PrefType::kBoolean;
+   (*s_allowlist)[::prefs::kHeliumMinimalLocationBar] =
+       settings_api::PrefType::kBoolean;
++  (*s_allowlist)[::prefs::kHeliumCommandBar] =
++      settings_api::PrefType::kBoolean;
+   (*s_allowlist)[::prefs::kHeliumShowProgressBar] =
+       settings_api::PrefType::kBoolean;
+   (*s_allowlist)[::prefs::kHeliumZenMode] = settings_api::PrefType::kBoolean;
+--- a/chrome/app/settings_strings.grdp
++++ b/chrome/app/settings_strings.grdp
+@@ -312,6 +312,12 @@
+     <message name="IDS_SETTINGS_MINIMAL_LOCATION_BAR" desc="Label for the toggle that enables the minimal URL in the address bar, showing only the site origin.">
+       Minimal URL in the address bar
+     </message>
++    <message name="IDS_SETTINGS_COMMAND_BAR" desc="Label for the toggle that makes the new tab and address bar shortcuts open a search overlay.">
++      Search overlay for new tabs and the address bar
++    </message>
++    <message name="IDS_SETTINGS_COMMAND_BAR_DESCRIPTION" desc="Description for the toggle that makes the new tab and address bar shortcuts open a search overlay.">
++      New tab and focus address bar open a large search box that also finds your open tabs
++    </message>
+     <message name="IDS_SETTINGS_SHOW_PROGRESS_BAR" desc="Label for the toggle that shows loading progress in the address bar.">
+       Show loading progress in the address bar
+     </message>
+--- a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
++++ b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
+@@ -630,6 +630,8 @@ void AddAppearanceStrings(content::WebUI
+        IDS_SETTINGS_OPEN_EXTERNAL_LINKS_IN_PROFILE_DESCRIPTION},
+ #endif
+       {"minimalLocationBar", IDS_SETTINGS_MINIMAL_LOCATION_BAR},
++      {"commandBar", IDS_SETTINGS_COMMAND_BAR},
++      {"commandBarDescription", IDS_SETTINGS_COMMAND_BAR_DESCRIPTION},
+       {"showProgressBar", IDS_SETTINGS_SHOW_PROGRESS_BAR},
+       {"shiftRightClickContextMenu",
+        IDS_SETTINGS_SHIFT_RIGHT_CLICK_CONTEXT_MENU},
+--- a/chrome/browser/resources/settings/appearance_page/appearance_layout_page.html.ts
++++ b/chrome/browser/resources/settings/appearance_page/appearance_layout_page.html.ts
+@@ -47,6 +47,11 @@ export function getHtml(this: SettingsAp
+       label="$i18n{minimalLocationBar}">
+   </settings-toggle-button>
+   <settings-toggle-button class="hr"
++      pref-key="helium.browser.command_bar"
++      label="$i18n{commandBar}"
++      sub-label="$i18n{commandBarDescription}">
++  </settings-toggle-button>
++  <settings-toggle-button class="hr"
+       pref-key="helium.browser.show_progress_bar"
+       label="$i18n{showProgressBar}">
+   </settings-toggle-button>
