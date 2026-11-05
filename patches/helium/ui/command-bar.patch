@@ -2400,25 +2400,37 @@
    height: 32px;
 --- a/chrome/browser/BUILD.gn
 +++ b/chrome/browser/BUILD.gn
-@@ -4710,6 +4710,13 @@ source_set("browser") {
-   }
- 
+@@ -4727,6 +4727,7 @@
    if (toolkit_views) {
-+    sources += [
-+      "ui/views/helium/command_bar_commands.cc",
-+      "ui/views/helium/command_bar_commands.h",
-+      "ui/views/helium/command_bar_view.cc",
-+      "ui/views/helium/command_bar_view.h",
-+    ]
-+
      deps += [
        ":resources",
++      "//chrome/browser/ui/views/helium:command_bar",
        "//base",
-@@ -4957,6 +4964,7 @@ source_set("browser") {
-       "//chrome/browser/ui/views/frame:scrim_view",
-       "//chrome/browser/ui/views/frame:scrim_view_controller",
-       "//chrome/browser/ui/views/frame:scrim_view_controller_impl",
-+      "//components/helium_services",
-       "//chrome/browser/ui/views/frame:shadow",
-       "//chrome/browser/ui/views/frame:shadow_overlay_view",
-       "//chrome/browser/ui/views/frame:shadow_overlay_view_impl",
+       "//chrome/browser/collaboration",
+       "//chrome/browser/collaboration/messaging",
+--- a/chrome/browser/ui/views/helium/BUILD.gn
++++ b/chrome/browser/ui/views/helium/BUILD.gn
+@@ -3,6 +3,23 @@
+ # the terms of the GPL-3.0 license that can be found in the LICENSE file.
+ 
+ assert(!is_android)
++
++source_set("command_bar") {
++  sources = [
++    "command_bar_commands.cc",
++    "command_bar_commands.h",
++    "command_bar_view.cc",
++    "command_bar_view.h",
++  ]
++
++  public_deps = [ "//chrome/browser:browser_public_dependencies" ]
++
++  deps = [
++    "//chrome/app:generated_resources",
++    "//components/helium_services",
++    "//components/strings",
++  ]
++}
+ 
+ source_set("frame_corner_radius") {
+   sources = [

@@ -188,7 +188,7 @@
        "//chrome/browser/ui/tabs:tab_strip",
 --- a/chrome/browser/ui/tabs/BUILD.gn
 +++ b/chrome/browser/ui/tabs/BUILD.gn
-@@ -102,6 +102,16 @@ source_set("page_context_eligibility_hel
+@@ -102,6 +102,32 @@
  }
  
  if (!is_android) {
@@ -202,10 +202,26 @@
 +    ]
 +  }
 +
++  source_set("page_change_monitor_impl") {
++    sources = [
++      "page_change_monitor.cc",
++      "page_change_monitor_diff.h",
++      "page_change_monitor_script.h",
++    ]
++    public_deps = [ "//chrome/browser:browser_public_dependencies" ]
++    deps = [
++      ":page_change_monitor",
++      "//chrome/app:generated_resources",
++      "//chrome/browser/sharing_hub",
++      "//chrome/browser/ui/select_file_policy",
++      "//chrome/browser/ui/views/sharing_hub:screenshot_documentation",
++    ]
++  }
++
    source_set("pane_settings") {
      sources = [
        "pane_settings.cc",
-@@ -117,6 +127,7 @@ if (!is_android) {
+@@ -117,6 +143,7 @@
        "//chrome/browser/sessions",
        "//components/embedder_support:user_agent",
        "//components/sessions",
@@ -213,7 +229,7 @@
      ]
    }
  
-@@ -286,9 +297,9 @@ if (!is_android) {
+@@ -286,9 +313,9 @@
        "existing_base_sub_menu_model.h",
        "existing_tab_group_sub_menu_model.h",
        "existing_window_sub_menu_model.h",
@@ -224,7 +240,7 @@
        "remote_tabs_menu_util.h",
        "split_tab_menu_model.h",
        "split_tab_mute_menu_model.h",
-@@ -337,6 +348,7 @@ if (!is_android) {
+@@ -337,6 +364,7 @@
      ]
  
      deps = [
@@ -232,7 +248,7 @@
        ":pane_settings",
        ":tab_group",
        ":tab_menu",
-@@ -563,6 +575,7 @@ if (!is_android) {
+@@ -563,6 +591,7 @@
      }
  
      deps = [
@@ -240,23 +256,23 @@
        ":pane_settings",
        ":tab_group",
        ":tab_model",
-@@ -1064,8 +1077,8 @@ if (!is_android) {
+@@ -1063,8 +1092,8 @@
    source_set("unit_tests") {
      testonly = true
      sources = [
--      "pane_settings_unittest.cc",
-       "inactive_window_mouse_event_controller_unittest.cc",
-+      "pane_settings_unittest.cc",
++      "inactive_window_mouse_event_controller_unittest.cc",
+       "pane_settings_unittest.cc",
+-      "inactive_window_mouse_event_controller_unittest.cc",
        "split_view_iph_controller_unittest.cc",
        "tab_group_deletion_dialog_controller_unittest.cc",
        "tab_menu_model_unittest.cc",
-@@ -1086,8 +1099,8 @@ if (!is_android) {
+@@ -1085,8 +1114,8 @@
      ]
  
      deps = [
--      ":pane_settings",
-       ":page_context_eligibility_helper_unit_tests",
-+      ":pane_settings",
++      ":page_context_eligibility_helper_unit_tests",
+       ":pane_settings",
+-      ":page_context_eligibility_helper_unit_tests",
        ":tab_enums",
        ":tab_group",
        ":tab_menu",
@@ -2700,21 +2716,11 @@
  }  // namespace tabs
 --- a/chrome/browser/BUILD.gn
 +++ b/chrome/browser/BUILD.gn
-@@ -3891,6 +3891,18 @@ source_set("browser") {
+@@ -3916,6 +3916,8 @@
        ]
      }
  
-+    sources = [
-+      "ui/tabs/page_change_monitor.cc",
-+      "ui/tabs/page_change_monitor_diff.h",
-+      "ui/tabs/page_change_monitor_script.h",
-+    ]
-+    deps += [
-+      "//chrome/browser/sharing_hub",
-+      "//chrome/browser/ui/select_file_policy",
-+      "//chrome/browser/ui/tabs:page_change_monitor",
-+      "//chrome/browser/ui/views/sharing_hub:screenshot_documentation",
-+    ]
++    deps += [ "//chrome/browser/ui/tabs:page_change_monitor_impl" ]
 +
      # Non-android deps for "ui" target.
      deps += [

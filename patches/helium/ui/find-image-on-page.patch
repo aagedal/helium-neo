@@ -239,12 +239,26 @@
          sharing_hub::ScreenshotCapturedBubbleController::Get(
 --- a/chrome/browser/ui/tabs/BUILD.gn
 +++ b/chrome/browser/ui/tabs/BUILD.gn
-@@ -102,6 +102,10 @@ source_set("page_context_eligibility_hel
+@@ -102,6 +102,24 @@
  }
  
  if (!is_android) {
 +  source_set("image_match_finder") {
 +    public = [ "image_match_finder.h" ]
++  }
++
++  source_set("image_match_finder_impl") {
++    sources = [
++      "image_match_compare.cc",
++      "image_match_compare.h",
++      "image_match_finder.cc",
++      "image_match_script.h",
++    ]
++    public_deps = [ "//chrome/browser:browser_public_dependencies" ]
++    deps = [
++      ":image_match_finder",
++      "//chrome/app:generated_resources",
++    ]
 +  }
 +
    source_set("page_change_monitor") {
@@ -2474,22 +2488,15 @@
 +#endif  // CHROME_COMMON_IMAGE_MATCH_THUMBNAIL_H_
 --- a/chrome/browser/BUILD.gn
 +++ b/chrome/browser/BUILD.gn
-@@ -3894,6 +3894,10 @@ source_set("browser") {
+@@ -3916,7 +3916,10 @@
+       ]
      }
  
-     sources = [
-+      "ui/tabs/image_match_compare.cc",
-+      "ui/tabs/image_match_compare.h",
-+      "ui/tabs/image_match_finder.cc",
-+      "ui/tabs/image_match_script.h",
-       "ui/tabs/page_change_monitor.cc",
-       "ui/tabs/page_change_monitor_diff.h",
-       "ui/tabs/page_change_monitor_script.h",
-@@ -3901,6 +3905,7 @@ source_set("browser") {
+-    deps += [ "//chrome/browser/ui/tabs:page_change_monitor_impl" ]
++    deps += [
++      "//chrome/browser/ui/tabs:image_match_finder_impl",
++      "//chrome/browser/ui/tabs:page_change_monitor_impl",
++    ]
+ 
+     # Non-android deps for "ui" target.
      deps += [
-       "//chrome/browser/sharing_hub",
-       "//chrome/browser/ui/select_file_policy",
-+      "//chrome/browser/ui/tabs:image_match_finder",
-       "//chrome/browser/ui/tabs:page_change_monitor",
-       "//chrome/browser/ui/views/sharing_hub:screenshot_documentation",
-     ]

@@ -932,14 +932,14 @@
  // A boolean pref set to true if loading progress should be shown in the
  // location bar.
  inline constexpr char kHeliumShowProgressBar[] =
---- a/chrome/browser/BUILD.gn
-+++ b/chrome/browser/BUILD.gn
-@@ -4715,6 +4715,8 @@ source_set("browser") {
-       "ui/views/helium/command_bar_commands.h",
-       "ui/views/helium/command_bar_view.cc",
-       "ui/views/helium/command_bar_view.h",
-+      "ui/views/helium/page_archive.cc",
-+      "ui/views/helium/page_archive.h",
-     ]
+--- a/chrome/browser/ui/views/helium/BUILD.gn
++++ b/chrome/browser/ui/views/helium/BUILD.gn
+@@ -10,6 +10,8 @@
+     "command_bar_commands.h",
+     "command_bar_view.cc",
+     "command_bar_view.h",
++    "page_archive.cc",
++    "page_archive.h",
+   ]
  
-     deps += [
+   public_deps = [ "//chrome/browser:browser_public_dependencies" ]
