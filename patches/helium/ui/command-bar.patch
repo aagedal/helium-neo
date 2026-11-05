@@ -2362,7 +2362,7 @@
  
 +  // The search overlay opens over empty tabs in frameless mode; keep the
 +  // tiles clear of it.
-+  source->AddBoolean(
++  dict.Set(
 +      "heliumOverlayLayout",
 +      profile->GetPrefs()->GetBoolean(prefs::kHeliumCommandBar) &&
 +          profile->GetPrefs()->GetBoolean(prefs::kHeliumZenMode));
