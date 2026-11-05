@@ -1,6 +1,6 @@
 --- a/chrome/browser/sessions/session_restore.cc
 +++ b/chrome/browser/sessions/session_restore.cc
-@@ -1091,14 +1091,14 @@ class SessionRestoreImpl : public Browse
+@@ -1129,14 +1129,14 @@ class SessionRestoreImpl : public Browse
      }
  
      for (const auto& [split_id, tabs] : tabs_by_split_id) {
@@ -116,15 +116,15 @@
  #include <memory>
  #include <optional>
  
-@@ -56,6 +57,7 @@
- #include "components/send_tab_to_self/features.h"
+@@ -57,6 +58,7 @@
  #include "components/split_tabs/split_tab_visual_data.h"
+ #include "components/tabs/public/split_tab_data.h"
  #include "components/tabs/public/tab_context_menu_command.h"
 +#include "components/tabs/public/split_tab_data.h"
  #include "components/tabs/public/tab_group.h"
  #include "components/tabs/public/tab_interface.h"
  #include "components/vector_icons/vector_icons.h"
-@@ -353,7 +355,12 @@ void TabMenuModel::Build(int index) {
+@@ -350,7 +352,12 @@ void TabMenuModel::Build(int index) {
                                               : kSplitSceneOldIcon,
                                           ui::kColorMenuIcon, kTabMenuIconSize));
        const int swap_with_split_index = GetItemCount() - 1;
@@ -138,7 +138,7 @@
        SetElementIdentifierAt(swap_with_split_index, kSwapSplitTabsMenuItem);
      } else {
        if (tabs::IsSplitViewHorizontalDirectAccessEnabledForTab()) {
-@@ -393,7 +400,11 @@ void TabMenuModel::Build(int index) {
+@@ -390,7 +397,11 @@ void TabMenuModel::Build(int index) {
                  ui::kColorMenuIcon, kTabMenuIconSize));
        }
        const int add_to_split_index = GetItemCount() - 1;
@@ -153,7 +153,7 @@
    } else {
 --- a/chrome/browser/ui/tabs/tab_strip_model.cc
 +++ b/chrome/browser/ui/tabs/tab_strip_model.cc
-@@ -1634,7 +1634,9 @@ void TabStripModel::DeselectTabAt(int in
+@@ -1636,7 +1636,9 @@ void TabStripModel::DeselectTabAt(int in
      // If the tab is already deselected, no need to do anything.
      return;
    } else if (selection_model_.size() == 1 ||
@@ -164,7 +164,7 @@
      // One tab must be selected and this tab is currently selected so we can't
      // unselect it.
      return;
-@@ -2033,6 +2035,9 @@ void TabStripModel::UpdateTabInSplit(tab
+@@ -2035,6 +2037,9 @@ void TabStripModel::UpdateTabInSplit(tab
  void TabStripModel::ReverseTabsInSplit(split_tabs::SplitTabId split_id) {
    ReentrancyCheck reentrancy_check(&reentrancy_guard_);
  
@@ -174,7 +174,7 @@
    tabs::TabInterface* first_tab = GetSplitData(split_id)->ListTabs()[0];
    const int index_of_first_tab_in_split = GetIndexOfTab(first_tab);
    MoveTabToIndexImpl(index_of_first_tab_in_split,
-@@ -2046,7 +2051,7 @@ split_tabs::SplitTabId TabStripModel::Ad
+@@ -2048,7 +2053,7 @@ split_tabs::SplitTabId TabStripModel::Ad
      split_tabs::SplitTabCreatedSource source) {
    ReentrancyCheck reentrancy_check(&reentrancy_guard_);
  
@@ -183,7 +183,7 @@
        << "Invalid index count: " << indices.size();
  
    // If there is only one entry in `indices`, use the active index as the pivot
-@@ -2089,7 +2094,8 @@ void TabStripModel::RestoreSplit(split_t
+@@ -2091,7 +2096,8 @@ void TabStripModel::RestoreSplit(split_t
                                   split_tabs::SplitTabVisualData visual_data) {
    ReentrancyCheck reentrancy_check(&reentrancy_guard_);
    CHECK(std::ranges::is_sorted(indices));
@@ -193,7 +193,7 @@
  
    // Ideally these are consecutive indices from the restore flow and the pivot
    // index does not matter. However, given there are numerous steps in restore
-@@ -3459,6 +3465,16 @@ void TabStripModel::ExecuteAddToNewSplit
+@@ -3477,6 +3483,16 @@ void TabStripModel::ExecuteAddToNewSplit
                                 selection_model_.size());
  
    std::vector<int> indices = GetIndicesForCommand(context_index);
@@ -210,7 +210,7 @@
    // There are three cases for adding to a split.
    // 1. Selecting an inactive tab and making it a split with the active.
    // 2. Selecting active and inactive tab and creating a split
-@@ -3466,8 +3482,10 @@ void TabStripModel::ExecuteAddToNewSplit
+@@ -3484,8 +3500,10 @@ void TabStripModel::ExecuteAddToNewSplit
    // Remove the active tab from the indices first since splitting is done
    // with the active tab. Case 3 is a special zero split case that creates a
    // new split tab and is inferred by the delegate.
@@ -223,7 +223,7 @@
  
    // This callback results in creating a split. It is either sent to the
    // deletion dialog that owns it and is responsible for calling it or if no
-@@ -4882,6 +4900,9 @@ void TabStripModel::UpdateTabInSplitImpl
+@@ -4897,6 +4915,9 @@ void TabStripModel::UpdateTabInSplitImpl
                                           int update_index,
                                           SplitUpdateType update_type) {
    CHECK(split_tab->IsSplit());
@@ -233,7 +233,7 @@
    const split_tabs::SplitTabId split_id = split_tab->GetSplit().value();
  
    std::vector<tabs::TabInterface*> tabs_to_split =
-@@ -5299,12 +5320,15 @@ void TabStripModel::MoveTabToIndexImpl(
+@@ -5314,12 +5335,15 @@ void TabStripModel::MoveTabToIndexImpl(
      FixOpeners(initial_index);
    }
  
@@ -252,7 +252,7 @@
    } else {
      contents_data_->MoveTabRecursive(initial_index, final_index, group, pin);
    }
-@@ -6364,7 +6388,7 @@ void TabStripModel::CreateHistoricalSpli
+@@ -6382,7 +6406,7 @@ void TabStripModel::CreateHistoricalSpli
        }
      }
      for (const auto& [split_id, count] : split_closing_counts) {
@@ -263,7 +263,7 @@
      }
 --- a/chrome/browser/ui/tabs/tab_strip_model_unittest.cc
 +++ b/chrome/browser/ui/tabs/tab_strip_model_unittest.cc
-@@ -3376,6 +3376,58 @@ TEST_F(TabStripModelTest, AddToNewSplit_
+@@ -3382,6 +3382,58 @@ TEST_F(TabStripModelTest, AddToNewSplit_
    EXPECT_EQ("0 1 2s 3s 4", GetTabStripStateString(tabstrip()));
  }
  
@@ -324,7 +324,7 @@
      for (bool use_left_tab : {true, false}) {
 --- a/chrome/browser/ui/views/frame/browser_view.cc
 +++ b/chrome/browser/ui/views/frame/browser_view.cc
-@@ -2663,8 +2663,7 @@ void BrowserView::OnActiveTabChanged(con
+@@ -2667,8 +2667,7 @@ void BrowserView::OnActiveTabChanged(con
        GetWidget()->GetFocusManager()->ClearFocus();
      }
  
@@ -334,7 +334,7 @@
    }
  
    // Do this before updating InfoBarContainer as the InfoBarContainer may
-@@ -4152,7 +4151,7 @@ void BrowserView::OnSplitTabChanged(cons
+@@ -4149,7 +4148,7 @@ void BrowserView::OnSplitTabChanged(cons
            browser_->GetTabStripModel()->GetActiveTab();
  
        if (active_tab->GetSplit() == change.split_id) {
@@ -343,7 +343,7 @@
        }
        break;
      }
-@@ -5009,6 +5008,9 @@ void BrowserView::ShowSplitView(bool foc
+@@ -5006,6 +5005,9 @@ void BrowserView::ShowSplitView(bool foc
  
    std::vector<tabs::TabInterface*> split_tabs = split_data->ListTabs();
  
@@ -353,7 +353,7 @@
    for (size_t i = 0; tabs::TabInterface* tab : split_tabs) {
      multi_contents_view_->SetWebContentsAtIndex(tab->GetContents(), i++);
    }
-@@ -5058,7 +5060,13 @@ void BrowserView::UpdateActiveTabInSplit
+@@ -5055,7 +5057,13 @@ void BrowserView::UpdateActiveTabInSplit
    // However, there are cases where inactive tab can be activated without a
    // focus change e.g. using tab shortcuts and in these cases update focus.
    if (GetWidget()->IsActive() &&
@@ -368,7 +368,7 @@
      multi_contents_view_->GetActiveContentsView()->RequestFocus();
    }
  }
-@@ -5068,8 +5076,10 @@ bool BrowserView::IsTabChangeInSplitView
+@@ -5065,8 +5073,10 @@ bool BrowserView::IsTabChangeInSplitView
    return multi_contents_view_->IsInSplitView() &&
           multi_contents_view_->GetActiveContentsView()->web_contents() ==
               old_contents &&
@@ -381,7 +381,7 @@
  }
  
  void BrowserView::UpdateTabModalDialogHost() {
-@@ -5116,12 +5126,13 @@ void BrowserView::MaybeUpdateStoredFocus
+@@ -5113,12 +5123,13 @@ void BrowserView::MaybeUpdateStoredFocus
  }
  
  std::vector<ContentsWebView*> BrowserView::GetAllVisibleContentsWebViews() {
@@ -401,7 +401,7 @@
    }
    return contents_views;
  }
-@@ -6143,7 +6154,8 @@ bool BrowserView::MaybeUpdateSplitView(c
+@@ -6129,7 +6140,8 @@ bool BrowserView::MaybeUpdateSplitView(c
    if (updated_state) {
      split_tabs::SplitTabData* split_data =
          browser_->GetTabStripModel()->GetSplitData(new_tab->GetSplit().value());
@@ -747,7 +747,7 @@
  #include <vector>
  
  #include "chrome/browser/ui/color/chrome_color_id.h"
-@@ -141,31 +142,22 @@ gfx::Size SplitTabView::GetMinimumSize()
+@@ -148,31 +149,22 @@ gfx::Size SplitTabView::GetMinimumSize()
  
  std::optional<BrowserRootView::DropIndex> SplitTabView::GetLinkDropIndex(
      const gfx::Point& loc_in_view) {
@@ -793,16 +793,7 @@
  }
  
  double SplitTabView::GetHoverAnimationValue() const {
-@@ -246,7 +238,7 @@ views::ProposedLayout SplitTabView::Calc
-   views::ProposedLayout layouts;
-   const auto children = collection_node_ ? collection_node_->GetDirectChildren()
-                                          : TabCollectionNode::ChildViews();
--  if (children.size() != 2) {
-+  if (children.size() < 2) {
-     layouts.host_size = gfx::Size(0, 0);
-     return layouts;
-   }
-@@ -256,7 +248,6 @@ views::ProposedLayout SplitTabView::Calc
+@@ -263,7 +255,6 @@ views::ProposedLayout SplitTabView::Calc
  
    // Layout children horizontally side-by-side in order.
    int x = 0;
@@ -810,13 +801,17 @@
    for (size_t i = 0; i < children.size(); ++i) {
      views::View* child = children[i];
      gfx::Rect bounds = gfx::Rect(child->GetPreferredSize());
-@@ -265,11 +256,11 @@ views::ProposedLayout SplitTabView::Calc
+@@ -272,15 +263,11 @@ views::ProposedLayout SplitTabView::Calc
  
      // Fill available width evenly if bounded.
      if (size_bounds.width().is_bounded()) {
--      const int available_width = size_bounds.width().value() + tab_overlap;
--      bounds.set_width(i == 0 ? std::floor(available_width / 2)
--                              : available_width - first_child_width);
+-      if (children.size() == 1) {
+-        bounds.set_width(size_bounds.width().value());
+-      } else {
+-        const int available_width = size_bounds.width().value() + tab_overlap;
+-        bounds.set_width(i == 0 ? std::floor(available_width / 2)
+-                                : available_width - first_child_width);
+-      }
 +      const int available_width = size_bounds.width().value() +
 +                                  tab_overlap * (children.size() - 1);
 +      bounds.set_width(available_width * (i + 1) / children.size() -
@@ -826,7 +821,7 @@
      if (i < children.size() - 1) {
        x += bounds.width() - tab_overlap;
      } else {
-@@ -290,7 +281,7 @@ views::ProposedLayout SplitTabView::Calc
+@@ -301,7 +288,7 @@ views::ProposedLayout SplitTabView::Calc
  
    const auto children = collection_node_ ? collection_node_->GetDirectChildren()
                                           : TabCollectionNode::ChildViews();
@@ -835,7 +830,7 @@
      layouts.host_size = gfx::Size(0, 0);
      return layouts;
    }
-@@ -304,7 +295,7 @@ views::ProposedLayout SplitTabView::Calc
+@@ -315,7 +302,7 @@ views::ProposedLayout SplitTabView::Calc
    // fill available width. If unbounded or uncollapsed and both children fit on
    // one row they will share it, otherwise they will be stacked vertically.
    if (!size_bounds.width().is_bounded() ||
@@ -846,7 +841,7 @@
                 GetLayoutConstant(LayoutConstant::kVerticalTabMinWidth) *
 --- a/chrome/browser/ui/views/tabs/tab.cc
 +++ b/chrome/browser/ui/views/tabs/tab.cc
-@@ -1553,7 +1553,7 @@ void Tab::CloseButtonPressed(const ui::E
+@@ -1554,7 +1554,7 @@ void Tab::CloseButtonPressed(const ui::E
  
    const std::vector<Tab*>& tabs_in_split = controller()->GetTabsInSplit(this);
    if (tabs_in_split.size() > 0) {

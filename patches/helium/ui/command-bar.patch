@@ -2190,15 +2190,15 @@
    registry->RegisterBooleanPref(prefs::kHomePageIsNewTabPage, true,
 --- a/chrome/browser/ui/browser_command_controller.cc
 +++ b/chrome/browser/ui/browser_command_controller.cc
-@@ -97,6 +97,7 @@
+@@ -98,6 +98,7 @@
  #include "chrome/browser/ui/user_education/browser_user_education_interface.h"
  #include "chrome/browser/ui/views/download/bubble/download_toolbar_ui_controller.h"
  #include "chrome/browser/ui/views/frame/browser_view.h"
 +#include "chrome/browser/ui/views/helium/command_bar_view.h"
- #include "chrome/browser/ui/views/side_panel/tabs_from_other_devices/tabs_from_other_devices_side_panel_coordinator.h"
  #include "chrome/browser/ui/web_applications/app_browser_controller.h"
  #include "chrome/browser/ui/web_applications/web_app_dialog_utils.h"
-@@ -771,6 +772,9 @@ void BrowserCommandController::HandleCom
+ #include "chrome/browser/ui/web_applications/web_app_launch_utils.h"
+@@ -783,6 +784,9 @@ void BrowserCommandController::HandleCom
        CloseWindow(browser_);
        break;
      case IDC_NEW_TAB: {
@@ -2208,7 +2208,7 @@
        NewTab(browser_, NewTabTypes::kNewTabCommand);
        break;
      }
-@@ -1138,6 +1142,10 @@ void BrowserCommandController::HandleCom
+@@ -1166,6 +1170,10 @@ void BrowserCommandController::HandleCom
        FocusToolbar(browser_);
        break;
      case IDC_FOCUS_LOCATION:
@@ -2221,7 +2221,7 @@
        }
 --- a/chrome/browser/ui/views/frame/browser_view.cc
 +++ b/chrome/browser/ui/views/frame/browser_view.cc
-@@ -185,6 +185,7 @@
+@@ -186,6 +186,7 @@
  #include "chrome/browser/ui/views/frame/tab_modal_dialog_host.h"
  #include "chrome/browser/ui/views/frame/tab_strip_region_view.h"
  #include "chrome/browser/ui/views/frame/top_container_view.h"
@@ -2229,7 +2229,7 @@
  #include "chrome/browser/ui/views/frame/top_controls_slide_controller.h"
  #include "chrome/browser/ui/views/frame/vertical_tab_strip_background_blur_backdrop.h"
  #include "chrome/browser/ui/views/frame/vertical_tab_strip_region_view.h"
-@@ -3022,6 +3023,13 @@ void BrowserView::SetFocusToLocationBar(
+@@ -3003,6 +3004,13 @@ void BrowserView::SetFocusToLocationBar(
      return;
    }
  
@@ -2243,30 +2243,9 @@
    // In zen mode, snap the toolbar to fully shown so the omnibox is visible
    // and can receive focus.  A synchronous layout is required so the toolbar
    // has non-zero height before FocusLocation runs.
---- a/chrome/browser/ui/BUILD.gn
-+++ b/chrome/browser/ui/BUILD.gn
-@@ -3573,6 +3573,10 @@ static_library("ui") {
-       "views/frame/horizontal_tab_strip_region_view.h",
-       "views/frame/vertical_tab_strip_region_view.cc",
-       "views/frame/vertical_tab_strip_region_view.h",
-+      "views/helium/command_bar_commands.cc",
-+      "views/helium/command_bar_commands.h",
-+      "views/helium/command_bar_view.cc",
-+      "views/helium/command_bar_view.h",
-       "views/helium/frame_corner_radius.cc",
-       "views/helium/frame_corner_radius.h",
-       "views/helium/native_frame_materials.cc",
-@@ -3824,6 +3828,7 @@ static_library("ui") {
-       "//chrome/browser/ui/views/frame:opaque_browser_frame_view_layout_delegate",
-       "//chrome/browser/ui/views/frame:picture_in_picture_browser_frame_view",
-       "//chrome/browser/ui/views/frame:safe_invoke",
-+      "//components/helium_services",
-       "//chrome/browser/ui/views/frame:scrim_view",
-       "//chrome/browser/ui/views/frame:scrim_view_controller",
-       "//chrome/browser/ui/views/frame:scrim_view_controller_impl",
 --- a/chrome/browser/extensions/api/settings_private/prefs_util.cc
 +++ b/chrome/browser/extensions/api/settings_private/prefs_util.cc
-@@ -226,6 +226,8 @@ const PrefsUtil::TypedPrefMap& PrefsUtil
+@@ -229,6 +229,8 @@ const PrefsUtil::TypedPrefMap& PrefsUtil
        settings_api::PrefType::kBoolean;
    (*s_allowlist)[::prefs::kHeliumMinimalLocationBar] =
        settings_api::PrefType::kBoolean;
@@ -2277,7 +2256,7 @@
    (*s_allowlist)[::prefs::kHeliumZenMode] = settings_api::PrefType::kBoolean;
 --- a/chrome/app/settings_strings.grdp
 +++ b/chrome/app/settings_strings.grdp
-@@ -312,6 +312,12 @@
+@@ -313,6 +313,12 @@
      <message name="IDS_SETTINGS_MINIMAL_LOCATION_BAR" desc="Label for the toggle that enables the minimal URL in the address bar, showing only the site origin.">
        Minimal URL in the address bar
      </message>
@@ -2292,7 +2271,7 @@
      </message>
 --- a/chrome/app/generated_resources.grd
 +++ b/chrome/app/generated_resources.grd
-@@ -292,6 +292,57 @@
+@@ -301,6 +301,57 @@ are declared in tools/grit/grit_args.gni
        <message name="IDS_HELIUM_MOBILE_PREVIEW" desc="Toggle clean mobile device emulation for this tab.">Mobile preview (402 × 874)</message>
        <message name="IDS_HELIUM_CREATE_PREVIEW_WORKSPACE" desc="Create a pinned tab group containing desktop and mobile copies of this page.">Create desktop/mobile workspace</message>
        <message name="IDS_HELIUM_PREVIEW_WORKSPACE_TITLE" desc="Default name for a desktop and mobile preview tab group.">Desktop + mobile</message>
@@ -2352,7 +2331,7 @@
        <message name="IDS_HELIUM_AUTO_REFRESH_SECONDS" desc="Refresh interval in seconds.">Every <ph name="SECONDS">$1<ex>15</ex></ph> seconds</message>
 --- a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
 +++ b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
-@@ -630,6 +630,8 @@ void AddAppearanceStrings(content::WebUI
+@@ -628,6 +628,8 @@ void AddAppearanceStrings(content::WebUI
         IDS_SETTINGS_OPEN_EXTERNAL_LINKS_IN_PROFILE_DESCRIPTION},
  #endif
        {"minimalLocationBar", IDS_SETTINGS_MINIMAL_LOCATION_BAR},
@@ -2377,9 +2356,9 @@
    </settings-toggle-button>
 --- a/chrome/browser/ui/webui/new_tab_page/new_tab_page_ui.cc
 +++ b/chrome/browser/ui/webui/new_tab_page/new_tab_page_ui.cc
-@@ -205,6 +205,13 @@ content::WebUIDataSource* CreateAndAddNe
-   content::WebUIDataSource* source = content::WebUIDataSource::CreateAndAdd(
-       profile, chrome::kChromeUINewTabPageHost);
+@@ -258,6 +258,13 @@ base::DictValue NewTabPageUI::GetLoadTim
+     bool session_allows_drag_and_drop) {
+   base::DictValue dict;
  
 +  // The search overlay opens over empty tabs in frameless mode; keep the
 +  // tiles clear of it.
@@ -2389,22 +2368,22 @@
 +          profile->GetPrefs()->GetBoolean(prefs::kHeliumZenMode));
 +
    ui::Accelerator undo_accelerator(ui::VKEY_Z, ui::EF_PLATFORM_ACCELERATOR);
-   source->AddString("undoDescription", l10n_util::GetStringFUTF16(
-                                            IDS_UNDO_DESCRIPTION,
+   dict.Set("undoDescription",
+            l10n_util::GetStringFUTF16(IDS_UNDO_DESCRIPTION,
 --- a/chrome/browser/resources/new_tab_page/app.ts
 +++ b/chrome/browser/resources/new_tab_page/app.ts
-@@ -542,6 +542,8 @@ export class AppElement extends AppEleme
+@@ -548,6 +548,8 @@ export class AppElement extends AppEleme
  
    override connectedCallback() {
      super.connectedCallback();
 +    this.toggleAttribute(
 +        'helium-overlay-layout', loadTimeData.getBoolean('heliumOverlayLayout'));
-     realboxCanShowSecondarySideMediaQueryList.addEventListener(
-         'change', this.onRealboxCanShowSecondarySideChanged_);
- 
+     if (!this.enableThreadsRail_) {
+       realboxCanShowSecondarySideMediaQueryList.addEventListener(
+           'change', this.onRealboxCanShowSecondarySideChanged_);
 --- a/chrome/browser/resources/new_tab_page/app.css
 +++ b/chrome/browser/resources/new_tab_page/app.css
-@@ -308,6 +308,14 @@ ntp-searchbox[shown] {
+@@ -278,6 +278,14 @@ ntp-searchbox[shown] {
    left: 16px;
  }
  
@@ -2419,3 +2398,27 @@
  #contentBottomSpacer {
    flex-shrink: 0;
    height: 32px;
+--- a/chrome/browser/BUILD.gn
++++ b/chrome/browser/BUILD.gn
+@@ -4710,6 +4710,13 @@ source_set("browser") {
+   }
+ 
+   if (toolkit_views) {
++    sources += [
++      "ui/views/helium/command_bar_commands.cc",
++      "ui/views/helium/command_bar_commands.h",
++      "ui/views/helium/command_bar_view.cc",
++      "ui/views/helium/command_bar_view.h",
++    ]
++
+     deps += [
+       ":resources",
+       "//base",
+@@ -4957,6 +4964,7 @@ source_set("browser") {
+       "//chrome/browser/ui/views/frame:scrim_view",
+       "//chrome/browser/ui/views/frame:scrim_view_controller",
+       "//chrome/browser/ui/views/frame:scrim_view_controller_impl",
++      "//components/helium_services",
+       "//chrome/browser/ui/views/frame:shadow",
+       "//chrome/browser/ui/views/frame:shadow_overlay_view",
+       "//chrome/browser/ui/views/frame:shadow_overlay_view_impl",

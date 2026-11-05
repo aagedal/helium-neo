@@ -1,6 +1,6 @@
 --- a/components/performance_manager/features.cc
 +++ b/components/performance_manager/features.cc
-@@ -212,13 +212,13 @@
+@@ -235,13 +235,13 @@ BASE_FEATURE(kFreezingFollowsDiscardOptO
  
  BASE_FEATURE(kRecordFreezingEligibilityUKM, base::FEATURE_ENABLED_BY_DEFAULT);
  
@@ -18,7 +18,7 @@
                     kInfiniteTabsFreezing_UnfreezeInterval,
 --- a/components/performance_manager/user_tuning/prefs.cc
 +++ b/components/performance_manager/user_tuning/prefs.cc
-@@ -35,7 +35,7 @@
+@@ -35,7 +35,7 @@ void RegisterLocalStatePrefs(PrefRegistr
        kMemorySaverModeState, static_cast<int>(MemorySaverModeState::kEnabled));
    registry->RegisterIntegerPref(
        kMemorySaverModeAggressiveness,
@@ -29,7 +29,7 @@
        static_cast<int>(BatterySaverModeState::kEnabledBelowThreshold));
 --- a/chrome/app/settings_strings.grdp
 +++ b/chrome/app/settings_strings.grdp
-@@ -1178,10 +1178,10 @@
+@@ -1182,10 +1182,10 @@
        Choose time range
      </message>
      <message name="IDS_SETTINGS_PERFORMANCE_MEMORY_SAVER_MODE_CONSERVATIVE_LABEL" desc="Label for the conservative memory saver aggressiveness option">
@@ -42,14 +42,3 @@
      </message>
      <message name="IDS_SETTINGS_PERFORMANCE_MEMORY_SAVER_MODE_AGGRESSIVE_LABEL" desc="Label for the aggressive memory saver aggressiveness option">
        Maximum
---- a/chrome/browser/flag-metadata.json
-+++ b/chrome/browser/flag-metadata.json
-@@ -6347,7 +6347,7 @@
-   {
-     "name": "infinite-tabs-freezing",
-     "owners": [ "fdoray@chromium.org", "catan-team@chromium.org" ],
--    "expiry_milestone": 142
-+    "expiry_milestone": -1
-   },
-   {
-     "name": "infobar-banner-revamp",

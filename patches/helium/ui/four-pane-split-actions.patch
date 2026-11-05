@@ -10,7 +10,7 @@
  
 --- a/chrome/browser/ui/tabs/tab_menu_model.cc
 +++ b/chrome/browser/ui/tabs/tab_menu_model.cc
-@@ -426,6 +426,15 @@ void TabMenuModel::Build(int index) {
+@@ -422,6 +422,15 @@ void TabMenuModel::Build(int index) {
      SetElementIdentifierAt(GetItemCount() - 1, kArrangeSplitTabsMenuItem);
    }
  
@@ -24,11 +24,11 @@
 +  }
 +
    if (tab_strip_->SupportsTabGroups() &&
-       base::FeatureList::IsEnabled(features::kTabGroupsFocusing)) {
-     if (std::optional<tab_groups::TabGroupId> group =
+       base::FeatureList::IsEnabled(features::kTabGroupsFocusing) &&
+       std::ranges::none_of(
 --- a/chrome/browser/ui/tabs/tab_strip_model.cc
 +++ b/chrome/browser/ui/tabs/tab_strip_model.cc
-@@ -2808,6 +2808,11 @@ bool TabStripModel::IsContextMenuCommand
+@@ -2826,6 +2826,11 @@ bool TabStripModel::IsContextMenuCommand
      case CommandAddToExistingGroup:
        return SupportsTabGroups();
  
@@ -40,7 +40,7 @@
      case CommandAddToSplit:
      case CommandSwapWithActiveSplit:
      case CommandArrangeSplit:
-@@ -3147,6 +3152,43 @@ void TabStripModel::ExecuteContextMenuCo
+@@ -3165,6 +3170,43 @@ void TabStripModel::ExecuteContextMenuCo
        break;
      }
  
@@ -132,7 +132,7 @@
        <message name="IDS_HELIUM_CREATE_PREVIEW_WORKSPACE" desc="Create a pinned tab group containing desktop and mobile copies of this page.">Create desktop/mobile workspace</message>
 --- a/tools/metrics/histograms/metadata/tab/histograms.xml
 +++ b/tools/metrics/histograms/metadata/tab/histograms.xml
-@@ -77,6 +77,7 @@ chromium-metrics-reviews@google.com.
+@@ -83,6 +83,7 @@ chromium-metrics-reviews@google.com.
    <variant name="CloseTabsToRight"
        summary="the Close Tabs to the Right command"/>
    <variant name="CopyURL" summary="the Copy URL command"/>
@@ -142,18 +142,18 @@
        summary="the Start New Chat with Gemini command"/>
 --- a/chrome/browser/ui/tabs/tab_menu_model_browsertest.cc
 +++ b/chrome/browser/ui/tabs/tab_menu_model_browsertest.cc
-@@ -31,6 +31,7 @@
- #include "chrome/browser/ui/tabs/tab_strip_model.h"
+@@ -39,6 +39,7 @@
+ #include "chrome/browser/ui/tabs/tab_utils.h"
  #include "chrome/browser/ui/tabs/test_tab_strip_model_delegate.h"
  #include "chrome/browser/ui/ui_features.h"
 +#include "chrome/browser/ui/views/tabs/tab/tab_accessibility.h"
+ #include "chrome/browser/ui/views/send_tab_to_self/send_tab_to_self_bubble_controller.h"
  #include "chrome/common/chrome_features.h"
  #include "chrome/grit/generated_resources.h"
- #include "chrome/test/base/in_process_browser_test.h"
-@@ -793,3 +794,52 @@ IN_PROC_BROWSER_TEST_F(TabMenuModelSendT
-   }
-   EXPECT_THAT(sent_urls, testing::UnorderedElementsAre(url2, url3));
+@@ -1176,3 +1177,52 @@ IN_PROC_BROWSER_TEST_F(TabMenuModelSendT
+   EXPECT_EQ(menu.GetTypeAt(*index), ui::MenuModel::TYPE_SUBMENU);
  }
+ #endif
 +
 +// Regression: accessibility used to hit NOTREACHED for pane indices 2 and 3.
 +IN_PROC_BROWSER_TEST_F(TabMenuModelBrowserTest, FourPaneSplitAccessibleLabels) {

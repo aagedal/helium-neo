@@ -311,14 +311,17 @@
    return tab ? tab->view() : gfx::NativeView();
 --- a/chrome/browser/ui/BUILD.gn
 +++ b/chrome/browser/ui/BUILD.gn
-@@ -3355,6 +3355,7 @@ static_library("ui") {
+@@ -980,6 +980,10 @@ if (!is_android) {
+       "//ui/gfx",
+       "//ui/gfx/geometry",
+     ]
++
++    if (is_mac) {
++      deps += [ "//chrome/browser:helium_webkit_streaming" ]
++    }
    }
- 
-   if (is_mac) {
-+    deps += [ "//chrome/browser:helium_webkit_streaming" ]
-     sources += [
-       "browser_shortcuts/browser_shortcut_platform_mac.h",
-       "browser_shortcuts/browser_shortcut_platform_mac.mm",
+ }
+ if (is_mac) {
 --- a/chrome/browser/ui/browser_commands.cc
 +++ b/chrome/browser/ui/browser_commands.cc
 @@ -29,6 +29,10 @@
@@ -332,7 +335,7 @@
  #include "chrome/app/chrome_command_ids.h"
  #include "chrome/browser/autocomplete/autocomplete_classifier_factory.h"
  #include "chrome/browser/bookmarks/bookmark_model_factory.h"
-@@ -804,6 +808,14 @@ void ReloadInternal(BrowserWindowInterfa
+@@ -807,6 +811,14 @@ void ReloadInternal(BrowserWindowInterfa
        new_tab->Focus();
      }
  
@@ -347,7 +350,7 @@
      DevToolsWindow* const devtools =
          DevToolsWindow::GetInstanceForInspectedWebContents(new_tab);
      constexpr content::ReloadType kBypassingType =
-@@ -1043,6 +1055,11 @@ bool CanGoBack(const BrowserWindowInterf
+@@ -1047,6 +1059,11 @@ bool CanGoBack(const BrowserWindowInterf
  }
  
  bool CanGoBack(content::WebContents* web_contents) {
@@ -359,7 +362,7 @@
    return web_contents &&
           (web_contents->GetController().CanGoBack() ||
            back_to_opener::BackToOpenerController::CanGoBackToOpener(
-@@ -1056,6 +1073,11 @@ bool ShouldEnableBackButton(const Browse
+@@ -1060,6 +1077,11 @@ bool ShouldEnableBackButton(const Browse
      return false;
    }
  
@@ -371,7 +374,7 @@
    // Check for regular back navigation first.
    if (web_contents->GetController().ShouldEnableBackButton()) {
      return true;
-@@ -1124,6 +1146,12 @@ void GoBack(content::WebContents* web_co
+@@ -1129,6 +1151,12 @@ void GoBack(content::WebContents* web_co
      return;
    }
  
@@ -384,7 +387,7 @@
    // Try regular back navigation first.
    if (web_contents->GetController().CanGoBack()) {
      web_contents->GetController().GoBack();
-@@ -1141,17 +1169,25 @@ void GoBack(content::WebContents* web_co
+@@ -1146,17 +1174,25 @@ void GoBack(content::WebContents* web_co
  }
  
  bool CanGoForward(const BrowserWindowInterface* browser) {
@@ -414,7 +417,7 @@
    return browser->GetTabStripModel()
        ->GetActiveWebContents()
        ->GetController()
-@@ -1164,11 +1200,17 @@ void GoForward(BrowserWindowInterface* b
+@@ -1169,11 +1205,17 @@ void GoForward(BrowserWindowInterface* b
    if (CanGoForward(browser)) {
      tabs::TabInterface* tab = GetTabAndRevertIfNecessary(browser, disposition);
      CHECK(tab);
@@ -433,7 +436,7 @@
    base::RecordAction(UserMetricsAction("Forward"));
    if (CanGoForward(web_contents)) {
      web_contents->GetController().GoForward();
-@@ -1322,6 +1364,13 @@ base::WeakPtr<content::NavigationHandle>
+@@ -1327,6 +1369,13 @@ base::WeakPtr<content::NavigationHandle>
  
  void Stop(BrowserWindowInterface* browser) {
    base::RecordAction(UserMetricsAction("Stop"));

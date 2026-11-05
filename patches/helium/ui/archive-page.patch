@@ -540,7 +540,7 @@
  #define IDC_SPELLCHECK_SUGGESTION_0     41000
 --- a/chrome/app/generated_resources.grd
 +++ b/chrome/app/generated_resources.grd
-@@ -322,6 +322,8 @@
+@@ -331,6 +331,8 @@ are declared in tools/grit/grit_args.gni
        <message name="IDS_HELIUM_COMMAND_BAR_CMD_QR_CODE" desc="Search overlay command that creates a QR code for the current page.">Create QR code</message>
        <message name="IDS_HELIUM_COMMAND_BAR_CMD_PRINT" desc="Search overlay command that prints the current page.">Print page</message>
        <message name="IDS_HELIUM_COMMAND_BAR_CMD_SAVE_PAGE" desc="Search overlay command that saves the current page to a file.">Save page as</message>
@@ -551,7 +551,7 @@
        <message name="IDS_HELIUM_COMMAND_BAR_CMD_ZOOM_RESET" desc="Search overlay command that resets the zoom level.">Reset zoom</message>
 --- a/chrome/app/settings_strings.grdp
 +++ b/chrome/app/settings_strings.grdp
-@@ -1101,6 +1101,18 @@
+@@ -1105,6 +1105,18 @@
      <message name="IDS_SETTINGS_CHANGE_DOWNLOAD_LOCATION" desc="Text for the button which allows the user to change the default download directory.">
        Change
      </message>
@@ -572,7 +572,7 @@
      </message>
 --- a/chrome/browser/extensions/api/settings_private/prefs_util.cc
 +++ b/chrome/browser/extensions/api/settings_private/prefs_util.cc
-@@ -406,6 +406,10 @@
+@@ -409,6 +409,10 @@ const PrefsUtil::TypedPrefMap& PrefsUtil
        settings_api::PrefType::kList;
  
    // Downloads settings.
@@ -585,7 +585,7 @@
    (*s_allowlist)[::prefs::kPromptForDownload] =
 --- a/chrome/browser/resources/settings/downloads_page/downloads_browser_proxy.ts
 +++ b/chrome/browser/resources/settings/downloads_page/downloads_browser_proxy.ts
-@@ -12,6 +12,8 @@
+@@ -12,6 +12,8 @@ export interface DownloadsBrowserProxy {
  
    selectDownloadLocation(): void;
  
@@ -594,7 +594,7 @@
    resetAutoOpenFileTypes(): void;
  
    // <if expr="is_chromeos">
-@@ -32,6 +34,10 @@
+@@ -32,6 +34,10 @@ export class DownloadsBrowserProxyImpl i
      chrome.send('selectDownloadLocation');
    }
  
@@ -607,7 +607,7 @@
    }
 --- a/chrome/browser/resources/settings/downloads_page/downloads_page.html.ts
 +++ b/chrome/browser/resources/settings/downloads_page/downloads_page.html.ts
-@@ -33,6 +33,31 @@
+@@ -33,6 +33,31 @@ export function getHtml(this: SettingsDo
          end-justified>
      </controlled-button>
    </div>
@@ -641,7 +641,7 @@
        pref-key="download.prompt_for_download"
 --- a/chrome/browser/resources/settings/downloads_page/downloads_page.ts
 +++ b/chrome/browser/resources/settings/downloads_page/downloads_page.ts
-@@ -48,6 +48,8 @@
+@@ -48,6 +48,8 @@ export class SettingsDownloadsPageElemen
  
        downloadDefaultDirectoryPref_: {type: Object},
  
@@ -650,7 +650,7 @@
        // <if expr="is_chromeos">
        /**
         * The download location string that is suitable to display in the UI.
-@@ -66,6 +68,8 @@
+@@ -66,6 +68,8 @@ export class SettingsDownloadsPageElemen
    protected accessor autoOpenDownloads_: boolean = false;
    protected accessor downloadDefaultDirectoryPref_:
        chrome.settingsPrivate.PrefObject<string>|undefined = undefined;
@@ -659,7 +659,7 @@
  
    // <if expr="is_chromeos">
    protected accessor downloadLocation_: string = '';
-@@ -82,6 +86,7 @@
+@@ -82,6 +86,7 @@ export class SettingsDownloadsPageElemen
  
      this.mirrorPref(
          'download.default_directory', 'downloadDefaultDirectoryPref_');
@@ -667,7 +667,7 @@
  
      // <if expr="is_chromeos">
      this.addPrefObserver<string>('download.default_directory', pref => {
-@@ -105,6 +110,10 @@
+@@ -105,6 +110,10 @@ export class SettingsDownloadsPageElemen
      this.browserProxy_.selectDownloadLocation();
    }
  
@@ -678,20 +678,9 @@
    protected onClearAutoOpenFileTypesClick_() {
      this.browserProxy_.resetAutoOpenFileTypes();
    }
---- a/chrome/browser/ui/BUILD.gn
-+++ b/chrome/browser/ui/BUILD.gn
-@@ -3577,6 +3577,8 @@
-       "views/helium/command_bar_commands.h",
-       "views/helium/command_bar_view.cc",
-       "views/helium/command_bar_view.h",
-+      "views/helium/page_archive.cc",
-+      "views/helium/page_archive.h",
-       "views/helium/frame_corner_radius.cc",
-       "views/helium/frame_corner_radius.h",
-       "views/helium/native_frame_materials.cc",
 --- a/chrome/browser/ui/accelerator_table.cc
 +++ b/chrome/browser/ui/accelerator_table.cc
-@@ -83,6 +83,8 @@
+@@ -77,6 +77,8 @@ const AcceleratorMapping kAcceleratorMap
      {ui::VKEY_S, ui::EF_PLATFORM_ACCELERATOR, IDC_CTRL_S_SHORTCUT},
      {ui::VKEY_S, ui::EF_SHIFT_DOWN | ui::EF_PLATFORM_ACCELERATOR,
       IDC_SHARING_HUB_SCREENSHOT},
@@ -702,15 +691,15 @@
  #if BUILDFLAG(IS_LINUX)
 --- a/chrome/browser/ui/browser_command_controller.cc
 +++ b/chrome/browser/ui/browser_command_controller.cc
-@@ -98,6 +98,7 @@
+@@ -99,6 +99,7 @@
  #include "chrome/browser/ui/views/download/bubble/download_toolbar_ui_controller.h"
  #include "chrome/browser/ui/views/frame/browser_view.h"
  #include "chrome/browser/ui/views/helium/command_bar_view.h"
 +#include "chrome/browser/ui/views/helium/page_archive.h"
- #include "chrome/browser/ui/views/side_panel/tabs_from_other_devices/tabs_from_other_devices_side_panel_coordinator.h"
  #include "chrome/browser/ui/web_applications/app_browser_controller.h"
  #include "chrome/browser/ui/web_applications/web_app_dialog_utils.h"
-@@ -970,6 +971,9 @@
+ #include "chrome/browser/ui/web_applications/web_app_launch_utils.h"
+@@ -982,6 +983,9 @@ void BrowserCommandController::HandleCom
      case IDC_SAVE_PAGE:
        SavePage(browser_);
        break;
@@ -720,7 +709,7 @@
      case IDC_BOOKMARK_THIS_TAB:
        BookmarkCurrentTab(browser_);
        break;
-@@ -2753,6 +2757,8 @@
+@@ -2819,6 +2823,8 @@ void BrowserCommandController::UpdateSav
  
    const bool can_save_page = CanSavePage(browser_);
    command_updater_->UpdateCommandEnabled(IDC_SAVE_PAGE, can_save_page);
@@ -731,7 +720,7 @@
        can_save_page || ShouldToggleVerticalCollapse(profile()->GetPrefs()));
 --- a/chrome/browser/ui/browser_shortcuts/browser_shortcut_metadata.cc
 +++ b/chrome/browser/ui/browser_shortcuts/browser_shortcut_metadata.cc
-@@ -202,6 +202,8 @@
+@@ -202,6 +202,8 @@ std::optional<BrowserShortcutCommandLabe
        return Label(IDS_OPEN_FILE_DIALOG_TITLE);
      case IDC_SAVE_PAGE:
        return Label(IDS_SAVE_PAGE);
@@ -759,7 +748,7 @@
  #include "chrome/common/pref_names.h"
  #include "components/helium_services/pref_names.h"
  #include "components/policy/core/common/policy_pref_names.h"
-@@ -143,6 +146,14 @@
+@@ -143,6 +146,14 @@ void RegisterBrowserUserPrefs(user_prefs
  
    registry->RegisterBooleanPref(prefs::kHeliumCommandBar, false);
  
@@ -776,7 +765,7 @@
    registry->RegisterBooleanPref(prefs::kHomePageIsNewTabPage, true,
 --- a/chrome/browser/ui/cocoa/accelerators_cocoa.mm
 +++ b/chrome/browser/ui/cocoa/accelerators_cocoa.mm
-@@ -51,6 +51,8 @@
+@@ -51,6 +51,8 @@ const struct AcceleratorMapping {
      {IDC_CTRL_S_SHORTCUT, ui::EF_COMMAND_DOWN, ui::VKEY_S},
      {IDC_SHARING_HUB_SCREENSHOT, ui::EF_COMMAND_DOWN | ui::EF_SHIFT_DOWN,
       ui::VKEY_S},
@@ -787,7 +776,7 @@
      {IDC_SHOW_BOOKMARK_BAR, ui::EF_COMMAND_DOWN | ui::EF_SHIFT_DOWN,
 --- a/chrome/browser/ui/cocoa/main_menu_builder.mm
 +++ b/chrome/browser/ui/cocoa/main_menu_builder.mm
-@@ -154,6 +154,8 @@
+@@ -154,6 +154,8 @@ NSMenuItem* BuildFileMenu(NSApplication*
                    .remove_if(is_pwa),
                Item(IDS_SAVE_PAGE_MAC)
                    .command_id(IDC_SAVE_PAGE),
@@ -798,7 +787,7 @@
                Item().is_separator()
 --- a/chrome/browser/ui/toolbar/app_menu_model.cc
 +++ b/chrome/browser/ui/toolbar/app_menu_model.cc
-@@ -685,6 +685,9 @@
+@@ -694,6 +694,9 @@ SaveAndShareSubMenuModel::SaveAndShareSu
                                     features::IsRoundedIconsEnabled()
                                         ? kFileSaveIcon
                                         : kFileSaveChromeRefreshOldIcon);
@@ -810,7 +799,7 @@
        !install_item.empty()) {
 --- a/chrome/browser/ui/views/helium/command_bar_commands.cc
 +++ b/chrome/browser/ui/views/helium/command_bar_commands.cc
-@@ -111,6 +111,10 @@
+@@ -111,6 +111,10 @@ constexpr CommandBarCommand kCommands[]
       .label_id = IDS_HELIUM_COMMAND_BAR_CMD_SAVE_PAGE,
       .keywords = "download html",
       .icon = &kFileSaveIcon},
@@ -823,7 +812,7 @@
       .keywords = "larger bigger",
 --- a/chrome/browser/ui/webui/settings/downloads_handler.cc
 +++ b/chrome/browser/ui/webui/settings/downloads_handler.cc
-@@ -51,6 +51,10 @@
+@@ -51,6 +51,10 @@ void DownloadsHandler::RegisterMessages(
        "selectDownloadLocation",
        base::BindRepeating(&DownloadsHandler::HandleSelectDownloadLocation,
                            base::Unretained(this)));
@@ -834,7 +823,7 @@
  #if BUILDFLAG(IS_CHROMEOS)
    web_ui()->RegisterMessageCallback(
        "getDownloadLocationText",
-@@ -98,7 +102,26 @@
+@@ -98,7 +102,26 @@ void DownloadsHandler::HandleSelectDownl
      return;
    }
  
@@ -862,7 +851,7 @@
    select_folder_dialog_ = ui::SelectFileDialog::Create(
        this,
        std::make_unique<ChromeSelectFilePolicy>(web_ui()->GetWebContents()));
-@@ -106,8 +129,7 @@
+@@ -106,8 +129,7 @@ void DownloadsHandler::HandleSelectDownl
    info.allowed_paths = ui::SelectFileDialog::FileTypeInfo::NATIVE_PATH;
    select_folder_dialog_->SelectFile(
        ui::SelectFileDialog::SELECT_FOLDER,
@@ -872,7 +861,7 @@
        base::FilePath::StringType(),
        web_ui()->GetWebContents()->GetTopLevelNativeWindow(), nullptr);
  }
-@@ -116,8 +138,13 @@
+@@ -116,8 +138,13 @@ void DownloadsHandler::FileSelected(cons
                                      int index) {
    select_folder_dialog_ = nullptr;
  
@@ -889,7 +878,7 @@
  }
 --- a/chrome/browser/ui/webui/settings/downloads_handler.h
 +++ b/chrome/browser/ui/webui/settings/downloads_handler.h
-@@ -48,6 +48,12 @@
+@@ -48,6 +48,12 @@ class DownloadsHandler : public Settings
    // user for a destination folder using platform-specific APIs.
    void HandleSelectDownloadLocation(const base::ListValue& args);
  
@@ -902,7 +891,7 @@
    // SelectFileDialog::Listener implementation.
    void FileSelected(const ui::SelectedFileInfo& file, int index) override;
    void FileSelectionCanceled() override;
-@@ -64,6 +70,10 @@
+@@ -64,6 +70,10 @@ class DownloadsHandler : public Settings
    PrefChangeRegistrar pref_registrar_;
  
    scoped_refptr<ui::SelectFileDialog> select_folder_dialog_;
@@ -915,7 +904,7 @@
  }  // namespace settings
 --- a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
 +++ b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
-@@ -884,6 +884,10 @@
+@@ -885,6 +885,10 @@ void AddDownloadsStrings(content::WebUID
        {"downloadsPageTitle", IDS_SETTINGS_DOWNLOADS},
        {"downloadLocation", IDS_SETTINGS_DOWNLOAD_LOCATION},
        {"changeDownloadLocation", IDS_SETTINGS_CHANGE_DOWNLOAD_LOCATION},
@@ -928,7 +917,7 @@
         IDS_SETTINGS_OPEN_FILE_TYPES_AUTOMATICALLY},
 --- a/chrome/common/pref_names.h
 +++ b/chrome/common/pref_names.h
-@@ -658,6 +658,14 @@
+@@ -658,6 +658,14 @@ inline constexpr char kHeliumMinimalLoca
  // open the search overlay instead of the integrated address bar.
  inline constexpr char kHeliumCommandBar[] = "helium.browser.command_bar";
  
@@ -943,3 +932,14 @@
  // A boolean pref set to true if loading progress should be shown in the
  // location bar.
  inline constexpr char kHeliumShowProgressBar[] =
+--- a/chrome/browser/BUILD.gn
++++ b/chrome/browser/BUILD.gn
+@@ -4715,6 +4715,8 @@ source_set("browser") {
+       "ui/views/helium/command_bar_commands.h",
+       "ui/views/helium/command_bar_view.cc",
+       "ui/views/helium/command_bar_view.h",
++      "ui/views/helium/page_archive.cc",
++      "ui/views/helium/page_archive.h",
+     ]
+ 
+     deps += [
