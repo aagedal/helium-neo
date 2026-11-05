@@ -29,7 +29,7 @@ using Sparkle's `generate_keys --account no.aagedal.helium-neo -x <private-file>
 never commit or upload the exported private file.
 
 Download the official Sparkle distribution matching the prepared framework
-(currently 2.10.0) for its command-line tools, then:
+(currently 2.10.1) for its command-line tools, then:
 
 ```sh
 neo_cache="$HOME/Developer/helium/build"
@@ -57,7 +57,7 @@ From this repository, package into a new release directory:
 ```sh
 python3 devutils/macos/package_release.py \
   --source "$neo_source" --build-output "$neo_source/out/Beta3" \
-  --output "$neo_cache/releases/neo-stable-0.20.3.1" \
+  --output "$neo_cache/releases/neo-stable-0.21.1.1" \
   --identity '<Developer ID identity>' --notary-profile notary \
   --sparkle-tools '<extracted official Sparkle distribution>'
 ```

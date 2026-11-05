@@ -1,6 +1,6 @@
 --- a/chrome/app/generated_resources.grd
 +++ b/chrome/app/generated_resources.grd
-@@ -14450,6 +14450,189 @@ Check your passwords anytime in <ph name
+@@ -14593,6 +14593,189 @@ Check your passwords anytime in <ph name
  
        <!-- Desktop Screenshots feature within the share hub; desktop-only. -->
        <if expr="not is_android">
@@ -3284,7 +3284,7 @@
 +}  // namespace image_editor
 --- a/chrome/browser/prefs/browser_prefs.cc
 +++ b/chrome/browser/prefs/browser_prefs.cc
-@@ -1537,6 +1537,9 @@
+@@ -1672,6 +1672,9 @@ void RegisterLocalState(PrefRegistrySimp
    registry->RegisterIntegerPref(
        prefs::kHeliumCrashReportingMode,
        static_cast<int>(helium::CrashReportingMode::kAsk));
@@ -3296,9 +3296,9 @@
    chrome_for_testing::RegisterPrefs(registry);
 --- a/chrome/browser/renderer_context_menu/BUILD.gn
 +++ b/chrome/browser/renderer_context_menu/BUILD.gn
-@@ -162,6 +162,7 @@ source_set("impl") {
-       "//chrome/browser/ui/profiles",
+@@ -163,6 +163,7 @@ source_set("impl") {
        "//chrome/browser/ui/qrcode_generator",
+       "//chrome/browser/ui/read_anything",
        "//chrome/browser/ui/send_tab_to_self",
 +      "//chrome/browser/ui/sharing_hub",
        "//chrome/browser/ui/tabs",
@@ -3306,15 +3306,15 @@
        "//chrome/browser/ui/toasts/api:toasts",
 --- a/chrome/browser/renderer_context_menu/render_view_context_menu.cc
 +++ b/chrome/browser/renderer_context_menu/render_view_context_menu.cc
-@@ -134,6 +134,7 @@
+@@ -138,6 +138,7 @@
  #include "chrome/browser/ui/read_anything/read_anything_side_panel_controller_utils.h"
  #include "chrome/browser/ui/send_tab_to_self/send_tab_to_self_bubble.h"
- #include "chrome/browser/ui/send_tab_to_self/send_tab_to_self_context_menu_delegate.h"
+ #include "chrome/browser/ui/send_tab_to_self/send_tab_to_self_sub_menu_model.h"
 +#include "chrome/browser/ui/sharing_hub/screenshot/screenshot_captured_bubble_controller.h"
  #include "chrome/browser/ui/tab_contents/core_tab_helper.h"
  #include "chrome/browser/ui/tabs/features.h"
  #include "chrome/browser/ui/tabs/page_context_eligibility_helper.h"
-@@ -219,10 +220,10 @@
+@@ -225,10 +226,10 @@
  #include "components/strings/grit/components_strings.h"
  #include "components/supervised_user/core/browser/supervised_user_preferences.h"
  #include "components/supervised_user/core/browser/supervised_user_url_filtering_service.h"
@@ -3326,7 +3326,7 @@
  #include "components/translate/core/common/translate_util.h"
  #include "components/url_formatter/url_formatter.h"
  #include "components/user_prefs/user_prefs.h"
-@@ -1280,6 +1281,13 @@ void RenderViewContextMenu::InitMenu() {
+@@ -1303,6 +1304,13 @@ void RenderViewContextMenu::InitMenu() {
    const bool use_simplified_menu_for_text_selection =
        ShouldUseSimplifiedTextSelection();
  
@@ -3340,7 +3340,7 @@
    bool took_simplified_page_items_path = false;
    if (content_type_->SupportsGroup(ContextMenuContentType::ITEM_GROUP_PAGE)) {
      took_simplified_page_items_path = features::IsMenuSimplificationEnabled() &&
-@@ -1638,6 +1646,10 @@ std::u16string RenderViewContextMenu::Ge
+@@ -1668,6 +1676,10 @@ std::u16string RenderViewContextMenu::Ge
  }
  
  void RenderViewContextMenu::RecordUsedItem(int id) {
@@ -3351,7 +3351,7 @@
    // Log general ID.
  
    int enum_id =
-@@ -1754,6 +1766,9 @@ void RenderViewContextMenu::RecordUsedIt
+@@ -1784,6 +1796,9 @@ void RenderViewContextMenu::RecordUsedIt
  }
  
  void RenderViewContextMenu::RecordShownItem(int id, bool is_submenu) {
@@ -3361,7 +3361,7 @@
    // The "RenderViewContextMenu.Shown" histogram is not recorded for submenus.
    if (is_submenu) {
      return;
-@@ -3408,6 +3423,12 @@ bool RenderViewContextMenu::IsCommandIdE
+@@ -3465,6 +3480,12 @@ bool RenderViewContextMenu::IsCommandIdE
        enterprise_isolated_mode::IsolatedModeReplacesIncognito(GetProfile());
  
    switch (id) {
@@ -3374,7 +3374,7 @@
      case IDC_BACK:
        return embedder_web_contents_->GetController().CanGoBack();
  
-@@ -4010,6 +4031,14 @@ void RenderViewContextMenu::ExecuteComma
+@@ -4080,6 +4101,14 @@ void RenderViewContextMenu::ExecuteComma
        chrome::GoForward(embedder_web_contents_);
        break;
  
@@ -3403,7 +3403,7 @@
  #include "chrome/browser/profiles/profile.h"
  #include "chrome/common/pref_names.h"
  #include "components/prefs/pref_registry_simple.h"
-@@ -71,6 +75,41 @@
+@@ -71,6 +75,41 @@ BASE_FEATURE(kDesktopScreenshots, base::
  #if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_CHROMEOS)
  void RegisterProfilePrefs(PrefRegistrySimple* registry) {
    registry->RegisterBooleanPref(prefs::kDesktopSharingHubEnabled, true);
@@ -3455,7 +3455,7 @@
  
  namespace content {
  class BrowserContext;
-@@ -42,7 +43,26 @@
+@@ -42,7 +43,26 @@ bool SharingIsDisabledByPolicy(content::
  BASE_DECLARE_FEATURE(kDesktopScreenshots);
  
  #if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_CHROMEOS)
@@ -3484,7 +3484,7 @@
  }  // namespace sharing_hub
 --- a/chrome/browser/ui/accelerator_table.cc
 +++ b/chrome/browser/ui/accelerator_table.cc
-@@ -81,6 +81,8 @@ const AcceleratorMapping kAcceleratorMap
+@@ -75,6 +75,8 @@ const AcceleratorMapping kAcceleratorMap
      {ui::VKEY_R, ui::EF_SHIFT_DOWN | ui::EF_PLATFORM_ACCELERATOR,
       IDC_RELOAD_BYPASSING_CACHE},
      {ui::VKEY_S, ui::EF_PLATFORM_ACCELERATOR, IDC_CTRL_S_SHORTCUT},
@@ -3777,12 +3777,11 @@
  // found in the LICENSE file.
  
  #include "chrome/browser/ui/views/sharing_hub/screenshot/screenshot_captured_bubble.h"
--
++#include "chrome/browser/image_editor/screenshot_color.h"
+ 
 -#include <memory>
 -#include <utility>
 -#include <vector>
-+#include "chrome/browser/image_editor/screenshot_color.h"
-+
 +#include <algorithm>
  
  #include "base/containers/span.h"
@@ -3850,10 +3849,9 @@
 -#include "ui/views/layout/table_layout_view.h"
 -#include "ui/views/metadata/view_factory.h"
 -#include "ui/views/view.h"
--
 +#include "ui/views/style/typography.h"
 +#include "url/origin.h"
-+
+ 
 +namespace sharing_hub {
  namespace {
  
@@ -3868,7 +3866,8 @@
 +  value.Set("height", rect.height());
 +  return value;
 +}
-+
+ 
+-}  // namespace
 +views::Label* AddLabel(views::View* parent,
 +                       const std::u16string& text,
 +                       int width = 400) {
@@ -3878,7 +3877,8 @@
 +  label->SetMaximumWidth(width);
 +  return label;
 +}
-+
+ 
+-namespace sharing_hub {
 +views::Textfield* AddField(views::View* parent,
 +                           int label_id,
 +                           bool multiline,
@@ -3892,10 +3892,8 @@
 +  field->SetPreferredSize(gfx::Size(width, multiline ? 76 : 32));
 +  return parent->AddChildView(std::move(field));
 +}
- 
- }  // namespace
--
--namespace sharing_hub {
++
++}  // namespace
  
  ScreenshotCapturedBubble::ScreenshotCapturedBubble(
      views::BubbleAnchor anchor,
@@ -3914,13 +3912,23 @@
 +      web_contents_(web_contents->GetWeakPtr()) {
    SetButtons(static_cast<int>(ui::mojom::DialogButton::kNone));
 -  SetTitle(IDS_BROWSER_SHARING_SCREENSHOT_POST_CAPTURE_TITLE);
--}
--
++  SetTitle(IDS_NEO_CAPTURE_TITLE);
++  set_close_on_deactivate(false);
++  set_fixed_width(std::clamp(capture_.screen_bounds.width() - 32, 320, 940));
+ }
+ 
 -ScreenshotCapturedBubble::~ScreenshotCapturedBubble() = default;
--
++ScreenshotCapturedBubble::~ScreenshotCapturedBubble() {
++  if (folder_dialog_)
++    folder_dialog_->ListenerDestroyed();
++}
+ 
 -void ScreenshotCapturedBubble::OnThemeChanged() {
 -  LocationBarBubbleDelegateView::OnThemeChanged();
--
++views::View* ScreenshotCapturedBubble::GetInitiallyFocusedView() {
++  return permalink_;
++}
+ 
 -  const int border_radius = ChromeLayoutProvider::Get()->GetCornerRadiusMetric(
 -      views::Emphasis::kHigh);
 -  const auto* const color_provider = GetColorProvider();
@@ -3930,114 +3938,13 @@
 -  image_view_->SetBackground(views::CreateRoundedRectBackground(
 -      color_provider->GetColor(kColorScreenshotCapturedImageBackground),
 -      border_radius, 2));
--}
--
++bool ScreenshotCapturedBubble::ShouldShowCloseButton() const {
++  return true;
+ }
+ 
 -void ScreenshotCapturedBubble::Show() {
 -  ShowForReason(USER_GESTURE);
-+  SetTitle(IDS_NEO_CAPTURE_TITLE);
-+  set_close_on_deactivate(false);
-+  set_fixed_width(std::clamp(capture_.screen_bounds.width() - 32, 320, 940));
-+}
-+
-+ScreenshotCapturedBubble::~ScreenshotCapturedBubble() {
-+  if (folder_dialog_)
-+    folder_dialog_->ListenerDestroyed();
- }
- 
- views::View* ScreenshotCapturedBubble::GetInitiallyFocusedView() {
--  return download_button_;
-+  return permalink_;
- }
- 
- bool ScreenshotCapturedBubble::ShouldShowCloseButton() const {
-   return true;
- }
- 
--void ScreenshotCapturedBubble::WindowClosing() {}
--
- void ScreenshotCapturedBubble::Init() {
--  auto* layout_provider = ChromeLayoutProvider::Get();
--
--  // Requesting TEXT for trailing prevents extra padding at bottom of dialog.
--  gfx::Insets insets = layout_provider->GetDialogInsetsForContentType(
--      views::DialogContentType::kControl, views::DialogContentType::kText);
--  const int border_radius =
--      layout_provider->GetCornerRadiusMetric(views::Emphasis::kHigh);
--
--  int width_padding =
--      (kImageWidthPx + border_radius - GetImageSize().width()) / 2;
--
--  using Alignment = views::ImageView::Alignment;
--  auto builder =
--      views::Builder<ScreenshotCapturedBubble>(this)
--          .set_margins(insets)
--          .SetLayoutManager(std::make_unique<views::BoxLayout>(
--              views::BoxLayout::Orientation::kVertical, gfx::Insets(),
--              layout_provider->GetDistanceMetric(
--                  DISTANCE_UNRELATED_CONTROL_VERTICAL_LARGE)))
--          .AddChild(
--              views::Builder<views::TableLayoutView>()
--                  .AddPaddingColumn(views::TableLayout::kFixedSize,
--                                    width_padding)
--                  .AddColumn(views::LayoutAlignment::kCenter,
--                             views::LayoutAlignment::kCenter, 1.0,
--                             views::TableLayout::ColumnSize::kUsePreferred, 0,
--                             0)
--                  .AddPaddingColumn(views::TableLayout::kFixedSize,
--                                    width_padding)
--                  .AddRows(1, views::TableLayout::kFixedSize, 0)
--                  .AddChild(views::Builder<views::ImageView>()
--                                .SetHorizontalAlignment(Alignment::kCenter)
--                                .SetVerticalAlignment(Alignment::kCenter)
--                                .SetImageSize(GetImageSize())
--                                .SetPreferredSize(
--                                    GetImageSize() +
--                                    gfx::Size(border_radius, border_radius))
--                                .SetImage(ui::ImageModel::FromImage(image_))
--                                .SetVisible(true)
--                                .CopyAddressTo(&image_view_)));
--
--  auto download_button =
--      views::Builder<views::MdTextButton>()
--          .SetCallback(base::BindRepeating(
--              &ScreenshotCapturedBubble::DownloadButtonPressed,
--              weak_factory_.GetWeakPtr()))
--          .SetText(l10n_util::GetStringUTF16(
--              IDS_BROWSER_SHARING_SCREENSHOT_DIALOG_DOWNLOAD_BUTTON_LABEL))
--          .SetStyle(ui::ButtonStyle::kProminent)
--          .Build();
--
--  auto download_row = views::Builder<views::TableLayoutView>();
--
--  // Column for download button
--  download_row
--      .AddColumn(views::LayoutAlignment::kEnd, views::LayoutAlignment::kCenter,
--                 1.0, views::TableLayout::ColumnSize::kUsePreferred, 0, 0)
--      .AddRows(1, views::TableLayout::kFixedSize, 0);
--  download_row.AddChild(
--      views::Builder<views::MdTextButton>(std::move(download_button))
--          .CopyAddressTo(&download_button_));
--
--  std::move(builder).AddChild(std::move(download_row)).BuildChildren();
--}
--
--/*static*/
--const std::u16string ScreenshotCapturedBubble::GetFilenameForURL(
--    const GURL& url) {
--  if (!url.has_host() || url.HostIsIPAddress()) {
--    return u"helium_screenshot.png";
--  }
--
--  return base::ASCIIToUTF16(
--      base::StrCat({"helium_screenshot_", url.GetHost(), ".png"}));
--}
--
--void ScreenshotCapturedBubble::DownloadButtonPressed() {
--  // Returns closest scaling to parameter (1.0).
--  const SkBitmap& bitmap =
--      image_view_->GetImage().GetRepresentation(1.0f).GetBitmap();
--  const GURL data_url = GURL(webui::GetBitmapDataUrl(bitmap));
--
++void ScreenshotCapturedBubble::Init() {
 +  set_margins(gfx::Insets(20));
 +  SetLayoutManager(std::make_unique<views::BoxLayout>(
 +      views::BoxLayout::Orientation::kVertical, gfx::Insets(), 12));
@@ -4311,8 +4218,10 @@
 +                          weak_factory_.GetWeakPtr()),
 +      l10n_util::GetStringUTF16(IDS_NEO_CAPTURE_SAVE)));
 +  save_->SetStyle(ui::ButtonStyle::kProminent);
-+}
-+
+ }
+ 
+-views::View* ScreenshotCapturedBubble::GetInitiallyFocusedView() {
+-  return download_button_;
 +void ScreenshotCapturedBubble::UseSuggestedPermalink() {
 +  const auto index = candidates_->GetSelectedIndex().value_or(0);
 +  if (index > 0 && index <= suggested_permalinks_.size()) {
@@ -4321,8 +4230,10 @@
 +    AutofillPostDetails(selected_suggestion_);
 +    SizeToContents();
 +  }
-+}
-+
+ }
+ 
+-bool ScreenshotCapturedBubble::ShouldShowCloseButton() const {
+-  return true;
 +void ScreenshotCapturedBubble::ContentsChanged(
 +    views::Textfield* sender,
 +    const std::u16string& new_contents) {
@@ -4347,8 +4258,9 @@
 +                            : description_preview_->GetText().find(label);
 +  if (position != std::u16string_view::npos)
 +    description_preview_->Scroll({position});
-+}
-+
+ }
+ 
+-void ScreenshotCapturedBubble::WindowClosing() {}
 +void ScreenshotCapturedBubble::AutofillPostDetails(
 +    const std::string& permalink) {
 +  auto sources = base::JSONReader::ReadDict(capture_.source_suggestions_json,
@@ -4400,7 +4312,9 @@
 +  details_status_->SetVisible(suggested);
 +  UpdateMetadataPreview();
 +}
-+
+ 
+-void ScreenshotCapturedBubble::Init() {
+-  auto* layout_provider = ChromeLayoutProvider::Get();
 +void ScreenshotCapturedBubble::CopyImage() {
 +  ui::ScopedClipboardWriter(ui::ClipboardBuffer::kCopyPaste)
 +      .WriteImage(*capture_.image.ToSkBitmap());
@@ -4408,7 +4322,86 @@
 +  status_->SetText(l10n_util::GetStringUTF16(IDS_NEO_CAPTURE_COPIED));
 +  SizeToContents();
 +}
-+
+ 
+-  // Requesting TEXT for trailing prevents extra padding at bottom of dialog.
+-  gfx::Insets insets = layout_provider->GetDialogInsetsForContentType(
+-      views::DialogContentType::kControl, views::DialogContentType::kText);
+-  const int border_radius =
+-      layout_provider->GetCornerRadiusMetric(views::Emphasis::kHigh);
+-
+-  int width_padding =
+-      (kImageWidthPx + border_radius - GetImageSize().width()) / 2;
+-
+-  using Alignment = views::ImageView::Alignment;
+-  auto builder =
+-      views::Builder<ScreenshotCapturedBubble>(this)
+-          .set_margins(insets)
+-          .SetLayoutManager(std::make_unique<views::BoxLayout>(
+-              views::BoxLayout::Orientation::kVertical, gfx::Insets(),
+-              layout_provider->GetDistanceMetric(
+-                  DISTANCE_UNRELATED_CONTROL_VERTICAL_LARGE)))
+-          .AddChild(
+-              views::Builder<views::TableLayoutView>()
+-                  .AddPaddingColumn(views::TableLayout::kFixedSize,
+-                                    width_padding)
+-                  .AddColumn(views::LayoutAlignment::kCenter,
+-                             views::LayoutAlignment::kCenter, 1.0,
+-                             views::TableLayout::ColumnSize::kUsePreferred, 0,
+-                             0)
+-                  .AddPaddingColumn(views::TableLayout::kFixedSize,
+-                                    width_padding)
+-                  .AddRows(1, views::TableLayout::kFixedSize, 0)
+-                  .AddChild(views::Builder<views::ImageView>()
+-                                .SetHorizontalAlignment(Alignment::kCenter)
+-                                .SetVerticalAlignment(Alignment::kCenter)
+-                                .SetImageSize(GetImageSize())
+-                                .SetPreferredSize(
+-                                    GetImageSize() +
+-                                    gfx::Size(border_radius, border_radius))
+-                                .SetImage(ui::ImageModel::FromImage(image_))
+-                                .SetVisible(true)
+-                                .CopyAddressTo(&image_view_)));
+-
+-  auto download_button =
+-      views::Builder<views::MdTextButton>()
+-          .SetCallback(base::BindRepeating(
+-              &ScreenshotCapturedBubble::DownloadButtonPressed,
+-              weak_factory_.GetWeakPtr()))
+-          .SetText(l10n_util::GetStringUTF16(
+-              IDS_BROWSER_SHARING_SCREENSHOT_DIALOG_DOWNLOAD_BUTTON_LABEL))
+-          .SetStyle(ui::ButtonStyle::kProminent)
+-          .Build();
+-
+-  auto download_row = views::Builder<views::TableLayoutView>();
+-
+-  // Column for download button
+-  download_row
+-      .AddColumn(views::LayoutAlignment::kEnd, views::LayoutAlignment::kCenter,
+-                 1.0, views::TableLayout::ColumnSize::kUsePreferred, 0, 0)
+-      .AddRows(1, views::TableLayout::kFixedSize, 0);
+-  download_row.AddChild(
+-      views::Builder<views::MdTextButton>(std::move(download_button))
+-          .CopyAddressTo(&download_button_));
+-
+-  std::move(builder).AddChild(std::move(download_row)).BuildChildren();
+-}
+-
+-/*static*/
+-const std::u16string ScreenshotCapturedBubble::GetFilenameForURL(
+-    const GURL& url) {
+-  if (!url.has_host() || url.HostIsIPAddress()) {
+-    return u"helium_screenshot.png";
+-  }
+-
+-  return base::ASCIIToUTF16(
+-      base::StrCat({"helium_screenshot_", url.GetHost(), ".png"}));
+-}
+-
+-void ScreenshotCapturedBubble::DownloadButtonPressed() {
+-  // Returns closest scaling to parameter (1.0).
+-  const SkBitmap& bitmap =
+-      image_view_->GetImage().GetRepresentation(1.0f).GetBitmap();
+-  const GURL data_url = GURL(webui::GetBitmapDataUrl(bitmap));
 +void ScreenshotCapturedBubble::PreserveHDRChanged() {
 +  if (web_contents_)
 +    Profile::FromBrowserContext(web_contents_->GetBrowserContext())
@@ -4439,7 +4432,7 @@
 +  UpdateMetadataPreview();
 +  SizeToContents();
 +}
-+
+ 
 +views::View* ScreenshotCapturedBubble::AddSection(views::View* parent,
 +                                                  int title_id) {
 +  auto* button = parent->AddChildView(std::make_unique<views::MdTextButton>(
@@ -4649,15 +4642,6 @@
 +    SizeToContents();
      return;
    }
--
--  BrowserWindowInterface* browser =
--      GlobalBrowserCollection::GetInstance()->FindBrowserWithTab(
--          web_contents_.get());
--  content::DownloadManager* download_manager =
--      browser->GetProfile()->GetDownloadManager();
--  // TODO(crbug.com/40753957): Update the annotation's |setting| and
--  // |chrome_policy| fields once the Sharing Hub is landed.
--  net::NetworkTrafficAnnotationTag traffic_annotation =
 +  auto automatic = AutomaticFields();
 +  auto user = UserFields();
 +  auto format =
@@ -4699,7 +4683,15 @@
 +      base::BindOnce(&ScreenshotCapturedBubble::ExportReady,
 +                     weak_factory_.GetWeakPtr()));
 +}
-+
+ 
+-  BrowserWindowInterface* browser =
+-      GlobalBrowserCollection::GetInstance()->FindBrowserWithTab(
+-          web_contents_.get());
+-  content::DownloadManager* download_manager =
+-      browser->GetProfile()->GetDownloadManager();
+-  // TODO(crbug.com/40753957): Update the annotation's |setting| and
+-  // |chrome_policy| fields once the Sharing Hub is landed.
+-  net::NetworkTrafficAnnotationTag traffic_annotation =
 +void ScreenshotCapturedBubble::ExportReady(ScreenshotExport result) {
 +  if (result.bytes.empty() || !web_contents_) {
 +    save_->SetEnabled(true);
@@ -4886,10 +4878,29 @@
    ~ScreenshotCapturedBubble() override;
  
 -  void OnThemeChanged() override;
-+ private:
+-
+-  void Show();
+-
+  private:
+-  // LocationBarBubbleDelegateView:
+-  View* GetInitiallyFocusedView() override;
 +  views::View* GetInitiallyFocusedView() override;
-+  bool ShouldShowCloseButton() const override;
-+  void Init() override;
+   bool ShouldShowCloseButton() const override;
+-  void WindowClosing() override;
+-
+-  static const std::u16string GetFilenameForURL(const GURL& url);
+-
+-  // views::BubbleDialogDelegateView:
+   void Init() override;
+-
+-  void DownloadButtonPressed();
+-
+-  gfx::Size GetImageSize();
+-
+-  // Makes a copy of the image to use in button callbacks without worry of
+-  // dereferencing
+-  const gfx::Image image_;
+-
 +  void CopyImage();
 +  void UseSuggestedPermalink();
 +  void AutofillPostDetails(const std::string& permalink);
@@ -4914,28 +4925,7 @@
 +  void BlobReady(std::unique_ptr<std::string> archive,
 +                 std::string extension,
 +                 std::unique_ptr<content::BlobHandle> blob);
- 
--  void Show();
--
-- private:
--  // LocationBarBubbleDelegateView:
--  View* GetInitiallyFocusedView() override;
--  bool ShouldShowCloseButton() const override;
--  void WindowClosing() override;
--
--  static const std::u16string GetFilenameForURL(const GURL& url);
--
--  // views::BubbleDialogDelegateView:
--  void Init() override;
--
--  void DownloadButtonPressed();
--
--  gfx::Size GetImageSize();
--
--  // Makes a copy of the image to use in button callbacks without worry of
--  // dereferencing
--  const gfx::Image image_;
--
++
 +  // Source details are frozen with the snapshot, never read from a later page.
 +  const image_editor::ScreenshotCaptureResult capture_;
 +  const image_editor::ScreenshotColorInfo color_info_;
@@ -6946,7 +6936,7 @@
  
 --- a/components/viz/common/frame_sinks/copy_output_result.h
 +++ b/components/viz/common/frame_sinks/copy_output_result.h
-@@ -52,8 +52,8 @@ class VIZ_COMMON_EXPORT CopyOutputResult
+@@ -53,8 +53,8 @@ class VIZ_COMMON_EXPORT CopyOutputResult
      // can only be delivered on the same task runner sequence that runs the
      // DirectRenderer implementation.
      NV12,
@@ -6959,7 +6949,7 @@
  
 --- a/components/viz/service/display/direct_renderer.cc
 +++ b/components/viz/service/display/direct_renderer.cc
-@@ -642,7 +642,8 @@ void DirectRenderer::DrawRenderPassAndEx
+@@ -643,7 +643,8 @@ void DirectRenderer::DrawRenderPassAndEx
      // CopyOutputRequest - we need to adjust them to something that will be
      // compatible. Formats other than RGBA have this restriction.
      geometry.result_selection =
@@ -6971,7 +6961,7 @@
      if (request->has_result_selection())
 --- a/components/viz/service/display_embedder/skia_output_surface_impl_on_gpu.cc
 +++ b/components/viz/service/display_embedder/skia_output_surface_impl_on_gpu.cc
-@@ -843,14 +843,26 @@ void SkiaOutputSurfaceImplOnGpu::CopyOut
+@@ -849,14 +849,26 @@ void SkiaOutputSurfaceImplOnGpu::CopyOut
      SkSurface::RescaleMode rescale_mode,
      bool is_downscale_or_identity_in_both_dimensions,
      std::unique_ptr<CopyOutputRequest> request) {
@@ -6999,7 +6989,7 @@
    }
  
    // TODO(https://bugs.chromium.org/p/skia/issues/detail?id=14389):
-@@ -866,7 +878,8 @@ void SkiaOutputSurfaceImplOnGpu::CopyOut
+@@ -872,7 +884,8 @@ void SkiaOutputSurfaceImplOnGpu::CopyOut
  
    SkImageInfo dst_info = SkImageInfo::Make(
        geometry.result_selection.width(), geometry.result_selection.height(),
@@ -7055,11 +7045,12 @@
  
 --- a/content/browser/renderer_host/delegated_frame_host.cc
 +++ b/content/browser/renderer_host/delegated_frame_host.cc
-@@ -153,6 +153,25 @@ void DelegatedFrameHost::CopyFromComposi
-     const gfx::Size& output_size,
+@@ -154,6 +154,28 @@ void DelegatedFrameHost::CopyFromComposi
+     bool is_copy_request_secure,
      base::TimeDelta timeout,
      base::OnceCallback<void(const content::CopyFromSurfaceResult&)> callback) {
-+  CopyFromCompositingSurfaceWithHDRInternal(src_subrect, output_size, timeout,
++  CopyFromCompositingSurfaceWithHDRInternal(src_subrect, output_size,
++                                            is_copy_request_secure, timeout,
 +                                            std::move(callback), false);
 +}
 +
@@ -7068,33 +7059,35 @@
 +    const gfx::Size& output_size,
 +    base::TimeDelta timeout,
 +    base::OnceCallback<void(const content::CopyFromSurfaceResult&)> callback) {
-+  CopyFromCompositingSurfaceWithHDRInternal(src_subrect, output_size, timeout,
-+                                            std::move(callback), true);
++  CopyFromCompositingSurfaceWithHDRInternal(
++      src_subrect, output_size, /*is_copy_request_secure=*/false, timeout,
++      std::move(callback), true);
 +}
 +
 +void DelegatedFrameHost::CopyFromCompositingSurfaceWithHDRInternal(
 +    const gfx::Rect& src_subrect,
 +    const gfx::Size& output_size,
++    bool is_copy_request_secure,
 +    base::TimeDelta timeout,
 +    base::OnceCallback<void(const content::CopyFromSurfaceResult&)> callback,
 +    bool preserve_hdr) {
    const viz::SurfaceId surface_id(frame_sink_id_, local_surface_id_);
  
    ui::Compositor::ScopedKeepSurfaceAliveCallback keep_surface_alive;
-@@ -164,7 +183,8 @@ void DelegatedFrameHost::CopyFromComposi
+@@ -165,7 +187,8 @@ void DelegatedFrameHost::CopyFromComposi
  
    CopyFromCompositingSurfaceInternal(
        src_subrect, output_size, surface_id,
 -      viz::CopyOutputRequest::ResultFormat::RGBA,
 +      preserve_hdr ? viz::CopyOutputRequest::ResultFormat::RGBAF16
 +                   : viz::CopyOutputRequest::ResultFormat::RGBA,
-       viz::CopyOutputRequest::ResultDestination::kSystemMemory, timeout,
+       viz::CopyOutputRequest::ResultDestination::kSystemMemory,
+       is_copy_request_secure, timeout,
        base::BindOnce(
-           [](base::OnceCallback<void(const content::CopyFromSurfaceResult&)>
 --- a/content/browser/renderer_host/delegated_frame_host.h
 +++ b/content/browser/renderer_host/delegated_frame_host.h
-@@ -152,6 +152,11 @@ class CONTENT_EXPORT DelegatedFrameHost
-       const gfx::Size& output_size,
+@@ -153,6 +153,11 @@ class CONTENT_EXPORT DelegatedFrameHost
+       bool is_copy_request_secure,
        base::TimeDelta timeout,
        base::OnceCallback<void(const content::CopyFromSurfaceResult&)> callback);
 +  void CopyFromCompositingSurfaceWithHDR(
@@ -7105,13 +7098,14 @@
    void CopyFromCompositingSurfaceAsTexture(
        const gfx::Rect& src_subrect,
        const gfx::Size& output_size,
-@@ -254,6 +259,12 @@ class CONTENT_EXPORT DelegatedFrameHost
+@@ -255,6 +260,13 @@ class CONTENT_EXPORT DelegatedFrameHost
  
    SkColor GetGutterColor() const;
  
 +  void CopyFromCompositingSurfaceWithHDRInternal(
 +      const gfx::Rect& src_subrect,
 +      const gfx::Size& output_size,
++      bool is_copy_request_secure,
 +      base::TimeDelta timeout,
 +      base::OnceCallback<void(const content::CopyFromSurfaceResult&)> callback,
 +      bool preserve_hdr);
@@ -7179,8 +7173,8 @@
  #endif
    }
  
-@@ -1224,6 +1223,15 @@ void RenderWidgetHostViewAura::CopyFromS
-       std::move(callback));
+@@ -1225,6 +1224,15 @@ void RenderWidgetHostViewAura::CopyFromS
+       is_copy_request_secure, timeout, std::move(callback));
  }
  
 +void RenderWidgetHostViewAura::CopyFromSurfaceWithHDR(
@@ -7197,7 +7191,7 @@
    if (!window_ || !window_->provider()) {
 --- a/content/browser/renderer_host/render_widget_host_view_aura.h
 +++ b/content/browser/renderer_host/render_widget_host_view_aura.h
-@@ -65,7 +65,7 @@ class Display;
+@@ -67,7 +67,7 @@ class Display;
  namespace gfx {
  class Point;
  class Rect;
@@ -7206,7 +7200,7 @@
  
  namespace input {
  class CursorManager;
-@@ -75,7 +75,7 @@ namespace ui {
+@@ -77,7 +77,7 @@ namespace ui {
  enum class DomCode : uint32_t;
  class InputMethod;
  class LocatedEvent;
@@ -7215,19 +7209,19 @@
  
  namespace wm {
  class ScopedTooltipDisabler;
-@@ -173,6 +173,12 @@ class CONTENT_EXPORT RenderWidgetHostVie
-       const gfx::Rect& src_rect,
-       const gfx::Size& output_size,
+@@ -178,6 +178,12 @@ class CONTENT_EXPORT RenderWidgetHostVie
        base::TimeDelta timeout,
-+      base::OnceCallback<void(const content::CopyFromSurfaceResult&)> callback)
-+      override;
+       base::OnceCallback<void(const content::CopyFromSurfaceResult&)> callback)
+       override;
 +  void CopyFromSurfaceWithHDR(
 +      const gfx::Rect& src_rect,
 +      const gfx::Size& output_size,
 +      base::TimeDelta timeout,
-       base::OnceCallback<void(const content::CopyFromSurfaceResult&)> callback)
-       override;
++      base::OnceCallback<void(const content::CopyFromSurfaceResult&)> callback)
++      override;
    ui::FilteredGestureProvider* GetFilteredGestureProviderForTesting() override;
+   void TransformPointToRootSurface(gfx::PointF* point) override;
+   gfx::Rect GetBoundsInScreen() override;
 --- a/content/browser/renderer_host/render_widget_host_view_mac.h
 +++ b/content/browser/renderer_host/render_widget_host_view_mac.h
 @@ -50,7 +50,7 @@ class Compositor;
@@ -7239,23 +7233,23 @@
  
  namespace input {
  class CursorManager;
-@@ -178,6 +178,12 @@ class CONTENT_EXPORT RenderWidgetHostVie
-       const gfx::Rect& src_rect,
-       const gfx::Size& output_size,
+@@ -181,6 +181,12 @@ class CONTENT_EXPORT RenderWidgetHostVie
        base::TimeDelta timeout,
-+      base::OnceCallback<void(const content::CopyFromSurfaceResult&)> callback)
-+      override;
+       base::OnceCallback<void(const content::CopyFromSurfaceResult&)> callback)
+       override;
 +  void CopyFromSurfaceWithHDR(
 +      const gfx::Rect& src_rect,
 +      const gfx::Size& output_size,
 +      base::TimeDelta timeout,
-       base::OnceCallback<void(const content::CopyFromSurfaceResult&)> callback)
-       override;
++      base::OnceCallback<void(const content::CopyFromSurfaceResult&)> callback)
++      override;
    ui::FilteredGestureProvider* GetFilteredGestureProviderForTesting() override;
+   void FocusedNodeChanged(bool is_editable_node,
+                           const gfx::Rect& node_bounds_in_screen) override;
 --- a/content/browser/renderer_host/render_widget_host_view_mac.mm
 +++ b/content/browser/renderer_host/render_widget_host_view_mac.mm
-@@ -1212,6 +1212,15 @@ void RenderWidgetHostViewMac::CopyFromSu
-       std::move(callback));
+@@ -1216,6 +1216,16 @@ void RenderWidgetHostViewMac::CopyFromSu
+       is_copy_request_secure, timeout, std::move(callback));
  }
  
 +void RenderWidgetHostViewMac::CopyFromSurfaceWithHDR(
@@ -7267,9 +7261,10 @@
 +      ->CopyFromCompositingSurfaceWithHDR(src_rect, output_size, timeout,
 +                                          std::move(callback));
 +}
- 
++
  ui::FilteredGestureProvider*
  RenderWidgetHostViewMac::GetFilteredGestureProviderForTesting() {
+   return gesture_provider_.get();
 --- a/content/public/browser/render_widget_host_view.h
 +++ b/content/public/browser/render_widget_host_view.h
 @@ -7,6 +7,7 @@
@@ -7280,7 +7275,7 @@
  
  #include "base/containers/flat_map.h"
  #include "base/containers/flat_set.h"
-@@ -252,6 +253,17 @@ class CONTENT_EXPORT RenderWidgetHostVie
+@@ -255,6 +256,18 @@ class CONTENT_EXPORT RenderWidgetHostVie
        base::TimeDelta timeout,
        base::OnceCallback<void(const CopyFromSurfaceResult&)> callback) = 0;
  
@@ -7295,12 +7290,13 @@
 +      base::OnceCallback<void(const CopyFromSurfaceResult&)> callback) {
 +    CopyFromSurface(src_rect, output_size, timeout, std::move(callback));
 +  }
- 
-   // Creates a video capturer, which will allow the caller to receive a stream
-   // of media::VideoFrames captured from this view. The capturer is configured
++
+   // Similar to `CopyFromSurface()`, but marks the copy request as secure.
+   // A capture is considered secure if the captured content is not easily
+   // accessible to JavaScript or users, and cannot be trivially shared or
 --- a/services/viz/public/cpp/compositing/copy_output_result_mojom_traits.cc
 +++ b/services/viz/public/cpp/compositing/copy_output_result_mojom_traits.cc
-@@ -59,6 +59,7 @@ EnumTraits<viz::mojom::CopyOutputResultF
+@@ -71,6 +71,7 @@ EnumTraits<viz::mojom::CopyOutputResultF
      case viz::CopyOutputResult::Format::RGBA:
        return viz::mojom::CopyOutputResultFormat::RGBA;
      case viz::CopyOutputResult::Format::RGBAF16:
@@ -7308,7 +7304,7 @@
      case viz::CopyOutputResult::Format::I420_PLANES:
      case viz::CopyOutputResult::Format::NV12:
        break;  // Not intended for transport across service boundaries.
-@@ -73,6 +74,8 @@ EnumTraits<viz::mojom::CopyOutputResultF
+@@ -85,6 +86,8 @@ EnumTraits<viz::mojom::CopyOutputResultF
    switch (input) {
      case viz::mojom::CopyOutputResultFormat::RGBA:
        return viz::CopyOutputResult::Format::RGBA;
@@ -7317,7 +7313,7 @@
    }
    NOTREACHED();
  }
-@@ -198,8 +201,8 @@ StructTraits<viz::mojom::CopyOutputResul
+@@ -210,8 +213,8 @@ StructTraits<viz::mojom::CopyOutputResul
      return nullptr;
    }
  
@@ -7328,7 +7324,7 @@
    return mojo::OptionalAsPointer(&result->GetSharedImage()->mailbox());
  }
  
-@@ -226,9 +229,9 @@ StructTraits<viz::mojom::CopyOutputResul
+@@ -238,9 +241,9 @@ StructTraits<viz::mojom::CopyOutputResul
      return mojo::NullRemote();
    }
  
@@ -7341,7 +7337,7 @@
    viz::ReleaseCallback release_callback = result->TakeSharedImageOwnership();
    if (release_callback.is_null()) {
      return mojo::NullRemote();
-@@ -279,6 +282,7 @@ bool StructTraits<viz::mojom::CopyOutput
+@@ -292,6 +295,7 @@ bool StructTraits<viz::mojom::CopyOutput
  
    switch (format) {
      case viz::CopyOutputResult::Format::RGBA:
@@ -7349,7 +7345,7 @@
        switch (destination) {
          case viz::CopyOutputResult::Destination::kSystemMemory: {
            std::optional<SkBitmap> bitmap_opt;
-@@ -294,6 +298,10 @@ bool StructTraits<viz::mojom::CopyOutput
+@@ -307,6 +311,10 @@ bool StructTraits<viz::mojom::CopyOutput
                  format, destination, error);
              return true;
            }
@@ -7360,7 +7356,7 @@
            if (!bitmap_opt->readyToDraw()) {
              return false;
            }
-@@ -304,7 +312,7 @@ bool StructTraits<viz::mojom::CopyOutput
+@@ -317,7 +325,7 @@ bool StructTraits<viz::mojom::CopyOutput
            }
  
            *out_p = std::make_unique<viz::CopyOutputSkBitmapResult>(
@@ -7369,13 +7365,22 @@
            (*out_p)->SetTrackedElementRects(std::move(tracked_element_rects));
            return true;
          }
-@@ -338,13 +346,12 @@ bool StructTraits<viz::mojom::CopyOutput
+@@ -341,7 +349,7 @@ bool StructTraits<viz::mojom::CopyOutput
+ 
+           scoped_refptr<gpu::ClientSharedImage> shared_image =
+               viz::CopyOutputSharedImageResult::CreateUnownedSharedImage(
+-                  viz::CopyOutputResult::Format::RGBA, rect.size(), *mailbox,
++                  format, rect.size(), *mailbox,
+                   *color_space, "ReadStructTraits");
+ 
+           viz::ReleaseCallback release_callback;
+@@ -359,13 +367,12 @@ bool StructTraits<viz::mojom::CopyOutput
            }
  
            *out_p = std::make_unique<viz::CopyOutputSharedImageResult>(
--              viz::CopyOutputResult::Format::RGBA, rect, *mailbox, *color_space,
--              "ReadStructTraits", std::move(release_callback));
-+              format, rect, *mailbox, *color_space, "ReadStructTraits",
+-              viz::CopyOutputResult::Format::RGBA, rect,
+-              std::move(shared_image), std::move(release_callback));
++              format, rect, std::move(shared_image),
 +              std::move(release_callback));
            return true;
          }
@@ -7475,7 +7480,7 @@
 +the upstream encoder retains its BSD-3-Clause license in src/LICENSE.
 --- a/third_party/helium_jxl/src/lib/jxl/enc_fast_lossless.cc
 +++ b/third_party/helium_jxl/src/lib/jxl/enc_fast_lossless.cc
-@@ -737,7 +737,9 @@
+@@ -737,7 +737,9 @@ size_t JxlFastLosslessMaxRequiredOutput(
  }
  
  bool JxlFastLosslessPrepareHeader(JxlFastLosslessFrameState* frame,
@@ -7486,7 +7491,7 @@
    BitWriter* output = &frame->header;
    if (!output->Allocate(1000 + frame->group_sizes.size() * 32)) return false;
  
-@@ -776,8 +778,14 @@
+@@ -776,8 +778,14 @@ bool JxlFastLosslessPrepareHeader(JxlFas
      wsz(frame->width);
  
      // Hand-crafted ImageMetadata.
@@ -7503,7 +7508,7 @@
      output->Write(1, 0);  // bit_depth.floating_point_sample
      if (frame->bitdepth == 8) {
        output->Write(2, 0b00);  // bit_depth.bits_per_sample = 8
-@@ -818,7 +826,23 @@
+@@ -818,7 +826,23 @@ bool JxlFastLosslessPrepareHeader(JxlFas
        output->Write(2, 0b00);  // No extra channel
      }
      output->Write(1, 0);  // Not XYB
@@ -7528,7 +7533,7 @@
        output->Write(1, 1);  // color_encoding.all_default (sRGB)
      } else {
        output->Write(1, 0);     // color_encoding.all_default false
-@@ -4313,11 +4337,20 @@
+@@ -4313,11 +4337,20 @@ class FJxlFrameInput {
    size_t bytes_per_pixel_;
  };
  
@@ -7554,7 +7559,7 @@
    FJxlFrameInput input(rgba, row_stride, nb_chans, bitdepth);
    auto* frame_state = JxlFastLosslessPrepareFrame(
        input.GetInputSource(), width, height, nb_chans, bitdepth, big_endian,
-@@ -4329,7 +4362,7 @@
+@@ -4329,7 +4362,7 @@ size_t JxlFastLosslessEncode(const unsig
      return 0;
    }
    if (!JxlFastLosslessPrepareHeader(frame_state, /*add_image_header=*/1,
@@ -7565,7 +7570,7 @@
    }
 --- a/third_party/helium_jxl/src/lib/jxl/enc_fast_lossless.h
 +++ b/third_party/helium_jxl/src/lib/jxl/enc_fast_lossless.h
-@@ -48,11 +48,18 @@
+@@ -48,11 +48,18 @@ typedef void(FJxlParallelRunner)(void* r
  
  #if FJXL_STANDALONE
  // You may pass `nullptr` as a runner: encoding will be sequential.
@@ -7589,7 +7594,7 @@
  #endif
  
  // More complex API for cases in which you may want to allocate your own buffer
-@@ -82,7 +89,9 @@
+@@ -82,7 +89,9 @@ bool JxlFastLosslessProcessFrame(
  // one have is_last = 0.
  // (when FJXL_STANDALONE=0, add_image_header has to be 0)
  bool JxlFastLosslessPrepareHeader(JxlFastLosslessFrameState* frame,

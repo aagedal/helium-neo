@@ -237,17 +237,17 @@
    if (!profile_allowed)
 --- a/chrome/browser/ui/tabs/BUILD.gn
 +++ b/chrome/browser/ui/tabs/BUILD.gn
-@@ -207,6 +207,10 @@ if (!is_android) {
+@@ -212,6 +212,10 @@ if (!is_android) {
+       "//components/commerce/core:feature_list",
        "//components/feed:feature_list",
      ]
- 
++
 +    if (is_mac) {
 +      deps += [ "//chrome/browser:helium_webkit_streaming" ]
 +    }
-+
-     # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
-     # enable the diagnostic by removing this line.
-     configs += [ "//build/config/compiler:no_exit_time_destructors" ]
+   }
+ 
+   source_set("tab_group") {
 --- a/chrome/browser/ui/tabs/tab_menu_model.cc
 +++ b/chrome/browser/ui/tabs/tab_menu_model.cc
 @@ -72,6 +72,10 @@
@@ -279,7 +279,7 @@
  
  struct PaneLayoutOption {
    size_t count;
-@@ -413,6 +428,11 @@ void TabMenuModel::AppendGlicItems(int i
+@@ -409,6 +424,11 @@ void TabMenuModel::AppendGlicItems(int i
  // variants) to follow Apple Human Interface Guidelines (HIG), while other
  // platforms use sentence case.
  void TabMenuModel::Build(int index) {
@@ -291,7 +291,7 @@
    std::vector<int> indices;
    if (tab_strip_->IsTabSelected(index)) {
      const ui::ListSelectionModel::SelectedIndices sel =
-@@ -803,6 +823,12 @@ extensions::ContextMenuMatcher* TabMenuM
+@@ -822,6 +842,12 @@ extensions::ContextMenuMatcher* TabMenuM
  // Overridden to check if the checked status of the item
  // should be evaluated by the extension matcher instead of the simple model.
  bool TabMenuModel::IsItemCheckedAt(size_t index) const {
@@ -304,7 +304,7 @@
  #if BUILDFLAG(ENABLE_EXTENSIONS)
    if (auto* matcher = GetMatcherIfExtension(index)) {
      return matcher->IsCommandIdChecked(GetCommandIdAt(index));
-@@ -814,6 +840,15 @@ bool TabMenuModel::IsItemCheckedAt(size_
+@@ -833,6 +859,15 @@ bool TabMenuModel::IsItemCheckedAt(size_
  // Overridden to check if the enabled status of the item
  // should be evaluated by the extension matcher instead of the simple model.
  bool TabMenuModel::IsEnabledAt(size_t index) const {
@@ -320,7 +320,7 @@
    if (GetCommandIdAt(index) == tabs::PaneSettingsMenuModel::kParentCommandId) {
      return tab_interface_ && tab_strip_->GetIndexOfTab(tab_interface_.get()) !=
                                   TabStripModel::kNoTab;
-@@ -844,6 +879,15 @@ void TabMenuModel::ActivatedAt(size_t in
+@@ -863,6 +898,15 @@ void TabMenuModel::ActivatedAt(size_t in
  // Overridden to execute core context menu command logic on activation for
  // extension items.
  void TabMenuModel::ActivatedAt(size_t index, int event_flags) {
