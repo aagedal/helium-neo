@@ -1,14 +1,15 @@
 --- a/chrome/browser/helium_webkit_streaming_mac.mm
 +++ b/chrome/browser/helium_webkit_streaming_mac.mm
-@@ -12,6 +12,7 @@
+@@ -12,6 +12,8 @@
  #include <optional>
  #include <string>
  #include <string_view>
++#include <utility>
 +#include <vector>
  
  #include "base/command_line.h"
  #include "base/containers/span.h"
-@@ -36,6 +37,7 @@
+@@ -36,6 +38,7 @@
  #include "content/public/browser/browser_context.h"
  #include "content/public/browser/navigation_controller.h"
  #include "content/public/browser/navigation_entry.h"
@@ -16,9 +17,11 @@
  #include "content/public/browser/navigation_handle.h"
  #include "content/public/browser/navigation_throttle.h"
  #include "content/public/browser/navigation_throttle_registry.h"
-@@ -45,8 +47,11 @@
+@@ -44,9 +47,13 @@
+ #include "content/public/browser/web_contents_delegate.h"
  #include "content/public/browser/web_contents_observer.h"
  #include "content/public/common/referrer.h"
++#include "net/base/registry_controlled_domains/registry_controlled_domain.h"
  #include "net/http/http_request_headers.h"
 +#include "third_party/skia/include/core/SkBitmap.h"
  #include "ui/base/page_transition_types.h"
@@ -28,7 +31,117 @@
  #include "url/gurl.h"
  
  namespace {
-@@ -825,9 +830,60 @@ class StreamingTab : public base::SupportsUserData::Data,
+@@ -61,19 +68,57 @@
+          !url.has_username() && !url.has_password();
+ }
+ 
+-// DomainIs checks a hostname boundary, including service subdomains but not
+-// lookalikes such as hbomax.com.example.org. Only automatic routing needs a list.
++// The first label of the site's registrable domain, e.g. "viaplay" for
++// www.viaplay.no, for services that use a domain per country.
++std::string SiteLabel(const GURL& url) {
++  const std::string site =
++      net::registry_controlled_domains::GetDomainAndRegistry(
++          url, net::registry_controlled_domains::EXCLUDE_PRIVATE_REGISTRIES);
++  return site.substr(0, site.find('.'));
++}
++
++// Prime Video on Amazon's own sites, e.g. amazon.de/gp/video or
++// amazon.de/-/en/gp/video, but not the rest of the shop.
++bool IsAmazonVideoPath(const GURL& url) {
++  std::string_view path = url.path();
++  if (path.starts_with("/-/")) {
++    const size_t next = path.find('/', 3);
++    path = next == std::string_view::npos ? std::string_view() : path.substr(next);
++  }
++  return path.starts_with("/gp/video") || path.starts_with("/Amazon-Video") ||
++         path.starts_with("/Prime-Video");
++}
++
++// Services that play in WebKit with FairPlay, while refusing or limiting
++// playback in browsers without Google's Widevine signing. Keep the list in
++// sync with kHeliumStreamingServices in
++// components/omnibox/browser/builtin_provider.cc. DomainIs checks a hostname
++// boundary, including service subdomains but not lookalikes such as
++// hbomax.com.example.org.
+ const char* StreamingService(const GURL& url) {
+   if (!IsWebKitPageURL(url) || !url.SchemeIs("https"))
+     return nullptr;
+-  if (url.DomainIs("netflix.com"))
+-    return "netflix";
+-  if (url.DomainIs("play.tv2.no"))
+-    return "tv2";
+-  if (url.DomainIs("hbomax.com") || url.DomainIs("max.com"))
+-    return "hbomax";
+-  if (url.DomainIs("disneyplus.com"))
+-    return "disneyplus";
++  static constexpr std::pair<const char*, const char*> kDomains[] = {
++      {"netflix.com", "netflix"},         {"play.tv2.no", "tv2"},
++      {"hbomax.com", "hbomax"},           {"max.com", "hbomax"},
++      {"disneyplus.com", "disneyplus"},   {"primevideo.com", "primevideo"},
++      {"tv.apple.com", "appletv"},        {"skyshowtime.com", "skyshowtime"},
++      {"tv.nrk.no", "nrktv"},             {"hulu.com", "hulu"},
++      {"paramountplus.com", "paramountplus"}, {"peacocktv.com", "peacock"}};
++  for (const auto& [domain, service] : kDomains) {
++    if (url.DomainIs(domain))
++      return service;
++  }
++  // Services with a domain per country.
++  const std::string label = SiteLabel(url);
++  if (label == "viaplay")
++    return "viaplay";
++  if (label == "discoveryplus")
++    return "discoveryplus";
++  if (label == "teliaplay")
++    return "teliaplay";
++  if (label == "amazon" && IsAmazonVideoPath(url))
++    return "primevideo";
+   return nullptr;
+ }
+ 
+@@ -91,6 +136,26 @@
+     return @"HBO Max";
+   if (id == "disneyplus")
+     return @"Disney+";
++  if (id == "primevideo")
++    return @"Prime Video";
++  if (id == "appletv")
++    return @"Apple TV+";
++  if (id == "viaplay")
++    return @"Viaplay";
++  if (id == "skyshowtime")
++    return @"SkyShowtime";
++  if (id == "discoveryplus")
++    return @"discovery+";
++  if (id == "teliaplay")
++    return @"Telia Play";
++  if (id == "nrktv")
++    return @"NRK TV";
++  if (id == "hulu")
++    return @"Hulu";
++  if (id == "paramountplus")
++    return @"Paramount+";
++  if (id == "peacock")
++    return @"Peacock";
+   return @"this service";
+ }
+ 
+@@ -144,8 +209,12 @@
+ bool IsServiceSessionURL(const GURL& url) {
+   if (IsStreamingURL(url))
+     return true;
+-  return IsWebKitPageURL(url) && url.SchemeIs("https") &&
+-         url.DomainIs("tv2.no");
++  if (!IsWebKitPageURL(url) || !url.SchemeIs("https"))
++    return false;
++  // TV 2 accounts, Amazon sign-in for Prime Video, and Apple ID for Apple TV+.
++  return url.DomainIs("tv2.no") ||
++         (SiteLabel(url) == "amazon" && url.path().starts_with("/ap/")) ||
++         url.DomainIs("idmsa.apple.com") || url.DomainIs("appleid.apple.com");
+ }
+ 
+ GURL ToGURL(NSURL* url) {
+@@ -825,9 +894,60 @@
        NSString* title = controller_.webView.title;
        web_contents()->UpdateTitleForEntry(
            entry, title.length ? base::SysNSStringToUTF16(title) : u"WebKit");
@@ -89,7 +202,7 @@
    gfx::NativeView view() const {
      return gfx::NativeView([controller_ streamingView]);
    }
-@@ -918,6 +974,8 @@ class StreamingTab : public base::SupportsUserData::Data,
+@@ -918,6 +1038,8 @@
    bool manual_webkit_ = false;
    bool prefer_chromium_ = false;
    GURL last_requested_url_;

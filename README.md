@@ -115,9 +115,15 @@ process. Only the current tab is searched.
 
 On macOS 14 or later, Helium can host WebKit pages inside its tabs
 (**`helium://flags/#helium-webkit-streaming-tabs`**, on by default). When you
-type Netflix, TV 2 Play (`play.tv2.no`), HBO Max, Max, or Disney+ in the address
-bar or search overlay, the first suggestion is **Open [service] in WebKit**:
-without WebKit, playback may fail or be lower quality. The ordinary suggestion
+type a supported streaming service in the address bar or search overlay, the first suggestion is **Open [service] in WebKit**:
+without WebKit, playback may fail or be lower quality. Supported services are
+Netflix, TV 2 Play (`play.tv2.no`), HBO Max/Max, Disney+, Prime Video
+(`primevideo.com` and the video pages of Amazon's sites), Apple TV+
+(`tv.apple.com`), Viaplay, SkyShowtime, discovery+, Telia Play, NRK TV
+(`tv.nrk.no`), Hulu, Paramount+, and Peacock. They use Apple's FairPlay in
+WebKit, while browsers without Google's Widevine signing, such as Helium, often
+get no or low-quality playback. Any other site can still be opened in WebKit
+from the tab menu. The ordinary suggestion
 below it opens the site in Chromium. After you open a service in WebKit, a
 notification over the page offers to **always** open it there; switching such
 a tab back to Chromium from the tab menu ends that choice. Each tab has its own

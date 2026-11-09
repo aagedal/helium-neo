@@ -520,7 +520,7 @@
    } else if (match.type == AutocompleteMatchType::kCalculator) {
 --- a/components/omnibox/browser/builtin_provider.cc
 +++ b/components/omnibox/browser/builtin_provider.cc
-@@ -6,15 +6,19 @@
+@@ -6,15 +6,20 @@
  
  #include <stddef.h>
  
@@ -537,10 +537,11 @@
  #include "components/omnibox/browser/autocomplete_match_classification.h"
  #include "components/omnibox/browser/autocomplete_provider_client.h"
 +#include "components/prefs/pref_service.h"
++#include "net/base/registry_controlled_domains/registry_controlled_domain.h"
  #include "components/url_formatter/url_fixer.h"
  #include "third_party/metrics_proto/omnibox_focus_type.pb.h"
  #include "third_party/metrics_proto/omnibox_input_type.pb.h"
-@@ -22,6 +26,38 @@
+@@ -22,6 +27,73 @@
  
  const int BuiltinProvider::kRelevance = 860;
  
@@ -552,18 +553,53 @@
 +struct HeliumStreamingService {
 +  const char* id;
 +  const char16_t* name;
-+  const char* hosts[2];
-+  const char* home;
++  // Hosts, with their subdomains. Typing the start of one completes it.
++  const char* hosts[4];
++  // For services with a domain per country: the first label of the site,
++  // e.g. "viaplay" for viaplay.dk. Matches typed URLs only.
++  const char* site_label;
 +};
 +constexpr HeliumStreamingService kHeliumStreamingServices[] = {
-+    {"netflix", u"Netflix", {"netflix.com", nullptr}, "https://www.netflix.com/"},
-+    {"tv2", u"TV 2 Play", {"play.tv2.no", nullptr}, "https://play.tv2.no/"},
-+    {"hbomax", u"HBO Max", {"hbomax.com", "max.com"}, "https://www.hbomax.com/"},
-+    {"disneyplus",
-+     u"Disney+",
-+     {"disneyplus.com", nullptr},
-+     "https://www.disneyplus.com/"},
++    {"netflix", u"Netflix", {"netflix.com"}, nullptr},
++    {"tv2", u"TV 2 Play", {"play.tv2.no"}, nullptr},
++    {"hbomax", u"HBO Max", {"hbomax.com", "max.com"}, nullptr},
++    {"disneyplus", u"Disney+", {"disneyplus.com"}, nullptr},
++    // Also Prime Video on Amazon's own sites; see IsAmazonVideoUrl().
++    {"primevideo", u"Prime Video", {"primevideo.com"}, nullptr},
++    {"appletv", u"Apple TV+", {"tv.apple.com"}, nullptr},
++    {"viaplay", u"Viaplay",
++     {"viaplay.no", "viaplay.se", "viaplay.dk", "viaplay.fi"}, "viaplay"},
++    {"skyshowtime", u"SkyShowtime", {"skyshowtime.com"}, nullptr},
++    {"discoveryplus", u"discovery+", {"discoveryplus.com"}, "discoveryplus"},
++    {"teliaplay", u"Telia Play", {"teliaplay.se"}, "teliaplay"},
++    {"nrktv", u"NRK TV", {"tv.nrk.no"}, nullptr},
++    {"hulu", u"Hulu", {"hulu.com"}, nullptr},
++    {"paramountplus", u"Paramount+", {"paramountplus.com"}, nullptr},
++    {"peacock", u"Peacock", {"peacocktv.com"}, nullptr},
 +};
++
++std::string SiteLabel(const GURL& url) {
++  const std::string site =
++      net::registry_controlled_domains::GetDomainAndRegistry(
++          url, net::registry_controlled_domains::EXCLUDE_PRIVATE_REGISTRIES);
++  return site.substr(0, site.find('.'));
++}
++
++// Prime Video on Amazon's own sites, e.g. amazon.de/gp/video or
++// amazon.de/-/en/gp/video, but not the rest of the shop.
++bool IsAmazonVideoUrl(const GURL& url) {
++  if (SiteLabel(url) != "amazon") {
++    return false;
++  }
++  std::string_view path = url.path();
++  if (path.starts_with("/-/")) {
++    const size_t next = path.find('/', 3);
++    path = next == std::string_view::npos ? std::string_view()
++                                          : path.substr(next);
++  }
++  return path.starts_with("/gp/video") || path.starts_with("/Amazon-Video") ||
++         path.starts_with("/Prime-Video");
++}
 +
 +// Chrome registers this list of service ids only while WebKit streaming tabs
 +// are available, so its absence also means "do not offer WebKit".
@@ -579,7 +615,7 @@
  BuiltinProvider::BuiltinProvider(AutocompleteProviderClient* client)
      : AutocompleteProvider(AutocompleteProvider::Type::kBuiltin),
        client_(client) {
-@@ -41,6 +77,90 @@ void BuiltinProvider::Start(const AutocompleteInput& input,
+@@ -41,6 +113,95 @@
      DoBuiltinAutocompletion(input.text());
      UpdateRelevanceScores(input);
    }
@@ -617,27 +653,32 @@
 +  const bool can_complete = prefix.size() >= 4 &&
 +                            prefix.find_first_of("/:?#") == std::string::npos;
 +
++  const bool usable_url = typed_url.is_valid() &&
++                          typed_url.SchemeIsHTTPOrHTTPS() &&
++                          !typed_url.has_username() &&
++                          !typed_url.has_password() && !typed_url.has_port();
++  GURL::Replacements https;
++  https.SetSchemeStr("https");
 +  for (const HeliumStreamingService& service : kHeliumStreamingServices) {
 +    GURL destination;
 +    std::u16string completion;
++    if (usable_url &&
++        ((service.site_label && SiteLabel(typed_url) == service.site_label) ||
++         (std::string_view(service.id) == "primevideo" &&
++          IsAmazonVideoUrl(typed_url)))) {
++      destination = typed_url.ReplaceComponents(https);
++    }
 +    for (const char* host : service.hosts) {
-+      if (!host) {
++      if (!host || destination.is_valid()) {
 +        continue;
 +      }
-+      if (typed_url.is_valid() && typed_url.SchemeIsHTTPOrHTTPS() &&
-+          !typed_url.has_username() && !typed_url.has_password() &&
-+          !typed_url.has_port() && typed_url.DomainIs(host)) {
-+        GURL::Replacements https;
-+        https.SetSchemeStr("https");
++      if (usable_url && typed_url.DomainIs(host)) {
 +        destination = typed_url.ReplaceComponents(https);
-+        break;
-+      }
-+      if (can_complete && std::string_view(host).starts_with(prefix) &&
-+          prefix != host) {
-+        destination = GURL(service.home);
++      } else if (can_complete && std::string_view(host).starts_with(prefix) &&
++                 prefix != host) {
++        destination = GURL(base::StrCat({"https://", host, "/"}));
 +        completion = base::UTF8ToUTF16(std::string_view(host).substr(
 +            prefix.size()));
-+        break;
 +      }
 +    }
 +    if (!destination.is_valid()) {
