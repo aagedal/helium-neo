@@ -387,6 +387,7 @@ helium/ui/page-change-monitor.patch
 helium/core/open-links-in-chosen-profile.patch
 helium/core/neo-tab-sleep-defaults.patch
 helium/ui/macos-webkit-streaming-tabs-default.patch
+helium/ui/macos-webkit-hardening.patch
 helium/ui/find-image-on-page.patch
 helium/ui/command-bar.patch
 helium/ui/archive-page.patch

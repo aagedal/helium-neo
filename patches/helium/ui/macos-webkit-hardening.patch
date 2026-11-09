@@ -1,0 +1,494 @@
+--- a/chrome/browser/BUILD.gn
++++ b/chrome/browser/BUILD.gn
+@@ -344,6 +344,7 @@ if (is_mac) {
+     ]
+     deps = [
+       "//content/public/browser",
++      "//ui/base",
+       "//url",
+     ]
+     frameworks = [
+--- a/chrome/browser/helium_webkit_streaming_mac.h
++++ b/chrome/browser/helium_webkit_streaming_mac.h
+@@ -29,6 +29,10 @@ BASE_DECLARE_FEATURE(kHeliumWebKitStreamingTabs);
+ // URL is for display only; it does not fabricate Chromium navigation/security.
+ COMPONENT_EXPORT(HELIUM_WEBKIT_STREAMING)
+ GURL GetWebKitStreamingTabURL(content::WebContents* contents);
++// True only for an HTTPS WebKit page without insecure content; the location
++// bar shows "Not secure" otherwise.
++COMPONENT_EXPORT(HELIUM_WEBKIT_STREAMING)
++bool IsWebKitStreamingTabSecure(content::WebContents* contents);
+ enum class WebKitTabCommand {
+   kBack,
+   kForward,
+--- a/chrome/browser/helium_webkit_streaming_mac.mm
++++ b/chrome/browser/helium_webkit_streaming_mac.mm
+@@ -7,24 +7,38 @@
+ #import <Cocoa/Cocoa.h>
+ #import <WebKit/WebKit.h>
+ 
++#include <map>
+ #include <memory>
++#include <string>
+ 
+ #include "base/command_line.h"
++#include "base/containers/span.h"
++#include "base/files/file.h"
++#include "base/files/file_path.h"
++#include "base/files/file_util.h"
+ #include "base/functional/bind.h"
+ #include "base/memory/weak_ptr.h"
++#include "base/no_destructor.h"
+ #include "base/task/single_thread_task_runner.h"
++#include "base/task/thread_pool.h"
+ #include "base/hash/sha1.h"
+ #include "base/logging.h"
++#include "base/strings/string_util.h"
+ #include "base/strings/sys_string_conversions.h"
++#include "base/uuid.h"
+ #include "content/public/browser/browser_context.h"
+ #include "content/public/browser/navigation_controller.h"
+ #include "content/public/browser/navigation_entry.h"
+ #include "content/public/browser/navigation_handle.h"
+ #include "content/public/browser/navigation_throttle.h"
+ #include "content/public/browser/navigation_throttle_registry.h"
++#include "content/public/browser/page_navigator.h"
+ #include "content/public/browser/web_contents.h"
+ #include "content/public/browser/web_contents_delegate.h"
+ #include "content/public/browser/web_contents_observer.h"
++#include "content/public/common/referrer.h"
++#include "ui/base/page_transition_types.h"
++#include "ui/base/window_open_disposition.h"
+ #include "url/gurl.h"
+ 
+ namespace {
+@@ -58,6 +72,106 @@ const char* StreamingService(const GURL& url) {
+ bool IsStreamingURL(const GURL& url) {
+   return StreamingService(url) != nullptr;
+ }
++
++// Main-frame pages an automatic session may stay on: the routed services plus
++// their sign-in hosts. Everything else goes back to Chromium, where Safe
++// Browsing, extensions and the usual security UI apply. Add a service's
++// sign-in host here if its login is handed to Chromium (see the VLOG below).
++bool IsServiceSessionURL(const GURL& url) {
++  if (IsStreamingURL(url))
++    return true;
++  return IsWebKitPageURL(url) && url.SchemeIs("https") &&
++         url.DomainIs("tv2.no");
++}
++
++GURL ToGURL(NSURL* url) {
++  return url ? GURL(base::SysNSStringToUTF8(url.absoluteString)) : GURL();
++}
++
++// The WebKit website data store for a profile has a random identifier kept in
++// the profile directory. Deleting the profile therefore orphans its WebKit
++// logins instead of handing them to a later profile at the same path, which
++// the old path-derived identifier did.
++constexpr base::FilePath::CharType kStoreIdFile[] =
++    FILE_PATH_LITERAL("Helium WebKit Store");
++
++struct StoreId {
++  std::string id;
++  bool created = false;
++};
++
++bool ReadStoreId(const base::FilePath& file, std::string* id) {
++  if (!base::ReadFileToStringWithMaxSize(file, id, 64))
++    return false;
++  *id = std::string(base::TrimWhitespaceASCII(*id, base::TRIM_ALL));
++  return base::Uuid::ParseCaseInsensitive(*id).is_valid();
++}
++
++// Blocking.
++StoreId LoadOrCreateStoreId(const base::FilePath& profile_path) {
++  const base::FilePath file = profile_path.Append(kStoreIdFile);
++  StoreId result;
++  if (ReadStoreId(file, &result.id))
++    return result;
++  result.id = base::Uuid::GenerateRandomV4().AsLowercaseString();
++  result.created = true;
++  // FLAG_CREATE fails if another task created the file first; use that one.
++  base::File out(file, base::File::FLAG_CREATE | base::File::FLAG_WRITE);
++  if (!out.IsValid()) {
++    std::string existing;
++    if (ReadStoreId(file, &existing))
++      return {existing, false};
++    out = base::File(file,
++                     base::File::FLAG_CREATE_ALWAYS | base::File::FLAG_WRITE);
++  }
++  if (!out.IsValid() || !out.WriteAtCurrentPosAndCheck(
++                            base::as_byte_span(result.id))) {
++    LOG(WARNING) << "Could not save the WebKit store identifier";
++  }
++  return result;
++}
++
++std::map<base::FilePath, std::string>& StoreIds() {
++  static base::NoDestructor<std::map<base::FilePath, std::string>> ids;
++  return *ids;
++}
++
++void RemoveLegacyStore(const base::FilePath& profile_path) {
++  if (@available(macOS 14.0, *)) {
++    std::string digest = base::SHA1HashString(profile_path.value());
++    NSUUID* legacy = [[NSUUID alloc]
++        initWithUUIDBytes:reinterpret_cast<const unsigned char*>(digest.data())];
++    [WKWebsiteDataStore removeDataStoreForIdentifier:legacy
++                                   completionHandler:^(NSError* error){
++                                   }];
++  }
++}
++
++// Runs |callback| with the profile's store identifier, asynchronously the
++// first time.
++void WithStoreIdentifier(const base::FilePath& profile_path,
++                         base::OnceCallback<void(const std::string&)> callback) {
++  auto it = StoreIds().find(profile_path);
++  if (it != StoreIds().end()) {
++    std::move(callback).Run(it->second);
++    return;
++  }
++  base::ThreadPool::PostTaskAndReplyWithResult(
++      FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_BLOCKING},
++      base::BindOnce(&LoadOrCreateStoreId, profile_path),
++      base::BindOnce(
++          [](const base::FilePath& path,
++             base::OnceCallback<void(const std::string&)> callback,
++             StoreId result) {
++            // A new identifier replaces the old path-derived store; remove
++            // it so its data does not linger.
++            if (result.created)
++              RemoveLegacyStore(path);
++            auto entry = StoreIds().emplace(path, result.id).first;
++            std::move(callback).Run(entry->second);
++          },
++          profile_path, std::move(callback)));
++}
+ }  // namespace
+ 
+ // NativeViewHost hides the view on tab/pane changes. Pause rather than
+@@ -112,8 +226,14 @@ bool IsStreamingURL(const GURL& url) {
+     : NSWindowController <WKNavigationDelegate, WKUIDelegate, NSWindowDelegate>
+ - (instancetype)initWithURL:(NSURL*)url
+                  identifier:(NSUUID*)identifier
+-                  windowKey:(NSString*)windowKey;
++                  windowKey:(NSString*)windowKey
++         restrictToServices:(BOOL)restrictToServices;
+ - (void)loadURL:(NSURL*)url;
++- (void)setRestrictToServices:(BOOL)restrictToServices;
++// Receives main-frame URLs that must leave this session for Chromium, and
++// whether they were requested as a new window.
++- (void)setHandOffCallback:
++    (base::RepeatingCallback<void(const GURL&, bool)>)callback;
+ - (NSView*)streamingView;
+ - (NSURL*)pageURL;
+ - (WKWebView*)webView;
+@@ -129,11 +249,14 @@ bool IsStreamingURL(const GURL& url) {
+   NSTextField* _status;
+   NSString* _windowKey;
+   base::RepeatingClosure _navigationChanged;
++  base::RepeatingCallback<void(const GURL&, bool)> _handOff;
++  BOOL _restrictToServices;
+ }
+ 
+ - (instancetype)initWithURL:(NSURL*)url
+                  identifier:(NSUUID*)identifier
+-                  windowKey:(NSString*)windowKey {
++                  windowKey:(NSString*)windowKey
++         restrictToServices:(BOOL)restrictToServices {
+   // A nil key creates a view-only controller for a Helium tab.
+   NSWindow* window = windowKey ? [[NSWindow alloc]
+       initWithContentRect:NSMakeRect(0, 0, 1200, 800)
+@@ -146,6 +269,7 @@ bool IsStreamingURL(const GURL& url) {
+   if (!self)
+     return nil;
+   _windowKey = [windowKey copy];
++  _restrictToServices = restrictToServices;
+   window.title = @"Helium — Streaming (WebKit)";
+   window.releasedWhenClosed = NO;
+   window.delegate = self;
+@@ -160,6 +284,9 @@ bool IsStreamingURL(const GURL& url) {
+     return nil;
+   }
+   config.preferences.elementFullscreenEnabled = YES;
++  // Leave popup blocking on: only user-activated window.open() calls reach
++  // createWebViewWithConfiguration below.
++  config.preferences.javaScriptCanOpenWindowsAutomatically = NO;
+   _webView = [[WKWebView alloc] initWithFrame:NSZeroRect configuration:config];
+   _webView.navigationDelegate = self;
+   _webView.UIDelegate = self;
+@@ -236,14 +363,16 @@ bool IsStreamingURL(const GURL& url) {
+   }
+   // KVO includes redirects, history traversal and same-document changes such
+   // as pushState, which do not necessarily finish a WKNavigation.
+-  for (NSString* key in @[ @"URL", @"title", @"canGoBack", @"canGoForward" ])
++  for (NSString* key in @[ @"URL", @"title", @"canGoBack", @"canGoForward",
++                          @"hasOnlySecureContent" ])
+     [_webView addObserver:self forKeyPath:key options:0 context:nullptr];
+   [self loadURL:url];
+   return self;
+ }
+ 
+ - (void)dealloc {
+-  for (NSString* key in @[ @"URL", @"title", @"canGoBack", @"canGoForward" ])
++  for (NSString* key in @[ @"URL", @"title", @"canGoBack", @"canGoForward",
++                          @"hasOnlySecureContent" ])
+     [_webView removeObserver:self forKeyPath:key];
+ }
+ - (WKWebView*)webView {
+@@ -252,6 +381,13 @@ bool IsStreamingURL(const GURL& url) {
+ - (void)setNavigationCallback:(base::RepeatingClosure)callback {
+   _navigationChanged = std::move(callback);
+ }
++- (void)setRestrictToServices:(BOOL)restrictToServices {
++  _restrictToServices = restrictToServices;
++}
++- (void)setHandOffCallback:
++    (base::RepeatingCallback<void(const GURL&, bool)>)callback {
++  _handOff = std::move(callback);
++}
+ - (void)observeValueForKeyPath:(NSString*)keyPath
+                       ofObject:(id)object
+                         change:(NSDictionary<NSKeyValueChangeKey, id>*)change
+@@ -277,6 +413,7 @@ bool IsStreamingURL(const GURL& url) {
+ }
+ - (void)shutdown {
+   _navigationChanged.Reset();
++  _handOff.Reset();
+   [_root setActivateCallback:base::RepeatingClosure()];
+   [self pauseMedia];
+   [_webView stopLoading];
+@@ -314,12 +451,30 @@ bool IsStreamingURL(const GURL& url) {
+                     decisionHandler:
+                         (void (^)(WKNavigationActionPolicy))handler {
+   NSString* scheme = action.request.URL.scheme.lowercaseString;
++  const bool web =
++      [scheme isEqualToString:@"https"] || [scheme isEqualToString:@"http"];
+   // Do not launch external applications or load local files from this window.
+-  bool allowed =
+-      [scheme isEqualToString:@"https"] || [scheme isEqualToString:@"http"] ||
+-      [action.request.URL.absoluteString isEqualToString:@"about:blank"];
+-  handler(allowed ? WKNavigationActionPolicyAllow
+-                  : WKNavigationActionPolicyCancel);
++  if (!web &&
++      ![action.request.URL.absoluteString isEqualToString:@"about:blank"]) {
++    handler(WKNavigationActionPolicyCancel);
++    return;
++  }
++  // An automatic session keeps its main frame on the service. Links, script
++  // and redirects (including open redirects and ads) that leave it continue
++  // in Chromium instead, with its protections. New windows are handled in
++  // createWebViewWithConfiguration.
++  if (web && _restrictToServices && action.targetFrame.isMainFrame) {
++    GURL url = ToGURL(action.request.URL);
++    if (!IsServiceSessionURL(url)) {
++      VLOG(1) << "WebKit streaming handed navigation to Chromium: "
++              << url.host();
++      handler(WKNavigationActionPolicyCancel);
++      if (_handOff)
++        _handOff.Run(url, /*new_window=*/false);
++      return;
++    }
++  }
++  handler(WKNavigationActionPolicyAllow);
+ }
+ - (WKWebView*)webView:(WKWebView*)webView
+     createWebViewWithConfiguration:(WKWebViewConfiguration*)configuration
+@@ -328,10 +483,29 @@ bool IsStreamingURL(const GURL& url) {
+   if (!action.targetFrame &&
+       ([action.request.URL.scheme isEqualToString:@"https"] ||
+        [action.request.URL.scheme isEqualToString:@"http"])) {
+-    [self loadURL:action.request.URL];
++    GURL url = ToGURL(action.request.URL);
++    if (!_restrictToServices || IsServiceSessionURL(url)) {
++      [self loadURL:action.request.URL];
++    } else {
++      VLOG(1) << "WebKit streaming handed new window to Chromium: "
++              << url.host();
++      if (_handOff)
++        _handOff.Run(url, /*new_window=*/true);
++    }
+   }
+   return nil;
+ }
++// Streaming does not need the camera or microphone. Deny rather than let
++// WebKit prompt outside Chromium's permission settings.
++- (void)webView:(WKWebView*)webView
++    requestMediaCapturePermissionForOrigin:(WKSecurityOrigin*)origin
++                          initiatedByFrame:(WKFrameInfo*)frame
++                                      type:(WKMediaCaptureType)type
++                           decisionHandler:
++                               (void (^)(WKPermissionDecision))handler
++    API_AVAILABLE(macos(12.0)) {
++  handler(WKPermissionDecisionDeny);
++}
+ - (void)webView:(WKWebView*)webView
+     didFinishNavigation:(WKNavigation*)navigation {
+   VLOG(1) << "WebKit streaming navigation finished";
+@@ -378,15 +552,34 @@ class StreamingTab : public base::SupportsUserData::Data,
+ 
+   void Open(const GURL& url) {
+     last_requested_url_ = url;
+-    if (!controller_) {
+-      auto* profile = web_contents()->GetBrowserContext();
+-      std::string digest = base::SHA1HashString(profile->GetPath().value());
+-      NSUUID* identifier = [[NSUUID alloc]
+-          initWithUUIDBytes:reinterpret_cast<const unsigned char*>(digest.data())];
++    if (controller_) {
++      [controller_ setRestrictToServices:!manual_webkit_];
++      [controller_ loadURL:
++          [NSURL URLWithString:base::SysUTF8ToNSString(url.spec())]];
++      return;
++    }
++    // A navigation that starts meanwhile invalidates this callback.
++    WithStoreIdentifier(
++        web_contents()->GetBrowserContext()->GetPath(),
++        base::BindOnce(&StreamingTab::Create, weak_factory_.GetWeakPtr(), url));
++  }
++
++  void Create(const GURL& url, const std::string& store_id) {
++    if (controller_) {
++      Open(url);
++      return;
++    }
++    {
++      NSUUID* identifier =
++          [[NSUUID alloc] initWithUUIDString:base::SysUTF8ToNSString(store_id)];
++      if (!identifier)
++        return;
+       controller_ = [[HeliumStreamingWindow alloc]
+-          initWithURL:[NSURL URLWithString:base::SysUTF8ToNSString(url.spec())]
+-          identifier:identifier
+-          windowKey:nil];
++                 initWithURL:[NSURL URLWithString:base::SysUTF8ToNSString(
++                                                      url.spec())]
++                  identifier:identifier
++                   windowKey:nil
++          restrictToServices:!manual_webkit_];
+       if (!controller_)
+         return;
+       [(HeliumStreamingRootView*)[controller_ streamingView]
+@@ -395,6 +588,9 @@ class StreamingTab : public base::SupportsUserData::Data,
+       [controller_ setNavigationCallback:base::BindRepeating(
+                                              &StreamingTab::NavigationChanged,
+                                              activation_factory_.GetWeakPtr())];
++      [controller_ setHandOffCallback:base::BindRepeating(
++                                          &StreamingTab::HandOff,
++                                          activation_factory_.GetWeakPtr())];
+       // Keep Chromium's document and security state blank. The location bar
+       // reads the WK URL explicitly rather than inventing a Chromium commit.
+       preparing_shell_ = true;
+@@ -402,12 +598,36 @@ class StreamingTab : public base::SupportsUserData::Data,
+       web_contents()->GetController().LoadURLWithParams(params);
+       changed_.Notify();
+       VLOG(1) << "WebKit streaming tab opened";
+-    } else {
+-      [controller_ loadURL:
+-          [NSURL URLWithString:base::SysUTF8ToNSString(url.spec())]];
+     }
+   }
+ 
++  // Called from WebKit delegate callbacks; navigate Chromium afterwards.
++  void HandOff(const GURL& url, bool new_window) {
++    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
++        FROM_HERE, base::BindOnce(&StreamingTab::OpenInChromium,
++                                  activation_factory_.GetWeakPtr(), url,
++                                  new_window));
++  }
++  void OpenInChromium(const GURL& url, bool new_window) {
++    if (!web_contents() || !IsWebKitPageURL(url))
++      return;
++    // In the current tab, DidStartNavigation ends the WebKit session.
++    web_contents()->OpenURL(
++        content::OpenURLParams(
++            url, content::Referrer(),
++            new_window ? WindowOpenDisposition::NEW_FOREGROUND_TAB
++                       : WindowOpenDisposition::CURRENT_TAB,
++            ui::PAGE_TRANSITION_LINK, /*is_renderer_initiated=*/false),
++        /*navigation_handle_callback=*/{});
++  }
++
++  // Whether the WebKit page is HTTPS with no insecure subresources. Chromium
++  // has no certificate details for it, so this is the most it can show.
++  bool IsSecure() const {
++    return controller_ && url().SchemeIs("https") &&
++           controller_.webView.hasOnlySecureContent;
++  }
++
+   GURL url() const {
+     if (!controller_)
+       return GURL();
+@@ -556,12 +776,12 @@ bool OpenStreamingTab(content::WebContents* contents, const GURL& url) {
+   return true;
+ }
+ 
+-bool OpenStreamingWindow(content::BrowserContext* profile, const GURL& url) {
+-  // A stable store per profile; never access or copy Chromium cookies. The hash
+-  // is used only as an identifier, not for any security decision.
+-  std::string digest = base::SHA1HashString(profile->GetPath().value());
+-  NSUUID* identifier = [[NSUUID alloc]
+-      initWithUUIDBytes:reinterpret_cast<const unsigned char*>(digest.data())];
++void ShowStreamingWindow(const GURL& url, const std::string& store_id) {
++  // A stable store per profile; never access or copy Chromium cookies.
++  NSUUID* identifier =
++      [[NSUUID alloc] initWithUUIDString:base::SysUTF8ToNSString(store_id)];
++  if (!identifier)
++    return;
+   NSString* service = base::SysUTF8ToNSString(StreamingService(url));
+   NSString* key =
+       [NSString stringWithFormat:@"%@/%@", identifier.UUIDString, service];
+@@ -575,14 +795,20 @@ bool OpenStreamingWindow(content::BrowserContext* profile, const GURL& url) {
+   } else {
+     controller = [[HeliumStreamingWindow alloc] initWithURL:native_url
+                                                  identifier:identifier
+-                                                  windowKey:key];
++                                                  windowKey:key
++                                         restrictToServices:YES];
+     if (!controller)
+-      return false;
++      return;
+     g_streaming_windows[key] = controller;
+   }
+   [controller showWindow:nil];
+   [controller.window makeKeyAndOrderFront:nil];
+   VLOG(1) << "WebKit streaming window opened: " << StreamingService(url);
++}
++
++bool OpenStreamingWindow(content::BrowserContext* profile, const GURL& url) {
++  WithStoreIdentifier(profile->GetPath(),
++                      base::BindOnce(&ShowStreamingWindow, url));
+   return true;
+ }
+ 
+@@ -621,6 +847,10 @@ GURL GetWebKitStreamingTabURL(content::WebContents* contents) {
+   auto* tab = GetStreamingTab(contents);
+   return tab ? tab->url() : GURL();
+ }
++bool IsWebKitStreamingTabSecure(content::WebContents* contents) {
++  auto* tab = GetStreamingTab(contents);
++  return tab && tab->IsSecure();
++}
+ bool CanGoBackInWebKitStreamingTab(content::WebContents* contents) {
+   auto* tab = GetStreamingTab(contents);
+   return tab && tab->CanGoBack();
+--- a/chrome/browser/ui/toolbar/chrome_location_bar_model_delegate.cc
++++ b/chrome/browser/ui/toolbar/chrome_location_bar_model_delegate.cc
+@@ -161,9 +161,13 @@ bool ChromeLocationBarModelDelegate::Sho
+     const {
+   content::WebContents* web_contents = GetActiveWebContents();
+ #if BUILDFLAG(IS_MAC)
+-  // Chromium has no certificate/security information for the native WK page.
+-  if (helium::GetWebKitStreamingTabView(web_contents))
+-    return security_state::NONE;
++  // Chromium has no certificate details for the native WK page. Show
++  // "Not secure" unless it is HTTPS without insecure content.
++  if (helium::GetWebKitStreamingTabView(web_contents)) {
++    return helium::IsWebKitStreamingTabSecure(web_contents)
++               ? security_state::NONE
++               : security_state::WARNING;
++  }
+ #endif
+   // If there is no active WebContents (which can happen during toolbar
+   // initialization), assume no security style.
