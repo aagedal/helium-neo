@@ -1,0 +1,212 @@
+--- a/chrome/browser/helium_webkit_streaming_mac.mm
++++ b/chrome/browser/helium_webkit_streaming_mac.mm
+@@ -12,6 +12,7 @@
+ #include <optional>
+ #include <string>
+ #include <string_view>
++#include <vector>
+ 
+ #include "base/command_line.h"
+ #include "base/containers/span.h"
+@@ -36,6 +37,7 @@
+ #include "content/public/browser/browser_context.h"
+ #include "content/public/browser/navigation_controller.h"
+ #include "content/public/browser/navigation_entry.h"
++#include "content/public/browser/favicon_status.h"
+ #include "content/public/browser/navigation_handle.h"
+ #include "content/public/browser/navigation_throttle.h"
+ #include "content/public/browser/navigation_throttle_registry.h"
+@@ -45,8 +47,11 @@
+ #include "content/public/browser/web_contents_observer.h"
+ #include "content/public/common/referrer.h"
+ #include "net/http/http_request_headers.h"
++#include "third_party/skia/include/core/SkBitmap.h"
+ #include "ui/base/page_transition_types.h"
+ #include "ui/base/window_open_disposition.h"
++#include "ui/gfx/image/image.h"
++#include "ui/gfx/image/image_skia.h"
+ #include "url/gurl.h"
+ 
+ namespace {
+@@ -825,9 +830,60 @@ class StreamingTab : public base::SupportsUserData::Data,
+       NSString* title = controller_.webView.title;
+       web_contents()->UpdateTitleForEntry(
+           entry, title.length ? base::SysNSStringToUTF16(title) : u"WebKit");
++      UpdateFavicon(*entry);
+     }
+     web_contents()->NotifyNavigationStateChanged(content::INVALIDATE_TYPE_ALL);
+   }
++
++  // The tab shows the WebKit site's icon. Chromium's blank page underneath
++  // downloads and decodes it in its sandboxed renderer, as it does for its own
++  // favicons, and it is shown on that page's entry.
++  void UpdateFavicon(content::NavigationEntry& entry) {
++    const GURL page = url();
++    if (!IsWebKitPageURL(page))
++      return;
++    const GURL icon = page.GetWithEmptyPath().Resolve("/favicon.ico");
++    if (icon != favicon_url_) {
++      favicon_url_ = icon;
++      favicon_ = gfx::Image();
++      web_contents()->DownloadImage(
++          icon, /*is_favicon=*/true, /*preferred_size=*/gfx::Size(),
++          /*max_bitmap_size=*/64, /*bypass_cache=*/false,
++          base::BindOnce(&StreamingTab::FaviconDownloaded,
++                         activation_factory_.GetWeakPtr()));
++    }
++    if (!favicon_.IsEmpty()) {
++      entry.GetFavicon().valid = true;
++      entry.GetFavicon().url = favicon_url_;
++      entry.GetFavicon().image = favicon_;
++    }
++  }
++  void FaviconDownloaded(int id,
++                         int http_status_code,
++                         const GURL& image_url,
++                         const std::vector<SkBitmap>& bitmaps,
++                         const std::vector<gfx::Size>& sizes) {
++    if (image_url != favicon_url_ || bitmaps.empty())
++      return;
++    // The smallest bitmap that is sharp at 2x, else the largest one.
++    const SkBitmap* best = nullptr;
++    for (const SkBitmap& bitmap : bitmaps) {
++      if (bitmap.width() <= 0 || bitmap.width() != bitmap.height())
++        continue;
++      if (!best ||
++          (best->width() < 32 ? bitmap.width() > best->width()
++                              : bitmap.width() >= 32 &&
++                                    bitmap.width() < best->width())) {
++        best = &bitmap;
++      }
++    }
++    if (!best)
++      return;
++    // Favicons are 16 DIP wide.
++    favicon_ = gfx::Image(gfx::ImageSkia::CreateFromBitmap(
++        *best, best->width() / 16.0f));
++    NavigationChanged();
++  }
+   gfx::NativeView view() const {
+     return gfx::NativeView([controller_ streamingView]);
+   }
+@@ -918,6 +974,8 @@ class StreamingTab : public base::SupportsUserData::Data,
+   bool manual_webkit_ = false;
+   bool prefer_chromium_ = false;
+   GURL last_requested_url_;
++  GURL favicon_url_;
++  gfx::Image favicon_;
+   base::RepeatingClosureList changed_;
+   base::WeakPtrFactory<StreamingTab> activation_factory_{this};
+   base::WeakPtrFactory<StreamingTab> weak_factory_{this};
+--- a/chrome/browser/ui/views/helium/BUILD.gn
++++ b/chrome/browser/ui/views/helium/BUILD.gn
+@@ -21,6 +21,9 @@ source_set("command_bar") {
+     "//components/helium_services",
+     "//components/strings",
+   ]
++  if (is_mac) {
++    deps += [ "//chrome/browser:helium_webkit_streaming" ]
++  }
+ }
+ 
+ source_set("frame_corner_radius") {
+--- a/chrome/browser/ui/views/helium/command_bar_view.cc
++++ b/chrome/browser/ui/views/helium/command_bar_view.cc
+@@ -85,6 +85,10 @@
+ #include "ui/views/widget/widget.h"
+ #include "url/url_constants.h"
+ 
++#if BUILDFLAG(IS_MAC)
++#include "chrome/browser/helium_webkit_streaming_mac.h"
++#endif
++
+ namespace {
+ 
+ constexpr int kMaxWidth = 720;
+@@ -112,10 +116,22 @@ bool IsNewTabPageUrl(const GURL& url) {
+            url.host() == chrome::kChromeUINewTabPageHost));
+ }
+ 
++// The address a tab shows. A WebKit tab keeps a blank Chromium page under its
++// own page, which must not count as a new tab page.
++GURL ShownUrl(content::WebContents* contents, bool visible = false) {
++#if BUILDFLAG(IS_MAC)
++  if (GURL webkit = helium::GetWebKitStreamingTabURL(contents);
++      webkit.is_valid()) {
++    return webkit;
++  }
++#endif
++  return visible ? contents->GetVisibleURL() : contents->GetLastCommittedURL();
++}
++
+ bool IsShowingNewTabPage(BrowserWindowInterface* browser) {
+   content::WebContents* contents =
+       browser->GetTabStripModel()->GetActiveWebContents();
+-  return contents && IsNewTabPageUrl(contents->GetVisibleURL());
++  return contents && IsNewTabPageUrl(ShownUrl(contents, /*visible=*/true));
+ }
+ 
+ std::u16string FormatUrlForDisplay(const GURL& url) {
+@@ -520,7 +536,7 @@ CommandBarView::CommandBarView(BrowserWindowInterface* browser, Mode mode)
+   if (mode_ == Mode::kCurrentTab) {
+     content::WebContents* contents =
+         browser_->GetTabStripModel()->GetActiveWebContents();
+-    const GURL url = contents ? contents->GetLastCommittedURL() : GURL();
++    const GURL url = contents ? ShownUrl(contents) : GURL();
+     base::expected<gfx::ImageSkia, qr_code_generator::Error> qr_code =
+         base::unexpected(qr_code_generator::Error::kUnknownError);
+     if (url.SchemeIsHTTPOrHTTPS()) {
+@@ -615,7 +631,7 @@ CommandBarView::CommandBarView(BrowserWindowInterface* browser, Mode mode)
+   if (mode_ == Mode::kCurrentTab) {
+     if (content::WebContents* contents =
+             browser_->GetTabStripModel()->GetActiveWebContents()) {
+-      const GURL& url = contents->GetLastCommittedURL();
++      const GURL url = ShownUrl(contents);
+       if (!IsNewTabPageUrl(url)) {
+         textfield_->SetText(base::UTF8ToUTF16(url.spec()));
+         textfield_->SelectAll(/*reversed=*/false);
+@@ -747,7 +763,7 @@ void CommandBarView::StartQuery() {
+   GURL current_url;
+   if (content::WebContents* contents =
+           browser_->GetTabStripModel()->GetActiveWebContents()) {
+-    current_url = contents->GetLastCommittedURL();
++    current_url = ShownUrl(contents);
+   }
+   const auto page_classification =
+       mode_ == Mode::kNewTab
+@@ -865,7 +881,7 @@ void CommandBarView::RebuildEntries() {
+       }
+       open_urls.emplace_back(
+           AutocompleteMatch::GURLToStrippedGURL(
+-              tab->GetContents()->GetLastCommittedURL(), input_,
++              ShownUrl(tab->GetContents()), input_,
+               template_url_service, std::u16string(),
+               /*keep_search_intent_params=*/true),
+           tab->GetHandle());
+@@ -1299,7 +1315,7 @@ std::vector<CommandBarView::ScoredTab> CommandBarView::GetTabs(
+         continue;
+       }
+       content::WebContents* contents = tab->GetContents();
+-      const GURL& url = contents->GetLastCommittedURL();
++      const GURL url = ShownUrl(contents);
+       int score = 1;
+       if (!terms.empty()) {
+         score = ScoreTab(terms, contents->GetTitle(), url);
+@@ -1325,7 +1341,7 @@ CommandBarView::Entry CommandBarView::CreateTabEntry(
+   Entry entry;
+   entry.tab = tab->GetHandle();
+   content::WebContents* contents = tab->GetContents();
+-  const GURL& url = contents->GetLastCommittedURL();
++  const GURL url = ShownUrl(contents);
+   entry.title = contents->GetTitle();
+   if (entry.title.empty()) {
+     entry.title = FormatUrlForDisplay(url);
+@@ -1411,7 +1427,7 @@ CommandBarView::Entry CommandBarView::CreateReopenTabEntry(
+   content::WebContents* contents = tab->GetContents();
+   AutocompleteMatch match(nullptr, 0, false,
+                           omnibox::AutocompleteMatchType::kHistoryUrl);
+-  match.destination_url = contents->GetLastCommittedURL();
++  match.destination_url = ShownUrl(contents);
+   match.transition = ui::PAGE_TRANSITION_TYPED;
+   match.contents = FormatUrlForDisplay(match.destination_url);
+   match.description = contents->GetTitle();
