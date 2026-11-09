@@ -541,7 +541,7 @@
  #include "components/url_formatter/url_fixer.h"
  #include "third_party/metrics_proto/omnibox_focus_type.pb.h"
  #include "third_party/metrics_proto/omnibox_input_type.pb.h"
-@@ -22,6 +27,73 @@
+@@ -22,6 +27,74 @@
  
  const int BuiltinProvider::kRelevance = 860;
  
@@ -576,6 +576,7 @@
 +    {"hulu", u"Hulu", {"hulu.com"}, nullptr},
 +    {"paramountplus", u"Paramount+", {"paramountplus.com"}, nullptr},
 +    {"peacock", u"Peacock", {"peacocktv.com"}, nullptr},
++    {"spotify", u"Spotify", {"spotify.com"}, nullptr},
 +};
 +
 +std::string SiteLabel(const GURL& url) {
@@ -615,7 +616,7 @@
  BuiltinProvider::BuiltinProvider(AutocompleteProviderClient* client)
      : AutocompleteProvider(AutocompleteProvider::Type::kBuiltin),
        client_(client) {
-@@ -41,6 +113,95 @@
+@@ -41,6 +114,95 @@
      DoBuiltinAutocompletion(input.text());
      UpdateRelevanceScores(input);
    }

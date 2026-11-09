@@ -31,7 +31,7 @@
  #include "url/gurl.h"
  
  namespace {
-@@ -61,19 +68,57 @@
+@@ -61,19 +68,58 @@
           !url.has_username() && !url.has_password();
  }
  
@@ -81,7 +81,8 @@
 +      {"disneyplus.com", "disneyplus"},   {"primevideo.com", "primevideo"},
 +      {"tv.apple.com", "appletv"},        {"skyshowtime.com", "skyshowtime"},
 +      {"tv.nrk.no", "nrktv"},             {"hulu.com", "hulu"},
-+      {"paramountplus.com", "paramountplus"}, {"peacocktv.com", "peacock"}};
++      {"paramountplus.com", "paramountplus"}, {"peacocktv.com", "peacock"},
++      {"spotify.com", "spotify"}};
 +  for (const auto& [domain, service] : kDomains) {
 +    if (url.DomainIs(domain))
 +      return service;
@@ -99,7 +100,7 @@
    return nullptr;
  }
  
-@@ -91,6 +136,26 @@
+@@ -91,6 +137,28 @@
      return @"HBO Max";
    if (id == "disneyplus")
      return @"Disney+";
@@ -123,10 +124,12 @@
 +    return @"Paramount+";
 +  if (id == "peacock")
 +    return @"Peacock";
++  if (id == "spotify")
++    return @"Spotify";
    return @"this service";
  }
  
-@@ -144,8 +209,12 @@
+@@ -144,8 +212,12 @@
  bool IsServiceSessionURL(const GURL& url) {
    if (IsStreamingURL(url))
      return true;
@@ -141,12 +144,32 @@
  }
  
  GURL ToGURL(NSURL* url) {
-@@ -825,9 +894,60 @@
+@@ -242,6 +314,8 @@
+ // silently continuing media behind another tab. Returning never auto-resumes it.
+ @interface HeliumStreamingRootView : NSView
+ @property(nonatomic, weak) WKWebView* webView;
++// Music keeps playing in a background tab; video pauses.
++@property(nonatomic) BOOL keepsPlayingWhenHidden;
+ - (void)setActivateCallback:(base::RepeatingClosure)callback;
+ @end
+ 
+@@ -271,6 +345,8 @@
+   if (hidden == self.hidden)
+     return;
+   [super setHidden:hidden];
++  if (self.keepsPlayingWhenHidden)
++    return;
+   if (hidden) {
+     [self.webView setAllMediaPlaybackSuspended:YES completionHandler:nil];
+   } else {
+@@ -825,16 +901,76 @@
        NSString* title = controller_.webView.title;
        web_contents()->UpdateTitleForEntry(
            entry, title.length ? base::SysNSStringToUTF16(title) : u"WebKit");
 +      UpdateFavicon(*entry);
      }
++    ((HeliumStreamingRootView*)[controller_ streamingView])
++        .keepsPlayingWhenHidden = PlaysInBackground();
      web_contents()->NotifyNavigationStateChanged(content::INVALIDATE_TYPE_ALL);
    }
 +
@@ -202,7 +225,22 @@
    gfx::NativeView view() const {
      return gfx::NativeView([controller_ streamingView]);
    }
-@@ -918,6 +1038,8 @@
+   base::CallbackListSubscription Observe(base::RepeatingClosure callback) {
+     return changed_.Add(std::move(callback));
+   }
+-  void Pause() { [controller_ pauseMedia]; }
++  void Pause() {
++    if (!PlaysInBackground())
++      [controller_ pauseMedia];
++  }
++  bool PlaysInBackground() const {
++    const char* service = StreamingService(url());
++    return service && std::string_view(service) == "spotify";
++  }
+   bool ShouldRoute(const GURL& url, WebKitRequest request) const {
+     if (request == WebKitRequest::kOpen)
+       return IsStreamingURL(url);
+@@ -918,6 +1054,8 @@
    bool manual_webkit_ = false;
    bool prefer_chromium_ = false;
    GURL last_requested_url_;

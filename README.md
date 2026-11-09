@@ -120,7 +120,7 @@ without WebKit, playback may fail or be lower quality. Supported services are
 Netflix, TV 2 Play (`play.tv2.no`), HBO Max/Max, Disney+, Prime Video
 (`primevideo.com` and the video pages of Amazon's sites), Apple TV+
 (`tv.apple.com`), Viaplay, SkyShowtime, discovery+, Telia Play, NRK TV
-(`tv.nrk.no`), Hulu, Paramount+, and Peacock. They use Apple's FairPlay in
+(`tv.nrk.no`), Hulu, Paramount+, Peacock, and Spotify. They use Apple's FairPlay in
 WebKit, while browsers without Google's Widevine signing, such as Helium, often
 get no or low-quality playback. Any other site can still be opened in WebKit
 from the tab menu. The ordinary suggestion
@@ -149,7 +149,8 @@ no certificate details. WebKit tabs cannot use the camera or microphone.
 This feature is experimental. Extensions, Chromium history and
 site-data controls, downloads, printing, DevTools, and other browser integrations
 are not fully connected to WebKit. WebKit sessions are not restored; switching
-away suspends media, and returning requires an explicit playback resume.
+away suspends video, and returning requires an explicit playback resume.
+Spotify keeps playing in a background tab.
 Protected playback was confirmed for Netflix and TV 2 Play in the separate
 native-window mode; protected playback in the tab host and on the newly added
 services still needs verification. Split-pane behavior, fullscreen, and
