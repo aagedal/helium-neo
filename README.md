@@ -116,18 +116,23 @@ process. The chosen image is remembered per profile until the browser restarts.
 
 ### Experimental WebKit playback on macOS
 
-On macOS 14 or later, enable
-**`helium://flags/#helium-webkit-streaming-tabs`** and restart to host WebKit
-pages inside Helium tabs. HTTPS pages on Netflix, TV 2 Play (`play.tv2.no`),
-HBO Max, Max, and Disney+ use WebKit automatically. Each tab has its own page;
-WebKit tabs in the same Helium profile share a separate persistent WebKit login
-and cookie store. Private and guest profiles remain on Chromium.
+On macOS 14 or later, Helium can host WebKit pages inside its tabs
+(**`helium://flags/#helium-webkit-streaming-tabs`**, on by default). When you
+type Netflix, TV 2 Play (`play.tv2.no`), HBO Max, Max, or Disney+ in the address
+bar or search overlay, the first suggestion is **Open [service] in WebKit**:
+without WebKit, playback may fail or be lower quality. The ordinary suggestion
+below it opens the site in Chromium. After you open a service in WebKit, a
+notification over the page offers to **always** open it there; switching such
+a tab back to Chromium from the tab menu ends that choice. Each tab has its own
+page; WebKit tabs in the same Helium profile share a separate persistent WebKit
+login and cookie store. Private and guest profiles remain on Chromium.
 
 With the flag enabled, right-click an ordinary HTTP(S) tab and select
 **Use WebKit renderer (reloads page)** to switch manually. Select it again to
 return the current WebKit URL to Chromium. A manual WebKit tab keeps subsequent
-HTTP(S) address-bar navigation in WebKit; an automatically routed tab returns to
-Chromium for an ordinary URL. Opening an internal or local page returns to
+HTTP(S) address-bar navigation in WebKit; a streaming tab returns to Chromium
+for an ordinary URL. Links, redirects and popups that leave a streaming
+service's site continue in Chromium, where Safe Browsing and extensions apply. Opening an internal or local page returns to
 Chromium. Switching renderers reloads the URL without transferring page state,
 form submissions, cookies, or logins. Renderer choices are not restored across
 sessions.
@@ -135,9 +140,10 @@ sessions.
 Helium's address bar and tab title display the WebKit page, and its normal
 Back, Forward, Reload, and bypass-cache reload commands control that page.
 Chromium has no certificate information for WebKit pages, so the location bar
-does not present Chromium security or certificate state for them.
+shows "Not secure" unless the page is HTTPS without insecure content, and offers
+no certificate details. WebKit tabs cannot use the camera or microphone.
 
-This prototype is disabled by default. Extensions, Chromium history and
+This feature is experimental. Extensions, Chromium history and
 site-data controls, downloads, printing, DevTools, and other browser integrations
 are not fully connected to WebKit. WebKit sessions are not restored; switching
 away suspends media, and returning requires an explicit playback resume.

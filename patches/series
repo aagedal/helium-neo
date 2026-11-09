@@ -391,3 +391,4 @@ helium/ui/macos-webkit-hardening.patch
 helium/ui/find-image-on-page.patch
 helium/ui/command-bar.patch
 helium/ui/archive-page.patch
+helium/ui/macos-webkit-opt-in.patch
