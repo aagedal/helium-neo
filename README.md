@@ -93,14 +93,11 @@ persist after restarting the browser. Automatic exports require enabling again.
 After a reverse image search, find where a picture appears on an image-heavy
 page. Press Command-F and paste a copied image into the empty find field, drag
 an image file or a picture from another page or app onto the find bar, or click
-the image button in the find bar to paste, choose an image file, or reuse an
-image chosen from a page. The find bar counts the matches; Enter, Shift-Enter
+the image button in the find bar to paste or choose an image file. To look for
+a picture from another tab, copy it there and paste it here. The find bar
+counts the matches; Enter, Shift-Enter
 and the arrow buttons scroll to each outlined match. Typing text returns to an
 ordinary text search, and closing the find bar removes the outlines.
-
-Right-click an image and choose **Find this image in other tabs** to search the
-other tabs in the window and switch to the best match. Afterwards, **Find chosen
-image on this page** in a page's context menu looks for it again there.
 
 Matching compares appearance rather than files, so it tolerates resizing,
 recompression, different formats, and crops in either direction, including
@@ -112,7 +109,7 @@ such as `data-src` or `data-srcset`. The page is never scrolled, so infinite
 scroll does not fetch more content.
 Renderers send small grayscale thumbnails to the browser for comparison; images
 are not uploaded anywhere. Pasted and chosen files are decoded in a sandboxed
-process. The chosen image is remembered per profile until the browser restarts.
+process. Only the current tab is searched.
 
 ### Experimental WebKit playback on macOS
 
@@ -188,7 +185,12 @@ TikTok, Reddit, YouTube, LinkedIn, Mastodon and Telegram using visible links and
 the post container overlapping your selection. One clear match fills the field;
 multiple matches offer a chooser. Check or edit the link before saving. The
 record preserves candidate links and the chosen link's origin. Suggestions are
-heuristics, not verified attribution. Posting account, publication date and
+heuristics, not verified attribution. They are trusted only on the platform's
+own site (a Mastodon post only on its own server): any page can link to or
+imitate a post elsewhere, so on other sites such links stay selectable as
+references, without account, date or text, and are never filled in
+automatically. The credit line always names the platform of the captured page,
+and a page's own site name is used only when it matches its address. Posting account, publication date and
 post text can also fill from the selected post when the site exposes them. Post
 text comes from the post's own rendered body (quoted posts are excluded) and is
 not expanded, so a collapsed post fills only its visible start, up to 1,500
