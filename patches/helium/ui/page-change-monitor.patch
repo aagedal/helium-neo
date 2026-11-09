@@ -1565,7 +1565,7 @@
 +#endif  // CHROME_BROWSER_UI_TABS_PAGE_CHANGE_MONITOR_DIFF_H_
 --- /dev/null
 +++ b/chrome/browser/ui/tabs/page_change_monitor_script.h
-@@ -0,0 +1,381 @@
+@@ -0,0 +1,387 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -1827,7 +1827,10 @@
 +      show(pickAt(lastMove.clientX, lastMove.clientY));
 +    }
 +  };
++  // Every handler ignores events the page dispatches itself, so a page cannot
++  // pick, confirm or cancel on the user's behalf.
 +  layer.addEventListener('pointermove', event => {
++    if (!event.isTrusted) return;
 +    if (start && !start.dragging &&
 +        Math.hypot(event.clientX - start.x, event.clientY - start.y) > 6)
 +      start.dragging = true;
@@ -1835,14 +1838,14 @@
 +    if (!frame) frame = requestAnimationFrame(update);
 +  });
 +  layer.addEventListener('pointerdown', event => {
-+    if (finished || event.button !== 0) return;
++    if (!event.isTrusted || finished || event.button !== 0) return;
 +    event.preventDefault();
 +    layer.setPointerCapture(event.pointerId);
 +    start = {x: event.clientX, y: event.clientY, dragging: false};
 +    say(strings.hint);
 +  });
 +  layer.addEventListener('pointerup', event => {
-+    if (finished || !start) return;
++    if (!event.isTrusted || finished || !start) return;
 +    const elements = start.dragging ? pickInRect(rectFrom(event))
 +                                    : pickAt(event.clientX, event.clientY);
 +    start = null;
@@ -1851,8 +1854,11 @@
 +    choose(elements);
 +  });
 +  layer.addEventListener('contextmenu', event => event.preventDefault());
-+  cancelButton.addEventListener('click', () => picker.cancel());
++  cancelButton.addEventListener('click', event => {
++    if (event.isTrusted) picker.cancel();
++  });
 +  const onKey = event => {
++    if (!event.isTrusted) return;
 +    if (event.key === 'Escape') picker.cancel();
 +    if (!finished && event.key === 'Enter' && current?.length) choose(current);
 +    event.preventDefault();

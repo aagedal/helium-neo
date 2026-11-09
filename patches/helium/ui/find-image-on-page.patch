@@ -1,17 +1,6 @@
---- a/chrome/app/chrome_command_ids.h
-+++ b/chrome/app/chrome_command_ids.h
-@@ -355,6 +355,8 @@
- #define IDC_CONTENT_CONTEXT_SEARCHWEBFORVIDEOFRAME 50135
- #define IDC_CONTENT_CONTEXT_OPENAVNEWTAB 50136
- #define IDC_CONTENT_CONTEXT_PICTUREINPICTURE 50137
-+#define IDC_CONTENT_CONTEXT_FIND_IMAGE_IN_TABS 50138
-+#define IDC_CONTENT_CONTEXT_FIND_IMAGE_ON_PAGE 50139
- // Media items.
- #define IDC_CONTENT_CONTEXT_LOOP 50140
- #define IDC_CONTENT_CONTEXT_CONTROLS 50141
 --- a/chrome/app/generated_resources.grd
 +++ b/chrome/app/generated_resources.grd
-@@ -21218,6 +21218,75 @@ Please help our engineers fix this probl
+@@ -21218,6 +21218,60 @@
      <message name="IDS_OSCRYPTASYNC_AVAILABILITY_INFOBAR_BUTTON" desc="The text of the button to proceed with relaunching the entire browser to resolve keychain permission issues.">
        Relaunch
      </message>
@@ -23,9 +12,6 @@
 +    </message>
 +    <message name="IDS_NEO_IMAGE_MATCH_CHOOSE_FILE" desc="Find bar image menu item that opens a file chooser for an image to search for.">
 +      Choose image file…
-+    </message>
-+    <message name="IDS_NEO_IMAGE_MATCH_USE_CHOSEN" desc="Find bar image menu item that searches for the image chosen earlier with 'Find this image in other tabs'.">
-+      Use image chosen from page
 +    </message>
 +    <message name="IDS_NEO_IMAGE_MATCH_FILE_TITLE" desc="Title of the file chooser for an image to find on the page.">
 +      Choose an image to find
@@ -42,19 +28,13 @@
 +    <message name="IDS_NEO_IMAGE_MATCH_UNREADABLE" desc="Find bar placeholder when the chosen image could not be opened.">
 +      Couldn't open this image
 +    </message>
-+    <message name="IDS_NEO_IMAGE_MATCH_FIND_IN_TABS" desc="Context menu item on an image that looks for the same picture in the other open tabs.">
-+      Find this image in other tabs
-+    </message>
-+    <message name="IDS_NEO_IMAGE_MATCH_FIND_ON_PAGE" desc="Context menu item that looks for the image chosen earlier with 'Find this image in other tabs' on the current page.">
-+      Find chosen image on this page
-+    </message>
 +    <message name="IDS_NEO_IMAGE_MATCH_COUNTER" desc="Shown over the page while browsing image matches. CURRENT is the shown match, TOTAL the number of matches.">
 +      Image match <ph name="CURRENT">$1<ex>2</ex></ph> of <ph name="TOTAL">$2<ex>5</ex></ph>
 +    </message>
-+    <message name="IDS_NEO_IMAGE_MATCH_EXACT" desc="Label on an image that looks the same as the chosen image.">
++    <message name="IDS_NEO_IMAGE_MATCH_EXACT" desc="Label on an image that looks the same as the image being searched for.">
 +      Same image
 +    </message>
-+    <message name="IDS_NEO_IMAGE_MATCH_SIMILAR" desc="Label on an image that looks similar to the chosen image.">
++    <message name="IDS_NEO_IMAGE_MATCH_SIMILAR" desc="Label on an image that looks similar to the image being searched for.">
 +      Similar image
 +    </message>
 +    <message name="IDS_NEO_IMAGE_MATCH_HIDDEN" desc="Added to the match counter when the matching image is not visible, for example in a closed gallery slide.">
@@ -72,16 +52,10 @@
 +    <message name="IDS_NEO_IMAGE_MATCH_UNLOADED" desc="Shown when images further down the page had not loaded and could not be compared.">
 +      Images further down the page weren't loaded. Scroll down, then search again.
 +    </message>
-+    <message name="IDS_NEO_IMAGE_MATCH_TOO_PLAIN" desc="Shown when the chosen image is too small or too plain to search for.">
++    <message name="IDS_NEO_IMAGE_MATCH_TOO_PLAIN" desc="Shown when the image to search for is too small or too plain.">
 +      This image is too small or too plain to search for.
 +    </message>
-+    <message name="IDS_NEO_IMAGE_MATCH_NO_TABS" desc="Shown when there are no other tabs to search for the chosen image.">
-+      No other tabs to search. Open the page the image came from, then right-click it and choose Find chosen image on this page.
-+    </message>
-+    <message name="IDS_NEO_IMAGE_MATCH_NONE_IN_TABS" desc="Shown when none of the other tabs contains the chosen image.">
-+      No match in the other tabs. Open the page the image came from, then right-click it and choose Find chosen image on this page.
-+    </message>
-+    <message name="IDS_NEO_IMAGE_MATCH_NONE_ON_PAGE" desc="Shown when the current page does not contain the chosen image.">
++    <message name="IDS_NEO_IMAGE_MATCH_NONE_ON_PAGE" desc="Shown when the current page does not contain the image searched for.">
 +      No matching image on this page.
 +    </message>
      <message name="IDS_NEO_REFRESH_MINUTE" desc="One minute auto refresh interval.">
@@ -89,12 +63,10 @@
      </message>
 --- a/chrome/browser/actor/execution_engine_unittest.cc
 +++ b/chrome/browser/actor/execution_engine_unittest.cc
-@@ -159,6 +159,10 @@ class FakeChromeRenderFrame : public chr
+@@ -159,6 +159,8 @@
        RequestBitmapForContextNodeWithBoundsHintCallback callback) override {}
    void RequestBoundsHintForAllImages(
        RequestBoundsHintForAllImagesCallback callback) override {}
-+  void RequestImageThumbnailForContextNode(
-+      RequestImageThumbnailForContextNodeCallback callback) override {}
 +  void RequestImageThumbnails(
 +      RequestImageThumbnailsCallback callback) override {}
    void RequestImageForContextNode(
@@ -102,14 +74,10 @@
        const gfx::Size& image_max_size_pixels,
 --- a/chrome/browser/password_manager/actor_login/internal/actor_login_siwg_controller_unittest.cc
 +++ b/chrome/browser/password_manager/actor_login/internal/actor_login_siwg_controller_unittest.cc
-@@ -98,6 +98,14 @@ class MockChromeRenderFrame : public chr
+@@ -98,6 +98,10 @@
                (RequestBoundsHintForAllImagesCallback),
                (override));
    MOCK_METHOD(void,
-+              RequestImageThumbnailForContextNode,
-+              (RequestImageThumbnailForContextNodeCallback),
-+              (override));
-+  MOCK_METHOD(void,
 +              RequestImageThumbnails,
 +              (RequestImageThumbnailsCallback),
 +              (override));
@@ -119,14 +87,10 @@
                 const gfx::Size&,
 --- a/chrome/browser/password_manager/password_change/password_change_page_stability_waiter_unittest.cc
 +++ b/chrome/browser/password_manager/password_change/password_change_page_stability_waiter_unittest.cc
-@@ -87,6 +87,14 @@ class MockChromeRenderFrame : public chr
+@@ -87,6 +87,10 @@
                (RequestBoundsHintForAllImagesCallback),
                (override));
    MOCK_METHOD(void,
-+              RequestImageThumbnailForContextNode,
-+              (RequestImageThumbnailForContextNodeCallback),
-+              (override));
-+  MOCK_METHOD(void,
 +              RequestImageThumbnails,
 +              (RequestImageThumbnailsCallback),
 +              (override));
@@ -134,109 +98,6 @@
                RequestImageForContextNode,
                (int32_t,
                 const gfx::Size&,
---- a/chrome/browser/renderer_context_menu/BUILD.gn
-+++ b/chrome/browser/renderer_context_menu/BUILD.gn
-@@ -165,6 +165,7 @@ source_set("impl") {
-       "//chrome/browser/ui/send_tab_to_self",
-       "//chrome/browser/ui/sharing_hub",
-       "//chrome/browser/ui/tabs",
-+      "//chrome/browser/ui/tabs:image_match_finder",
-       "//chrome/browser/ui/toasts",
-       "//chrome/browser/ui/toasts/api:toasts",
-       "//chrome/browser/ui/translate",
---- a/chrome/browser/renderer_context_menu/render_view_context_menu.cc
-+++ b/chrome/browser/renderer_context_menu/render_view_context_menu.cc
-@@ -140,6 +140,7 @@
- #include "chrome/browser/ui/send_tab_to_self/send_tab_to_self_sub_menu_model.h"
- #include "chrome/browser/ui/sharing_hub/screenshot/screenshot_captured_bubble_controller.h"
- #include "chrome/browser/ui/tab_contents/core_tab_helper.h"
-+#include "chrome/browser/ui/tabs/image_match_finder.h"
- #include "chrome/browser/ui/tabs/features.h"
- #include "chrome/browser/ui/tabs/page_context_eligibility_helper.h"
- #include "chrome/browser/ui/tabs/public/tab_features.h"
-@@ -1304,6 +1305,17 @@ void RenderViewContextMenu::InitMenu() {
-   const bool use_simplified_menu_for_text_selection =
-       ShouldUseSimplifiedTextSelection();
- 
-+  if (tabs::HasChosenImage(browser_context_) &&
-+      (embedder_web_contents_->GetLastCommittedURL().SchemeIsHTTPOrHTTPS() ||
-+       embedder_web_contents_->GetLastCommittedURL().SchemeIsFile())) {
-+    menu_model_.AddItemWithStringId(IDC_CONTENT_CONTEXT_FIND_IMAGE_ON_PAGE,
-+                                    IDS_NEO_IMAGE_MATCH_FIND_ON_PAGE);
-+    if (!embedder_web_contents_->GetLastCommittedURL().SchemeIsHTTPOrHTTPS() ||
-+        !sharing_hub::DesktopScreenshotsFeatureEnabled(browser_context_)) {
-+      menu_model_.AddSeparator(ui::NORMAL_SEPARATOR);
-+    }
-+  }
-+
-   if (embedder_web_contents_->GetLastCommittedURL().SchemeIsHTTPOrHTTPS() &&
-       sharing_hub::DesktopScreenshotsFeatureEnabled(browser_context_)) {
-     menu_model_.AddItemWithStringId(IDC_SHARING_HUB_SCREENSHOT,
-@@ -1676,8 +1688,10 @@ std::u16string RenderViewContextMenu::Ge
- }
- 
- void RenderViewContextMenu::RecordUsedItem(int id) {
--  // Neo's local capture action has no entry in Chromium's metrics enum.
--  if (id == IDC_SHARING_HUB_SCREENSHOT) {
-+  // Neo's own actions have no entry in Chromium's metrics enum.
-+  if (id == IDC_SHARING_HUB_SCREENSHOT ||
-+      id == IDC_CONTENT_CONTEXT_FIND_IMAGE_IN_TABS ||
-+      id == IDC_CONTENT_CONTEXT_FIND_IMAGE_ON_PAGE) {
-     return;
-   }
-   // Log general ID.
-@@ -1796,7 +1810,9 @@ void RenderViewContextMenu::RecordUsedIt
- }
- 
- void RenderViewContextMenu::RecordShownItem(int id, bool is_submenu) {
--  if (id == IDC_SHARING_HUB_SCREENSHOT) {
-+  if (id == IDC_SHARING_HUB_SCREENSHOT ||
-+      id == IDC_CONTENT_CONTEXT_FIND_IMAGE_IN_TABS ||
-+      id == IDC_CONTENT_CONTEXT_FIND_IMAGE_ON_PAGE) {
-     return;
-   }
-   // The "RenderViewContextMenu.Shown" histogram is not recorded for submenus.
-@@ -2350,6 +2366,10 @@ void RenderViewContextMenu::AppendImageI
-                                   IDS_CONTENT_CONTEXT_COPYIMAGE);
-   menu_model_.AddItemWithStringId(IDC_CONTENT_CONTEXT_COPYIMAGELOCATION,
-                                   IDS_CONTENT_CONTEXT_COPYIMAGELOCATION);
-+  if (params_.has_image_contents) {
-+    menu_model_.AddItemWithStringId(IDC_CONTENT_CONTEXT_FIND_IMAGE_IN_TABS,
-+                                    IDS_NEO_IMAGE_MATCH_FIND_IN_TABS);
-+  }
- 
-   // Don't double-add for linked images, which also add the item.
-   if (params_.link_url.is_empty()) {
-@@ -3480,6 +3500,12 @@ bool RenderViewContextMenu::IsCommandIdE
-       enterprise_isolated_mode::IsolatedModeReplacesIncognito(GetProfile());
- 
-   switch (id) {
-+    case IDC_CONTENT_CONTEXT_FIND_IMAGE_IN_TABS:
-+      return params_.has_image_contents && GetRenderFrameHost();
-+
-+    case IDC_CONTENT_CONTEXT_FIND_IMAGE_ON_PAGE:
-+      return tabs::HasChosenImage(browser_context_);
-+
-     case IDC_SHARING_HUB_SCREENSHOT:
-       return GetBrowser() &&
-              embedder_web_contents_->GetLastCommittedURL()
-@@ -4101,6 +4127,16 @@ void RenderViewContextMenu::ExecuteComma
-       chrome::GoForward(embedder_web_contents_);
-       break;
- 
-+    case IDC_CONTENT_CONTEXT_FIND_IMAGE_IN_TABS:
-+      if (content::RenderFrameHost* frame = GetRenderFrameHost()) {
-+        tabs::FindContextImageInOtherTabs(frame);
-+      }
-+      break;
-+
-+    case IDC_CONTENT_CONTEXT_FIND_IMAGE_ON_PAGE:
-+      tabs::FindChosenImageOnPage(embedder_web_contents_);
-+      break;
-+
-     case IDC_SHARING_HUB_SCREENSHOT:
-       if (IsCommandIdEnabled(id)) {
-         sharing_hub::ScreenshotCapturedBubbleController::Get(
 --- a/chrome/browser/ui/tabs/BUILD.gn
 +++ b/chrome/browser/ui/tabs/BUILD.gn
 @@ -102,6 +102,24 @@
@@ -357,7 +218,7 @@
  #include "ui/views/controls/separator.h"
  #include "ui/views/layout/box_layout.h"
  #include "ui/views/layout/box_layout_view.h"
-@@ -74,6 +95,27 @@ void SetCommonButtonAttributes(views::Im
+@@ -74,6 +95,26 @@
  constexpr int kBasePadding = 4;
  constexpr int kHorizontalGap = 6;
  
@@ -371,7 +232,6 @@
 +enum ImageMenuCommand {
 +  kPasteImage = 1,
 +  kChooseImageFile,
-+  kUseChosenImage,
 +};
 +
 +std::vector<uint8_t> ReadImageFile(const base::FilePath& path) {
@@ -385,7 +245,7 @@
  }  // namespace
  
  DEFINE_CLASS_ELEMENT_IDENTIFIER_VALUE(FindBarView, kElementId);
-@@ -204,6 +246,12 @@ FindBarView::FindBarView(FindBarHost* ho
+@@ -204,6 +245,12 @@
            .SetInsideBorderInsets(
                gfx::Insets::VH(0, kBasePadding * 2))
            .AddChildren(
@@ -398,7 +258,7 @@
                views::Builder<views::Textfield>()
                    .CopyAddressTo(&find_text_)
                    .SetAccessibleName(
-@@ -235,6 +283,15 @@ FindBarView::FindBarView(FindBarHost* ho
+@@ -235,6 +282,15 @@
                        gfx::Insets(horizontal_margin +
                                    chrome_refresh_separator_vertical_margin)),
                views::Builder<views::ImageButton>()
@@ -414,7 +274,7 @@
                    .CopyAddressTo(&find_previous_button_)
                    .SetAccessibleName(
                        l10n_util::GetStringUTF16(IDS_ACCNAME_PREVIOUS))
-@@ -314,6 +371,14 @@ FindBarView::FindBarView(FindBarHost* ho
+@@ -314,6 +370,14 @@
            kColorFindBarButtonIconHovered));
  
    views::SetImageFromVectorIconWithColor(
@@ -429,7 +289,7 @@
        close_button_,
        features::IsRoundedIconsEnabled() ? kCloseSmallIcon
                                          : kCloseChromeRefreshOldIcon,
-@@ -356,9 +421,14 @@ FindBarView::FindBarView(FindBarHost* ho
+@@ -356,9 +420,14 @@
    SetCommonButtonAttributes(find_previous_button_);
    SetCommonButtonAttributes(find_next_button_);
    SetCommonButtonAttributes(close_button_);
@@ -445,7 +305,7 @@
  
  void FindBarView::SetHost(FindBarHost* host) {
    find_bar_host_ = host;
-@@ -369,6 +439,8 @@ void FindBarView::SetHost(FindBarHost* h
+@@ -369,6 +438,8 @@
  void FindBarView::SetFindTextAndSelectedRange(
      const std::u16string& find_text,
      const gfx::Range& selected_range) {
@@ -454,7 +314,7 @@
    find_text_->SetText(find_text);
    find_text_->SetSelectedRange(selected_range);
    last_searched_text_ = find_text;
-@@ -393,6 +465,9 @@ std::u16string_view FindBarView::GetMatc
+@@ -393,6 +464,9 @@
  void FindBarView::UpdateForResult(
      const find_in_page::FindNotificationDetails& result,
      const std::u16string& find_text) {
@@ -464,7 +324,7 @@
    bool have_valid_range =
        result.number_of_matches() != -1 && result.active_match_ordinal() != -1;
  
-@@ -438,7 +513,8 @@ void FindBarView::ClearMatchCount() {
+@@ -438,7 +512,8 @@
  
  bool FindBarView::ContainsFocus() const {
    return find_text_->HasFocus() || find_previous_button_->HasFocus() ||
@@ -474,7 +334,7 @@
  }
  
  ///////////////////////////////////////////////////////////////////////////////
-@@ -476,6 +552,26 @@ gfx::Size FindBarView::CalculatePreferre
+@@ -476,6 +551,26 @@
    return size;
  }
  
@@ -501,7 +361,7 @@
  ////////////////////////////////////////////////////////////////////////////////
  // FindBarView, DropdownBarHostDelegate implementation:
  
-@@ -503,6 +599,12 @@ bool FindBarView::HandleKeyEvent(views::
+@@ -503,6 +598,12 @@
      return true;  // Handled, we are done!
    }
  
@@ -514,7 +374,7 @@
    if (key_event.key_code() == ui::VKEY_RETURN &&
        key_event.type() == ui::EventType::kKeyPressed) {
      // Pressing Return/Enter starts the search (unless text box is empty).
-@@ -541,6 +643,9 @@ bool FindBarView::HandleMouseEvent(views
+@@ -541,6 +642,9 @@
  void FindBarView::OnAfterUserAction(views::Textfield* sender) {
    // The composition text wouldn't be what the user is really looking for.
    // We delay the search until the user commits the composition text.
@@ -524,7 +384,7 @@
    if (!sender->IsIMEComposing() && sender->GetText() != last_searched_text_) {
      Find(sender->GetText());
    }
-@@ -566,9 +671,39 @@ bool FindBarView::OnBeforeCutOrCopy(view
+@@ -566,9 +670,39 @@
  void FindBarView::OnBeforePaste(
      views::Textfield* sender,
      base::OnceCallback<void(std::optional<std::u16string>)> callback) {
@@ -567,7 +427,7 @@
  }
  
  std::unique_ptr<ui::ScopedClipboardWriter>
-@@ -621,6 +756,10 @@ void FindBarView::FindNext(bool reverse)
+@@ -621,6 +755,10 @@
    if (!find_bar_host_) {
      return;
    }
@@ -578,7 +438,7 @@
    if (!find_text_->GetText().empty()) {
      find_in_page::FindTabHelper* find_tab_helper =
          find_in_page::FindTabHelper::FromWebContents(
-@@ -641,10 +780,282 @@ void FindBarView::EndFindSession() {
+@@ -641,10 +779,267 @@
  }
  
  void FindBarView::UpdateMatchCountAppearance(bool no_match) {
@@ -602,11 +462,6 @@
 +                                         IDS_NEO_IMAGE_MATCH_PASTE);
 +  image_menu_model_->AddItemWithStringId(kChooseImageFile,
 +                                         IDS_NEO_IMAGE_MATCH_CHOOSE_FILE);
-+  if (content::WebContents* contents = GetWebContents();
-+      contents && tabs::HasChosenImage(contents->GetBrowserContext())) {
-+    image_menu_model_->AddItemWithStringId(kUseChosenImage,
-+                                           IDS_NEO_IMAGE_MATCH_USE_CHOSEN);
-+  }
 +  image_menu_runner_ = std::make_unique<views::MenuRunner>(
 +      image_menu_model_.get(), views::MenuRunner::HAS_MNEMONICS);
 +  image_menu_runner_->RunMenuAt(
@@ -645,16 +500,6 @@
 +          contents->GetTopLevelNativeWindow());
 +      break;
 +    }
-+    case kUseChosenImage:
-+      StartImageSearch();
-+      image_preview_->SetImage(ui::ImageModel::FromVectorIcon(
-+          kImageIcon, kColorFindBarButtonIcon, kImagePreviewSize));
-+      image_preview_->SetVisible(true);
-+      tabs::FindChosenImageOnPage(
-+          contents, base::BindOnce(&FindBarView::OnImageSearchDone,
-+                                   weak_factory_.GetWeakPtr(),
-+                                   image_search_generation_));
-+      break;
 +  }
 +}
 +
@@ -1012,7 +857,7 @@
      "media/cdm_registration.cc",
 --- a/chrome/common/chrome_render_frame.mojom
 +++ b/chrome/common/chrome_render_frame.mojom
-@@ -27,6 +27,19 @@ enum ImageFormat {
+@@ -27,6 +27,19 @@
  };
  
  // Messages sent from chrome to the render frame.
@@ -1032,14 +877,10 @@
  interface ChromeRenderFrame {
    // Updates the window features of the main frame's render view.
    SetWindowFeatures(blink.mojom.WindowFeatures window_features);
-@@ -58,6 +71,16 @@ interface ChromeRenderFrame {
+@@ -58,6 +71,12 @@
    // image.
    RequestBoundsHintForAllImages() => (array<gfx.mojom.Rect> all_bounds);
  
-+  // Helium Neo: thumbnails the image selected by the most recently opened
-+  // context menu. Null when there is no image or it is too small.
-+  RequestImageThumbnailForContextNode() => (ImageThumbnail? thumbnail);
-+
 +  // Helium Neo: thumbnails every decoded <img> in the document.
 +  // |unloaded_count| counts images that have no decoded pixels yet, such as
 +  // lazy-loaded images that have not been scrolled into view.
@@ -1075,7 +916,7 @@
  #include "third_party/blink/public/web/web_frame_content_dumper.h"
  #include "third_party/blink/public/web/web_local_frame.h"
  #include "third_party/blink/public/web/web_local_frame_client.h"
-@@ -617,6 +620,63 @@ void ChromeRenderFrameObserver::RequestB
+@@ -617,6 +620,52 @@
    std::move(callback).Run(all_bounds);
  }
  
@@ -1095,17 +936,6 @@
 +}
 +
 +}  // namespace
-+
-+void ChromeRenderFrameObserver::RequestImageThumbnailForContextNode(
-+    RequestImageThumbnailForContextNodeCallback callback) {
-+  WebNode context_node = render_frame()->GetWebFrame()->ContextMenuImageNode();
-+  if (context_node.IsNull() || !context_node.IsElementNode()) {
-+    std::move(callback).Run(nullptr);
-+    return;
-+  }
-+  std::move(callback).Run(
-+      ThumbnailImage(context_node.To<WebElement>().ImageContents(), 0));
-+}
 +
 +void ChromeRenderFrameObserver::RequestImageThumbnails(
 +    RequestImageThumbnailsCallback callback) {
@@ -1141,12 +971,10 @@
  void ChromeRenderFrameObserver::FindImageElements(
 --- a/chrome/renderer/chrome_render_frame_observer.h
 +++ b/chrome/renderer/chrome_render_frame_observer.h
-@@ -124,6 +124,9 @@ class ChromeRenderFrameObserver : public
+@@ -124,6 +124,7 @@
        RequestBitmapForContextNodeWithBoundsHintCallback callback) override;
    void RequestBoundsHintForAllImages(
        RequestBoundsHintForAllImagesCallback callback) override;
-+  void RequestImageThumbnailForContextNode(
-+      RequestImageThumbnailForContextNodeCallback callback) override;
 +  void RequestImageThumbnails(RequestImageThumbnailsCallback callback) override;
    void FindImageElements(blink::WebElement element,
                           std::vector<blink::WebElement>& images);
@@ -1612,7 +1440,7 @@
 +#endif  // CHROME_BROWSER_UI_TABS_IMAGE_MATCH_COMPARE_H_
 --- /dev/null
 +++ b/chrome/browser/ui/tabs/image_match_finder.cc
-@@ -0,0 +1,500 @@
+@@ -0,0 +1,365 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -1632,21 +1460,17 @@
 +#include "base/memory/weak_ptr.h"
 +#include "base/strings/string_number_conversions.h"
 +#include "base/strings/utf_string_conversions.h"
-+#include "base/supports_user_data.h"
 +#include "base/task/sequenced_task_runner.h"
 +#include "base/task/thread_pool.h"
 +#include "base/time/time.h"
 +#include "base/timer/timer.h"
 +#include "base/values.h"
-+#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 +#include "chrome/browser/ui/tabs/image_match_compare.h"
 +#include "chrome/browser/ui/tabs/image_match_script.h"
-+#include "chrome/browser/ui/tabs/tab_strip_model.h"
 +#include "chrome/common/chrome_isolated_world_ids.h"
 +#include "chrome/common/chrome_render_frame.mojom.h"
 +#include "chrome/common/image_match_thumbnail.h"
 +#include "chrome/grit/generated_resources.h"
-+#include "components/tabs/public/tab_interface.h"
 +#include "content/public/browser/browser_context.h"
 +#include "content/public/browser/render_frame_host.h"
 +#include "content/public/browser/web_contents.h"
@@ -1664,17 +1488,8 @@
 +constexpr int kMaxLoadedImages = 300;
 +constexpr base::TimeDelta kLoadWait = base::Seconds(3);
 +constexpr base::TimeDelta kLoadPollInterval = base::Milliseconds(200);
-+// Frozen background tabs may never answer.
++// A frozen page may never answer.
 +constexpr base::TimeDelta kScanTimeout = kLoadWait + base::Seconds(4);
-+
-+constexpr char kChosenImageKey[] = "helium_neo_image_match_query";
-+
-+// Kept on the profile, so a picture chosen in an incognito window is never
-+// searched for in a regular one.
-+struct ChosenImage : public base::SupportsUserData::Data {
-+  explicit ChosenImage(GrayImage value) : thumbnail(std::move(value)) {}
-+  GrayImage thumbnail;
-+};
 +
 +struct Match {
 +  uint32_t index = 0;
@@ -1945,82 +1760,6 @@
 +  base::WeakPtrFactory<Scan> weak_factory_{this};
 +};
 +
-+void ShowBestTab(base::WeakPtr<content::WebContents> source,
-+                 std::vector<PageResult> results) {
-+  const PageResult* best = nullptr;
-+  for (const PageResult& result : results) {
-+    if (result.contents && !result.matches.empty() &&
-+        (!best || result.matches[0].score > best->matches[0].score)) {
-+      best = &result;
-+    }
-+  }
-+  if (!best) {
-+    const bool some_unloaded = std::any_of(
-+        results.begin(), results.end(),
-+        [](const PageResult& result) { return result.unloaded_count > 0; });
-+    if (source) {
-+      ShowOnPage(source.get(), {},
-+                 Text(results.empty() ? IDS_NEO_IMAGE_MATCH_NO_TABS
-+                                      : IDS_NEO_IMAGE_MATCH_NONE_IN_TABS),
-+                 some_unloaded);
-+    }
-+    return;
-+  }
-+  content::WebContents* target = best->contents.get();
-+  if (TabInterface* tab = TabInterface::MaybeGetFromContents(target)) {
-+    if (auto* window = tab->GetBrowserWindowInterface()) {
-+      TabStripModel* tab_strip = window->GetTabStripModel();
-+      const int index = tab_strip->GetIndexOfWebContents(target);
-+      if (index != TabStripModel::kNoTab) {
-+        tab_strip->ActivateTabAt(index);
-+      }
-+    }
-+  }
-+  ShowOnPage(target, best->matches, std::string(), best->unloaded_count > 0);
-+}
-+
-+void ShowOnScannedPage(std::vector<PageResult> results) {
-+  if (results.empty() || !results[0].contents) {
-+    return;
-+  }
-+  const PageResult& result = results[0];
-+  ShowOnPage(result.contents.get(), result.matches,
-+             result.matches.empty() ? Text(IDS_NEO_IMAGE_MATCH_NONE_ON_PAGE)
-+                                    : std::string(),
-+             result.unloaded_count > 0);
-+}
-+
-+void OnContextThumbnail(
-+    mojo::AssociatedRemote<chrome::mojom::ChromeRenderFrame> remote,
-+    base::WeakPtr<content::WebContents> source,
-+    chrome::mojom::ImageThumbnailPtr thumbnail) {
-+  if (!source) {
-+    return;
-+  }
-+  GrayImage query = thumbnail ? ToGrayImage(*thumbnail) : GrayImage();
-+  auto matcher = std::make_shared<const ImageMatcher>(query);
-+  if (!matcher->usable()) {
-+    ShowOnPage(source.get(), {}, Text(IDS_NEO_IMAGE_MATCH_TOO_PLAIN), false);
-+    return;
-+  }
-+  source->GetBrowserContext()->SetUserData(
-+      kChosenImageKey, std::make_unique<ChosenImage>(std::move(query)));
-+  std::vector<content::WebContents*> pages;
-+  TabInterface* tab = TabInterface::MaybeGetFromContents(source.get());
-+  BrowserWindowInterface* window =
-+      tab ? tab->GetBrowserWindowInterface() : nullptr;
-+  if (TabStripModel* tab_strip = window ? window->GetTabStripModel() : nullptr) {
-+    for (int i = 0; i < tab_strip->count(); ++i) {
-+      content::WebContents* contents = tab_strip->GetWebContentsAt(i);
-+      if (contents != source.get() && CanScan(contents)) {
-+        pages.push_back(contents);
-+      }
-+    }
-+  }
-+  Scan::Start(std::move(matcher), pages,
-+              base::BindOnce(&ShowBestTab, source));
-+}
-+
 +void ShowInFindBar(ImageSearchDone done, std::vector<PageResult> results) {
 +  if (results.empty() || !results[0].contents) {
 +    std::move(done).Run(0, true);
@@ -2047,38 +1786,6 @@
 +
 +}  // namespace
 +
-+void FindContextImageInOtherTabs(content::RenderFrameHost* frame) {
-+  content::WebContents* source =
-+      content::WebContents::FromRenderFrameHost(frame);
-+  if (!source) {
-+    return;
-+  }
-+  mojo::AssociatedRemote<chrome::mojom::ChromeRenderFrame> remote;
-+  frame->GetRemoteAssociatedInterfaces()->GetInterface(&remote);
-+  auto* proxy = remote.get();
-+  // The remote rides along in the callback so it stays open for the reply.
-+  proxy->RequestImageThumbnailForContextNode(
-+      base::BindOnce(&OnContextThumbnail, std::move(remote),
-+                     source->GetWeakPtr()));
-+}
-+
-+bool HasChosenImage(content::BrowserContext* context) {
-+  return context && context->GetUserData(kChosenImageKey);
-+}
-+
-+void FindChosenImageOnPage(content::WebContents* contents) {
-+  if (!CanScan(contents)) {
-+    return;
-+  }
-+  const auto* chosen = static_cast<ChosenImage*>(
-+      contents->GetBrowserContext()->GetUserData(kChosenImageKey));
-+  if (!chosen) {
-+    return;
-+  }
-+  Scan::Start(std::make_shared<const ImageMatcher>(chosen->thumbnail),
-+              {contents}, base::BindOnce(&ShowOnScannedPage));
-+}
-+
 +void FindImageOnPage(content::WebContents* contents,
 +                     const SkBitmap& image,
 +                     ImageSearchDone done) {
@@ -2087,20 +1794,6 @@
 +                   {thumbnail.width, thumbnail.height,
 +                    std::move(thumbnail.luma)},
 +                   std::move(done));
-+}
-+
-+void FindChosenImageOnPage(content::WebContents* contents,
-+                           ImageSearchDone done) {
-+  const auto* chosen =
-+      contents ? static_cast<ChosenImage*>(
-+                     contents->GetBrowserContext()->GetUserData(
-+                         kChosenImageKey))
-+               : nullptr;
-+  if (!chosen) {
-+    std::move(done).Run(0, false);
-+    return;
-+  }
-+  SearchForFindBar(contents, chosen->thumbnail, std::move(done));
 +}
 +
 +void SelectImageMatch(content::WebContents* contents, int index) {
@@ -2115,7 +1808,7 @@
 +}  // namespace tabs
 --- /dev/null
 +++ b/chrome/browser/ui/tabs/image_match_finder.h
-@@ -0,0 +1,54 @@
+@@ -0,0 +1,39 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -2138,16 +1831,6 @@
 +// the decoded images; the browser compares them, and nothing leaves the
 +// machine.
 +
-+// Remembers the image under the context menu in |frame| and looks for it in
-+// the other tabs of its window, switching to the tab with the best match.
-+void FindContextImageInOtherTabs(content::RenderFrameHost* frame);
-+
-+// Whether an image was chosen earlier in this profile.
-+bool HasChosenImage(content::BrowserContext* context);
-+
-+// Looks for the chosen image in |contents| and outlines the matches.
-+void FindChosenImageOnPage(content::WebContents* contents);
-+
 +// For the find bar. |count| matches are outlined, the first one selected;
 +// |usable| is false when the image was too small or plain to search for.
 +using ImageSearchDone = base::OnceCallback<void(int count, bool usable)>;
@@ -2156,11 +1839,6 @@
 +void FindImageOnPage(content::WebContents* contents,
 +                     const SkBitmap& image,
 +                     ImageSearchDone done);
-+
-+// Same, for the image chosen from a context menu. |done| gets usable=false
-+// when there is none.
-+void FindChosenImageOnPage(content::WebContents* contents,
-+                           ImageSearchDone done);
 +
 +// Scrolls to match |index| of the last find bar search and highlights it.
 +void SelectImageMatch(content::WebContents* contents, int index);
@@ -2172,7 +1850,7 @@
 +#endif  // CHROME_BROWSER_UI_TABS_IMAGE_MATCH_FINDER_H_
 --- /dev/null
 +++ b/chrome/browser/ui/tabs/image_match_script.h
-@@ -0,0 +1,215 @@
+@@ -0,0 +1,216 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -2240,7 +1918,8 @@
 +  if (hint) text.append(note);
 +  const button = (label, onClick) => {
 +    const node = element('button', '', label);
-+    node.addEventListener('click', onClick);
++    // Only the user's own input; the page can dispatch synthetic events.
++    node.addEventListener('click', event => { if (event.isTrusted) onClick(); });
 +    return node;
 +  };
 +  let current = 0;
@@ -2282,7 +1961,7 @@
 +    boxes[i].classList.toggle('below', rect.top < 40);
 +  });
 +  const onKey = event => {
-+    if (controls && event.key === 'Escape') { close(); event.stopPropagation(); event.preventDefault(); }
++    if (event.isTrusted && controls && event.key === 'Escape') { close(); event.stopPropagation(); event.preventDefault(); }
 +  };
 +  const close = () => {
 +    clearTimeout(spotlight);

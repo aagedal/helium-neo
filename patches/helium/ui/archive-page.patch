@@ -19,12 +19,12 @@
 +
 +namespace helium {
 +
-+// Saves the active tab into the archive folder without prompting. Web pages
-+// become a single MHTML file, or a PDF when the "save as PDF" pref is on; other
-+// documents (PDFs, images, text) keep their original bytes unless printed to
-+// PDF. Web pages are first scrolled through, up to a limit, so that content
-+// loaded on scroll is included. Progress and the result show in the downloads
-+// bubble.
++// Saves the active tab into the archive folder as a PDF without prompting.
++// Pages, images and text are printed to PDF with their title, address and
++// date; a PDF document is saved as it is. Pages are first scrolled through, up
++// to a limit, so that content loaded on scroll is included, and bars that stay
++// on screen while scrolling print once instead of on every page. Progress and
++// the result show in the downloads bubble.
 +void ArchivePage(BrowserWindowInterface* browser);
 +
 +// Returns a file name like "2026-11-04 21.30.05 Title (example.com)" with
@@ -39,7 +39,7 @@
 +#endif  // CHROME_BROWSER_UI_VIEWS_HELIUM_PAGE_ARCHIVE_H_
 --- /dev/null
 +++ b/chrome/browser/ui/views/helium/page_archive.cc
-@@ -0,0 +1,488 @@
+@@ -0,0 +1,545 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -54,6 +54,7 @@
 +#include "base/containers/span.h"
 +#include "base/files/file_util.h"
 +#include "base/functional/bind.h"
++#include "base/functional/callback_helpers.h"
 +#include "base/i18n/file_util_icu.h"
 +#include "base/logging.h"
 +#include "base/memory/ref_counted_memory.h"
@@ -80,7 +81,6 @@
 +#include "content/public/browser/navigation_entry.h"
 +#include "content/public/browser/render_frame_host.h"
 +#include "content/public/browser/web_contents.h"
-+#include "net/base/mime_util.h"
 +#include "net/traffic_annotation/network_traffic_annotation.h"
 +#include "printing/buildflags/buildflags.h"
 +#include "services/network/public/cpp/wrapper_shared_url_loader_factory.h"
@@ -111,6 +111,7 @@
 +namespace {
 +
 +constexpr size_t kMaxTitleBytes = 120;
++constexpr size_t kMaxHostBytes = 48;
 +constexpr double kMicronsPerInch = 25400.0;
 +constexpr double kPdfMarginInches = 0.4;
 +
@@ -143,51 +144,86 @@
 +    uR"(Array.from(document.images).filter(
 +        image => !image.complete && image.loading !== 'lazy').length)";
 +
-+enum class Format {
-+  // A single-file web archive of the rendered page.
-+  kMhtml,
-+  // The page printed to PDF.
-+  kPdf,
-+  // The document's own bytes, fetched again from its URL.
-+  kOriginal,
-+};
++// Prepares the print layout so bars that stay on screen while scrolling, such
++// as site headers, print once instead of covering content on every page. Only
++// printing changes: elements are marked and a print-only style sheet is
++// adopted. Small fixed bars near the top print once at the top of the first
++// page; lower ones, such as cookie notices, are left out. Sticky elements print
++// in place. Large fixed elements, such as app layouts and dialogs, are kept.
++constexpr char16_t kUnfixScript[] = uR"((() => {
++  const attribute = 'data-helium-archive';
++  for (const element of document.querySelectorAll('body *')) {
++    const position = getComputedStyle(element).position;
++    if (position === 'sticky') {
++      element.setAttribute(attribute, 'static');
++    } else if (position === 'fixed') {
++      const rect = element.getBoundingClientRect();
++      if (rect.width && rect.height && rect.height <= innerHeight * 0.4) {
++        element.setAttribute(attribute,
++                             rect.top < innerHeight / 2 ? 'top' : 'hide');
++      }
++    }
++  }
++  // Constructed style sheets are not blocked by the page's CSP.
++  const sheet = new CSSStyleSheet({media: 'print'});
++  sheet.replaceSync(`[${attribute}=static]{position:static!important}` +
++                    `[${attribute}=top]{position:absolute!important}` +
++                    `[${attribute}=hide]{display:none!important}`);
++  document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
++  globalThis.heliumArchiveSheet = sheet;
++  return true;
++})())";
++// Undoes kUnfixScript once the PDF is printed.
++constexpr char16_t kRefixScript[] = uR"((() => {
++  const sheet = globalThis.heliumArchiveSheet;
++  delete globalThis.heliumArchiveSheet;
++  if (sheet) {
++    document.adoptedStyleSheets =
++        document.adoptedStyleSheets.filter(other => other !== sheet);
++  }
++  for (const element of document.querySelectorAll('[data-helium-archive]')) {
++    element.removeAttribute('data-helium-archive');
++  }
++  return true;
++})())";
 +
-+std::string ExtensionFor(Format format,
-+                         const GURL& url,
-+                         const std::string& mime_type) {
-+  switch (format) {
-+    case Format::kMhtml:
-+      return "mhtml";
-+    case Format::kPdf:
-+      return "pdf";
-+    case Format::kOriginal:
-+      break;
++// The page being archived. Saving stops if the tab moves to another page, or
++// another history entry, before the archive is made, so that the file never
++// holds a different page than its name and header say.
++struct ArchiveTarget {
++  base::WeakPtr<content::WebContents> web_contents;
++  GURL url;
++  int entry_id = 0;
++  base::FilePath path;
++
++  content::WebContents* Get() const {
++    if (!web_contents || path.empty()) {
++      return nullptr;
++    }
++    content::NavigationEntry* entry =
++        web_contents->GetController().GetLastCommittedEntry();
++    if (!entry || entry->GetUniqueID() != entry_id ||
++        web_contents->GetLastCommittedURL() != url) {
++      LOG(WARNING) << "The page changed before it could be archived";
++      return nullptr;
++    }
++    return web_contents.get();
 +  }
-+  base::FilePath::StringType extension;
-+  if (net::GetPreferredExtensionForMimeType(mime_type, &extension)) {
-+    return base::FilePath(extension).AsUTF8Unsafe();
-+  }
-+  extension = base::FilePath::FromUTF8Unsafe(url.ExtractFileName()).Extension();
-+  if (!extension.empty()) {
-+    return base::FilePath(extension).AsUTF8Unsafe().substr(1);
-+  }
-+  return "bin";
-+}
++};
 +
 +// Runs on a blocking thread. Creates the archive folder and returns a path in
 +// it that does not exist yet, or an empty path on failure.
 +base::FilePath PrepareArchivePath(const base::FilePath& directory,
-+                                  Format format,
 +                                  const std::u16string& title,
 +                                  const GURL& url,
-+                                  const std::string& mime_type,
 +                                  base::Time time) {
 +  if (!base::CreateDirectory(directory)) {
 +    LOG(WARNING) << "Could not create archive folder " << directory;
 +    return base::FilePath();
 +  }
-+  return base::GetUniquePath(directory.Append(
-+      ArchiveFileName(title, url, time, ExtensionFor(format, url, mime_type))));
++  // Archives are always PDF files, whatever the server says the document is.
++  return base::GetUniquePath(
++      directory.Append(ArchiveFileName(title, url, time, "pdf")));
 +}
 +
 +// Downloads `url` to `path` without prompting, so the result shows in the
@@ -201,9 +237,9 @@
 +      net::DefineNetworkTrafficAnnotation("helium_page_archive", R"(
 +      semantics {
 +        sender: "Helium page archive"
-+        description: "Saves the document shown in the current tab, such as a "
-+                     "PDF or image, or a PDF printed from the current page, "
-+                     "into the user's archive folder."
++        description: "Saves the PDF document shown in the current tab, or a "
++                     "PDF printed from the current page, into the user's "
++                     "archive folder."
 +        trigger: "User chooses Archive page."
 +        data: "The URL of the current tab, with its cookies."
 +        destination: WEBSITE
@@ -251,8 +287,13 @@
 +void PdfPrinted(base::WeakPtr<content::WebContents> web_contents,
 +                const GURL& page_url,
 +                const base::FilePath& path,
++                bool restore_layout,
 +                print_to_pdf::PdfPrintResult result,
 +                scoped_refptr<base::RefCountedMemory> bytes) {
++  if (web_contents && restore_layout) {
++    web_contents->GetPrimaryMainFrame()->ExecuteJavaScriptInIsolatedWorld(
++        kRefixScript, base::NullCallback(), ISOLATED_WORLD_ID_CHROME_INTERNAL);
++  }
 +  if (!web_contents || result != print_to_pdf::PdfPrintResult::kPrintSuccess ||
 +      !bytes) {
 +    LOG(WARNING) << "Could not print page to PDF for the archive";
@@ -281,9 +322,11 @@
 +}
 +
 +// Prints the page to PDF. Returns false if printing is unavailable.
++// `restore_layout` undoes kUnfixScript afterwards.
 +bool PrintToPdf(content::WebContents* web_contents,
 +                const GURL& url,
-+                const base::FilePath& path) {
++                const base::FilePath& path,
++                bool restore_layout) {
 +#if BUILDFLAG(ENABLE_PRINT_PREVIEW)
 +  auto* manager = printing::PrintViewManager::FromWebContents(web_contents);
 +#else
@@ -310,7 +353,8 @@
 +  manager->PrintToPdf(
 +      web_contents->GetPrimaryMainFrame(), "",
 +      std::move(std::get<printing::mojom::PrintPagesParamsPtr>(params)),
-+      base::BindOnce(&PdfPrinted, web_contents->GetWeakPtr(), url, path));
++      base::BindOnce(&PdfPrinted, web_contents->GetWeakPtr(), url, path,
++                     restore_layout));
 +  return true;
 +}
 +#endif  // BUILDFLAG(ENABLE_PRINTING)
@@ -405,46 +449,53 @@
 +  RunScrollScript(std::move(state), kStartScrollScript, &ScrollStarted);
 +}
 +
-+void SaveToPath(base::WeakPtr<content::WebContents> web_contents,
-+                Format format,
-+                const GURL& url,
-+                const base::FilePath& path) {
-+  if (!web_contents || path.empty()) {
++void Print(const ArchiveTarget& target, bool restore_layout) {
++  content::WebContents* web_contents = target.Get();
++  if (!web_contents) {
 +    return;
 +  }
-+  switch (format) {
-+    case Format::kMhtml:
-+      web_contents->SavePage(path, path.DirName(),
-+                             content::SAVE_PAGE_TYPE_AS_MHTML);
-+      return;
-+    case Format::kPdf:
 +#if BUILDFLAG(ENABLE_PRINTING)
-+      if (PrintToPdf(web_contents.get(), url, path)) {
-+        return;
-+      }
++  if (PrintToPdf(web_contents, target.url, target.path, restore_layout)) {
++    return;
++  }
 +#endif
-+      LOG(WARNING) << "Printing is unavailable; archiving as a web archive";
-+      web_contents->SavePage(path.ReplaceExtension(FILE_PATH_LITERAL("mhtml")),
-+                             path.DirName(), content::SAVE_PAGE_TYPE_AS_MHTML);
-+      return;
-+    case Format::kOriginal:
-+      DownloadToPath(web_contents.get(), url, path);
-+      return;
++  LOG(WARNING) << "Printing is unavailable; the page was not archived";
++  if (restore_layout) {
++    web_contents->GetPrimaryMainFrame()->ExecuteJavaScriptInIsolatedWorld(
++        kRefixScript, base::NullCallback(), ISOLATED_WORLD_ID_CHROME_INTERNAL);
 +  }
 +}
 +
-+// Rendered archives keep only what the page has loaded, so first load the
-+// content it loads on scroll.
-+void LoadAndSaveToPath(base::WeakPtr<content::WebContents> web_contents,
-+                       Format format,
-+                       const GURL& url,
-+                       const base::FilePath& path) {
-+  if (!web_contents || path.empty()) {
++void LayoutPrepared(const ArchiveTarget& target, base::Value result) {
++  Print(target, /*restore_layout=*/true);
++}
++
++void PrepareLayoutAndPrint(const ArchiveTarget& target) {
++  content::WebContents* web_contents = target.Get();
++  if (!web_contents) {
 +    return;
 +  }
-+  LoadScrollContent(web_contents.get(),
-+                    base::BindOnce(&SaveToPath, web_contents, format, url,
-+                                   path));
++  web_contents->GetPrimaryMainFrame()->ExecuteJavaScriptInIsolatedWorld(
++      kUnfixScript, base::BindOnce(&LayoutPrepared, target),
++      ISOLATED_WORLD_ID_CHROME_INTERNAL);
++}
++
++void PathReady(ArchiveTarget target, bool pdf_document, base::FilePath path) {
++  target.path = std::move(path);
++  content::WebContents* web_contents = target.Get();
++  if (!web_contents) {
++    return;
++  }
++  if (pdf_document) {
++    // The PDF viewer cannot be printed like a page; save the PDF itself. Its
++    // file is always named .pdf.
++    DownloadToPath(web_contents, target.url, target.path);
++    return;
++  }
++  // Rendered archives keep only what the page has loaded, so first load the
++  // content it loads on scroll.
++  LoadScrollContent(web_contents,
++                    base::BindOnce(&PrepareLayoutAndPrint, target));
 +}
 +
 +}  // namespace
@@ -456,6 +507,10 @@
 +  std::string host(url.host());
 +  if (base::StartsWith(host, "www.")) {
 +    host = host.substr(4);
++  }
++  // Keep long subdomains from pushing the name past file system limits.
++  if (host.size() > kMaxHostBytes) {
++    host.resize(kMaxHostBytes);
 +  }
 +  std::string name = base::UTF16ToUTF8(
 +      base::CollapseWhitespace(std::u16string(title), true));
@@ -500,17 +555,15 @@
 +  const std::string mime_type = web_contents->GetContentsMimeType();
 +  const bool web_page =
 +      mime_type == "text/html" || mime_type == "application/xhtml+xml";
-+  Format format = web_page ? Format::kMhtml : Format::kOriginal;
-+  if (mime_type != "application/pdf" &&
-+      profile->GetPrefs()->GetBoolean(prefs::kHeliumArchiveAsPdf)) {
-+    format = Format::kPdf;
-+  }
 +  const GURL url = web_contents->GetLastCommittedURL();
-+  // The entry's title is empty when the page has none, unlike
-+  // WebContents::GetTitle(), which falls back to the URL.
 +  content::NavigationEntry* entry =
 +      web_contents->GetController().GetLastCommittedEntry();
-+  std::u16string title = entry ? entry->GetTitle() : std::u16string();
++  if (!entry) {
++    return;
++  }
++  // The entry's title is empty when the page has none, unlike
++  // WebContents::GetTitle(), which falls back to the URL.
++  std::u16string title = entry->GetTitle();
 +  // Documents such as images and PDFs are titled after their file, e.g.
 +  // "photo.png (640×480)". Use the bare file name instead.
 +  const base::FilePath url_file =
@@ -519,12 +572,16 @@
 +      (title.empty() || base::StartsWith(title, url_file.AsUTF16Unsafe()))) {
 +    title = url_file.RemoveFinalExtension().AsUTF16Unsafe();
 +  }
++  ArchiveTarget target;
++  target.web_contents = web_contents->GetWeakPtr();
++  target.url = url;
++  target.entry_id = entry->GetUniqueID();
 +  base::ThreadPool::PostTaskAndReplyWithResult(
 +      FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
-+      base::BindOnce(&PrepareArchivePath, directory, format, title, url,
-+                     mime_type, base::Time::Now()),
-+      base::BindOnce(web_page ? &LoadAndSaveToPath : &SaveToPath,
-+                     web_contents->GetWeakPtr(), format, url));
++      base::BindOnce(&PrepareArchivePath, directory, title, url,
++                     base::Time::Now()),
++      base::BindOnce(&PathReady, std::move(target),
++                     /*pdf_document=*/mime_type == "application/pdf"));
 +}
 +
 +}  // namespace helium
@@ -551,7 +608,7 @@
        <message name="IDS_HELIUM_COMMAND_BAR_CMD_ZOOM_RESET" desc="Search overlay command that resets the zoom level.">Reset zoom</message>
 --- a/chrome/app/settings_strings.grdp
 +++ b/chrome/app/settings_strings.grdp
-@@ -1105,6 +1105,18 @@
+@@ -1105,6 +1105,12 @@
      <message name="IDS_SETTINGS_CHANGE_DOWNLOAD_LOCATION" desc="Text for the button which allows the user to change the default download directory.">
        Change
      </message>
@@ -561,25 +618,17 @@
 +    <message name="IDS_SETTINGS_ARCHIVE_LOCATION_DESCRIPTION" desc="Explains that Archive page saves the current tab into the archive folder without asking where to save it.">
 +      Archive page saves the current tab here without asking
 +    </message>
-+    <message name="IDS_SETTINGS_ARCHIVE_AS_PDF" desc="Label for the toggle that makes Archive page save pages as PDF files.">
-+      Save archives as PDF
-+    </message>
-+    <message name="IDS_SETTINGS_ARCHIVE_AS_PDF_DESCRIPTION" desc="Description for the toggle that makes Archive page save pages as PDF files instead of single-file web archives.">
-+      Prints pages to PDF with their title, address and date. When off, pages are saved as single-file web archives (.mhtml)
-+    </message>
      <message name="IDS_SETTINGS_PROMPT_FOR_DOWNLOAD" desc="Label for the checkbox which enables a prompt for the user to choose a download location for each download instead of using the default.">
        Ask where to save each file before downloading
      </message>
 --- a/chrome/browser/extensions/api/settings_private/prefs_util.cc
 +++ b/chrome/browser/extensions/api/settings_private/prefs_util.cc
-@@ -409,6 +409,10 @@ const PrefsUtil::TypedPrefMap& PrefsUtil
+@@ -409,6 +409,8 @@
        settings_api::PrefType::kList;
  
    // Downloads settings.
 +  (*s_allowlist)[::prefs::kHeliumArchiveDirectory] =
 +      settings_api::PrefType::kString;
-+  (*s_allowlist)[::prefs::kHeliumArchiveAsPdf] =
-+      settings_api::PrefType::kBoolean;
    (*s_allowlist)[::prefs::kDownloadDefaultDirectory] =
        settings_api::PrefType::kString;
    (*s_allowlist)[::prefs::kPromptForDownload] =
@@ -607,7 +656,7 @@
    }
 --- a/chrome/browser/resources/settings/downloads_page/downloads_page.html.ts
 +++ b/chrome/browser/resources/settings/downloads_page/downloads_page.html.ts
-@@ -33,6 +33,31 @@ export function getHtml(this: SettingsDo
+@@ -33,6 +33,25 @@
          end-justified>
      </controlled-button>
    </div>
@@ -630,12 +679,6 @@
 +        end-justified>
 +    </controlled-button>
 +  </div>
-+  <settings-toggle-button
-+      class="hr"
-+      pref-key="helium.archive.as_pdf"
-+      label="$i18n{archiveAsPdf}"
-+      sub-label="$i18n{archiveAsPdfDescription}">
-+  </settings-toggle-button>
    <settings-toggle-button
        class="hr"
        pref-key="download.prompt_for_download"
@@ -748,7 +791,7 @@
  #include "chrome/common/pref_names.h"
  #include "components/helium_services/pref_names.h"
  #include "components/policy/core/common/policy_pref_names.h"
-@@ -143,6 +146,14 @@ void RegisterBrowserUserPrefs(user_prefs
+@@ -143,6 +146,13 @@
  
    registry->RegisterBooleanPref(prefs::kHeliumCommandBar, false);
  
@@ -758,7 +801,6 @@
 +      prefs::kHeliumArchiveDirectory,
 +      documents.empty() ? base::FilePath()
 +                        : documents.Append(FILE_PATH_LITERAL("Helium_Archive")));
-+  registry->RegisterBooleanPref(prefs::kHeliumArchiveAsPdf, false);
 +
    registry->RegisterBooleanPref(prefs::kHeliumShowProgressBar, true);
  
@@ -799,13 +841,13 @@
        !install_item.empty()) {
 --- a/chrome/browser/ui/views/helium/command_bar_commands.cc
 +++ b/chrome/browser/ui/views/helium/command_bar_commands.cc
-@@ -111,6 +111,10 @@ constexpr CommandBarCommand kCommands[]
+@@ -111,6 +111,10 @@
       .label_id = IDS_HELIUM_COMMAND_BAR_CMD_SAVE_PAGE,
       .keywords = "download html",
       .icon = &kFileSaveIcon},
 +    {.command_id = IDC_HELIUM_ARCHIVE_PAGE,
 +     .label_id = IDS_HELIUM_ARCHIVE_PAGE,
-+     .keywords = "save offline keep snapshot mhtml",
++     .keywords = "save offline keep snapshot pdf",
 +     .icon = &vector_icons::kFolderOpenIcon},
      {.command_id = IDC_ZOOM_PLUS,
       .label_id = IDS_HELIUM_COMMAND_BAR_CMD_ZOOM_IN,
@@ -904,30 +946,24 @@
  }  // namespace settings
 --- a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
 +++ b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
-@@ -885,6 +885,10 @@ void AddDownloadsStrings(content::WebUID
+@@ -885,6 +885,8 @@
        {"downloadsPageTitle", IDS_SETTINGS_DOWNLOADS},
        {"downloadLocation", IDS_SETTINGS_DOWNLOAD_LOCATION},
        {"changeDownloadLocation", IDS_SETTINGS_CHANGE_DOWNLOAD_LOCATION},
 +      {"archiveLocation", IDS_SETTINGS_ARCHIVE_LOCATION},
 +      {"archiveLocationDescription", IDS_SETTINGS_ARCHIVE_LOCATION_DESCRIPTION},
-+      {"archiveAsPdf", IDS_SETTINGS_ARCHIVE_AS_PDF},
-+      {"archiveAsPdfDescription", IDS_SETTINGS_ARCHIVE_AS_PDF_DESCRIPTION},
        {"promptForDownload", IDS_SETTINGS_PROMPT_FOR_DOWNLOAD},
        {"openFileTypesAutomatically",
         IDS_SETTINGS_OPEN_FILE_TYPES_AUTOMATICALLY},
 --- a/chrome/common/pref_names.h
 +++ b/chrome/common/pref_names.h
-@@ -658,6 +658,14 @@ inline constexpr char kHeliumMinimalLoca
+@@ -658,6 +658,10 @@
  // open the search overlay instead of the integrated address bar.
  inline constexpr char kHeliumCommandBar[] = "helium.browser.command_bar";
  
 +// A FilePath pref naming the folder that Archive page saves into without
 +// prompting.
 +inline constexpr char kHeliumArchiveDirectory[] = "helium.archive.directory";
-+
-+// A boolean pref set to true if Archive page should print pages to PDF instead
-+// of saving a web archive. PDF documents are always saved as they are.
-+inline constexpr char kHeliumArchiveAsPdf[] = "helium.archive.as_pdf";
 +
  // A boolean pref set to true if loading progress should be shown in the
  // location bar.
