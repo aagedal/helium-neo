@@ -1,6 +1,6 @@
 --- /dev/null
 +++ b/chrome/browser/ui/views/helium/page_archive.h
-@@ -0,0 +1,36 @@
+@@ -0,0 +1,39 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -23,8 +23,11 @@
 +// Pages, images and text are printed to PDF with their title, address and
 +// date; a PDF document is saved as it is. Pages are first scrolled through, up
 +// to a limit, so that content loaded on scroll is included, and bars that stay
-+// on screen while scrolling print once instead of on every page. Progress and
-+// the result show in the downloads bubble.
++// on screen while scrolling print once instead of on every page. Printed PDFs
++// carry the page's title, address and archive time in their document
++// properties, and on macOS the address is the file's "Where from". The address
++// leaves out its fragment and parameters that look like sign-in tokens.
++// Progress and the result show in the downloads bubble.
 +void ArchivePage(BrowserWindowInterface* browser);
 +
 +// Returns a file name like "2026-11-04 21.30.05 Title (example.com)" with
@@ -39,13 +42,14 @@
 +#endif  // CHROME_BROWSER_UI_VIEWS_HELIUM_PAGE_ARCHIVE_H_
 --- /dev/null
 +++ b/chrome/browser/ui/views/helium/page_archive.cc
-@@ -0,0 +1,545 @@
+@@ -0,0 +1,789 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
 +
 +#include "chrome/browser/ui/views/helium/page_archive.h"
 +
++#include <cstring>
 +#include <memory>
 +#include <optional>
 +#include <utility>
@@ -57,8 +61,10 @@
 +#include "base/functional/callback_helpers.h"
 +#include "base/i18n/file_util_icu.h"
 +#include "base/logging.h"
++#include "base/memory/raw_ptr.h"
 +#include "base/memory/ref_counted_memory.h"
 +#include "base/memory/weak_ptr.h"
++#include "base/strings/string_split.h"
 +#include "base/strings/string_util.h"
 +#include "base/strings/stringprintf.h"
 +#include "base/strings/utf_string_conversions.h"
@@ -72,6 +78,8 @@
 +#include "chrome/browser/ui/tabs/tab_strip_model.h"
 +#include "chrome/common/chrome_isolated_world_ids.h"
 +#include "chrome/common/pref_names.h"
++#include "components/download/public/common/download_item.h"
++#include "components/download/public/common/download_url_parameters.h"
 +#include "components/prefs/pref_service.h"
 +#include "content/public/browser/blob_handle.h"
 +#include "content/public/browser/browser_context.h"
@@ -100,6 +108,7 @@
 +
 +#if BUILDFLAG(IS_MAC)
 +#include <CoreFoundation/CoreFoundation.h>
++#include <sys/xattr.h>
 +
 +#include "base/apple/foundation_util.h"
 +#include "base/apple/scoped_cftyperef.h"
@@ -195,6 +204,8 @@
 +  GURL url;
 +  int entry_id = 0;
 +  base::FilePath path;
++  std::u16string title;
++  base::Time time;
 +
 +  content::WebContents* Get() const {
 +    if (!web_contents || path.empty()) {
@@ -210,6 +221,235 @@
 +    return web_contents.get();
 +  }
 +};
++
++// Query parameters that commonly carry sign-in tokens, keys or one-time codes.
++bool IsCredentialParameter(std::string_view name) {
++  const std::string lower = base::ToLowerASCII(name);
++  for (const char* part : {"token", "secret", "password", "passwd", "session",
++                           "signature", "credential", "apikey", "api_key",
++                           "auth", "otp", "jwt", "nonce"}) {
++    if (lower.find(part) != std::string::npos) {
++      return true;
++    }
++  }
++  for (const char* exact : {"code", "state", "key", "sig", "sid", "ticket",
++                            "pwd", "pass", "x-amz-credential",
++                            "x-goog-credential"}) {
++    if (lower == exact) {
++      return true;
++    }
++  }
++  return false;
++}
++
++// The address recorded in an archive: in its printed footer, its document
++// properties and, on macOS, its "Where from". The fragment, which can hold
++// OAuth tokens, and query parameters that look like credentials are left out;
++// other parameters, such as a video ID, still identify the page.
++GURL ArchiveAddress(const GURL& url) {
++  if (!url.is_valid()) {
++    return url;
++  }
++  GURL::Replacements replacements;
++  replacements.ClearUsername();
++  replacements.ClearPassword();
++  replacements.ClearRef();
++  std::string query;
++  if (url.has_query()) {
++    for (std::string_view parameter : base::SplitStringPiece(
++             url.query(), "&", base::KEEP_WHITESPACE,
++             base::SPLIT_WANT_NONEMPTY)) {
++      const std::string_view name =
++          parameter.substr(0, parameter.find('='));
++      if (!IsCredentialParameter(name)) {
++        query += (query.empty() ? "" : "&") + std::string(parameter);
++      }
++    }
++    if (query.empty()) {
++      replacements.ClearQuery();
++    } else {
++      replacements.SetQueryStr(query);
++    }
++  }
++  return url.ReplaceComponents(replacements);
++}
++
++// A PDF text string: UTF-16BE with a byte order mark, hex encoded so that no
++// character needs escaping.
++std::string PdfText(std::u16string_view text) {
++  std::string out = "<FEFF";
++  for (char16_t c : text) {
++    base::StringAppendF(&out, "%04X", static_cast<unsigned>(c));
++  }
++  return out + ">";
++}
++
++// Parses the unsigned number at the start of `text`, after any whitespace.
++std::optional<size_t> PdfNumber(std::string_view text) {
++  const size_t start = text.find_first_not_of(" \t\r\n");
++  if (start == std::string_view::npos) {
++    return std::nullopt;
++  }
++  size_t value = 0;
++  size_t i = start;
++  for (; i < text.size() && base::IsAsciiDigit(text[i]); ++i) {
++    value = value * 10 + (text[i] - '0');
++  }
++  return i == start ? std::nullopt : std::optional<size_t>(value);
++}
++
++// Sets the PDF's document properties, as shown by Preview's inspector and
++// indexed by Spotlight: the page title, its address as the subject, its site
++// as a keyword, and the archive time. Appends an incremental update, so the
++// printed pages are untouched. Returns nullopt, keeping the original, if the
++// file does not end in a classic cross-reference table as Chromium's PDFs do.
++std::optional<std::string> AddArchiveProperties(std::string_view pdf,
++                                                const ArchiveTarget& target) {
++  const size_t startxref = pdf.rfind("startxref");
++  const size_t trailer = pdf.rfind("trailer", startxref);
++  if (startxref == std::string_view::npos ||
++      trailer == std::string_view::npos) {
++    return std::nullopt;
++  }
++  const std::optional<size_t> previous =
++      PdfNumber(pdf.substr(startxref + strlen("startxref")));
++  const std::string_view trailer_dict =
++      pdf.substr(trailer, startxref - trailer);
++  const size_t size_key = trailer_dict.find("/Size");
++  const size_t root_key = trailer_dict.find("/Root");
++  if (!previous || size_key == std::string_view::npos ||
++      root_key == std::string_view::npos) {
++    return std::nullopt;
++  }
++  const std::optional<size_t> size =
++      PdfNumber(trailer_dict.substr(size_key + strlen("/Size")));
++  const std::string_view root_value =
++      trailer_dict.substr(root_key + strlen("/Root"));
++  const size_t root_end = root_value.find('R');
++  if (!size || *size == 0 || root_end == std::string_view::npos) {
++    return std::nullopt;
++  }
++  const std::string root(base::TrimWhitespaceASCII(
++      root_value.substr(0, root_end + 1), base::TRIM_ALL));
++  // An update keeps the file identifier.
++  std::string id;
++  if (const size_t id_key = trailer_dict.find("/ID");
++      id_key != std::string_view::npos) {
++    const size_t open = trailer_dict.find('[', id_key);
++    const size_t close = trailer_dict.find(']', open);
++    if (open != std::string_view::npos && close != std::string_view::npos) {
++      id = " /ID " + std::string(trailer_dict.substr(open, close - open + 1));
++    }
++  }
++
++  const GURL address = ArchiveAddress(target.url);
++  std::u16string title = target.title;
++  if (title.empty()) {
++    title = base::UTF8ToUTF16(address.host());
++  }
++  base::Time::Exploded utc;
++  target.time.UTCExplode(&utc);
++  const std::string date = base::StringPrintf(
++      "(D:%04d%02d%02d%02d%02d%02dZ)", utc.year, utc.month, utc.day_of_month,
++      utc.hour, utc.minute, utc.second);
++
++  std::string out(pdf);
++  if (!out.ends_with('\n')) {
++    out += '\n';
++  }
++  const size_t object = *size;
++  const size_t object_offset = out.size();
++  out += base::StringPrintf("%zu 0 obj\n<<", object) +
++         " /Title " + PdfText(title) +
++         " /Subject " + PdfText(base::UTF8ToUTF16(address.spec())) +
++         " /Keywords " + PdfText(base::UTF8ToUTF16(address.host())) +
++         " /Creator " + PdfText(u"Helium Neo") +
++         " /CreationDate " + date + " /ModDate " + date + " >>\nendobj\n";
++  const size_t xref_offset = out.size();
++  out += base::StringPrintf(
++      "xref\n0 1\n0000000000 65535 f \n%zu 1\n%010zu 00000 n \n"
++      "trailer\n<< /Size %zu /Root %s "
++      "/Info %zu 0 R /Prev %zu%s >>\nstartxref\n%zu\n%%%%EOF\n",
++      object, object_offset, object + 1, root.c_str(), object, *previous,
++      id.c_str(), xref_offset);
++  return out;
++}
++
++#if BUILDFLAG(IS_MAC)
++// Runs on a blocking thread. Replaces the file's "Where from" in Finder.
++void SetWhereFrom(const base::FilePath& path, const GURL& address) {
++  base::apple::ScopedCFTypeRef<CFStringRef> value =
++      base::SysUTF8ToCFStringRef(address.spec());
++  const void* values[] = {value.get()};
++  base::apple::ScopedCFTypeRef<CFArrayRef> list(
++      CFArrayCreate(kCFAllocatorDefault, values, 1, &kCFTypeArrayCallBacks));
++  base::apple::ScopedCFTypeRef<CFDataRef> data(CFPropertyListCreateData(
++      kCFAllocatorDefault, list.get(), kCFPropertyListBinaryFormat_v1_0, 0,
++      nullptr));
++  if (!data) {
++    return;
++  }
++  if (setxattr(path.value().c_str(), "com.apple.metadata:kMDItemWhereFroms",
++               CFDataGetBytePtr(data.get()), CFDataGetLength(data.get()), 0,
++               0) != 0) {
++    LOG(WARNING) << "Could not record where the archive came from";
++  }
++}
++
++// The download records its own address as "Where from": an internal blob:
++// address for a printed PDF, or the full address of a PDF document. Once it
++// is complete, record the archived page's address instead.
++class WhereFromUpdater : public download::DownloadItem::Observer {
++ public:
++  static void Watch(const GURL& address,
++                    download::DownloadItem* item,
++                    download::DownloadInterruptReason reason) {
++    if (!item || reason != download::DOWNLOAD_INTERRUPT_REASON_NONE) {
++      return;
++    }
++    if (item->GetState() == download::DownloadItem::COMPLETE) {
++      Update(item, address);
++      return;
++    }
++    // Deletes itself when the download finishes or goes away.
++    new WhereFromUpdater(item, address);
++  }
++
++ private:
++  WhereFromUpdater(download::DownloadItem* item, const GURL& address)
++      : item_(item), address_(address) {
++    item_->AddObserver(this);
++  }
++  ~WhereFromUpdater() override { item_->RemoveObserver(this); }
++
++  static void Update(download::DownloadItem* item, const GURL& address) {
++    base::ThreadPool::PostTask(
++        FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
++        base::BindOnce(&SetWhereFrom, item->GetTargetFilePath(), address));
++  }
++
++  void OnDownloadUpdated(download::DownloadItem* item) override {
++    switch (item->GetState()) {
++      case download::DownloadItem::COMPLETE:
++        Update(item, address_);
++        delete this;
++        return;
++      case download::DownloadItem::CANCELLED:
++      case download::DownloadItem::INTERRUPTED:
++        delete this;
++        return;
++      default:
++        return;
++    }
++  }
++  void OnDownloadDestroyed(download::DownloadItem* item) override {
++    delete this;
++  }
++
++  const raw_ptr<download::DownloadItem> item_;
++  const GURL address_;
++};
++#endif  // BUILDFLAG(IS_MAC)
 +
 +// Runs on a blocking thread. Creates the archive folder and returns a path in
 +// it that does not exist yet, or an empty path on failure.
@@ -228,10 +468,12 @@
 +
 +// Downloads `url` to `path` without prompting, so the result shows in the
 +// downloads bubble. `factory` serves generated content such as a printed PDF.
++// `page_url` is the archived page, recorded as where the file came from.
 +void DownloadToPath(
 +    content::WebContents* web_contents,
 +    const GURL& url,
 +    const base::FilePath& path,
++    const GURL& page_url,
 +    scoped_refptr<network::SharedURLLoaderFactory> factory = nullptr) {
 +  constexpr auto kTrafficAnnotation =
 +      net::DefineNetworkTrafficAnnotation("helium_page_archive", R"(
@@ -255,6 +497,10 @@
 +          web_contents, url, kTrafficAnnotation);
 +  params->set_file_path(path);
 +  params->set_prompt(false);
++#if BUILDFLAG(IS_MAC)
++  params->set_callback(base::BindOnce(&WhereFromUpdater::Watch,
++                                      ArchiveAddress(page_url)));
++#endif
 +  auto* download_manager =
 +      Profile::FromBrowserContext(web_contents->GetBrowserContext())
 +          ->GetDownloadManager();
@@ -266,30 +512,27 @@
 +}
 +
 +#if BUILDFLAG(ENABLE_PRINTING)
-+void PdfBlobReady(base::WeakPtr<content::WebContents> web_contents,
-+                  const GURL& page_url,
-+                  const base::FilePath& path,
++void PdfBlobReady(const ArchiveTarget& target,
 +                  scoped_refptr<base::RefCountedMemory> bytes,
 +                  std::unique_ptr<content::BlobHandle> blob) {
-+  if (!web_contents || !blob) {
++  if (!target.web_contents || !blob) {
 +    return;
 +  }
-+  const GURL url("blob:" + url::Origin::Create(page_url).Serialize() + "/" +
++  const GURL url("blob:" + url::Origin::Create(target.url).Serialize() + "/" +
 +                 blob->GetUUID());
 +  mojo::PendingRemote<network::mojom::URLLoaderFactory> remote;
 +  storage::BlobURLLoaderFactory::Create(
 +      blob->PassBlob(), url, remote.InitWithNewPipeAndPassReceiver());
-+  DownloadToPath(web_contents.get(), url, path,
++  DownloadToPath(target.web_contents.get(), url, target.path, target.url,
 +                 base::MakeRefCounted<network::WrapperSharedURLLoaderFactory>(
 +                     std::move(remote)));
 +}
 +
-+void PdfPrinted(base::WeakPtr<content::WebContents> web_contents,
-+                const GURL& page_url,
-+                const base::FilePath& path,
++void PdfPrinted(const ArchiveTarget& target,
 +                bool restore_layout,
 +                print_to_pdf::PdfPrintResult result,
 +                scoped_refptr<base::RefCountedMemory> bytes) {
++  content::WebContents* web_contents = target.web_contents.get();
 +  if (web_contents && restore_layout) {
 +    web_contents->GetPrimaryMainFrame()->ExecuteJavaScriptInIsolatedWorld(
 +        kRefixScript, base::NullCallback(), ISOLATED_WORLD_ID_CHROME_INTERNAL);
@@ -299,13 +542,18 @@
 +    LOG(WARNING) << "Could not print page to PDF for the archive";
 +    return;
 +  }
++  if (std::optional<std::string> updated = AddArchiveProperties(
++          base::as_string_view(base::span(*bytes)), target)) {
++    bytes = base::MakeRefCounted<base::RefCountedString>(std::move(*updated));
++  } else {
++    LOG(WARNING) << "Could not add document properties to the archive";
++  }
 +  // The blob is created from a span over `bytes`; keep them alive until it
 +  // exists.
 +  const auto data = base::span(*bytes);
 +  web_contents->GetBrowserContext()->CreateMemoryBackedBlob(
 +      data, "application/pdf",
-+      base::BindOnce(&PdfBlobReady, web_contents, page_url, path,
-+                     std::move(bytes)));
++      base::BindOnce(&PdfBlobReady, target, std::move(bytes)));
 +}
 +
 +// Returns a locale whose region decides the paper size, e.g. A4 or Letter.
@@ -324,8 +572,7 @@
 +// Prints the page to PDF. Returns false if printing is unavailable.
 +// `restore_layout` undoes kUnfixScript afterwards.
 +bool PrintToPdf(content::WebContents* web_contents,
-+                const GURL& url,
-+                const base::FilePath& path,
++                const ArchiveTarget& target,
 +                bool restore_layout) {
 +#if BUILDFLAG(ENABLE_PRINT_PREVIEW)
 +  auto* manager = printing::PrintViewManager::FromWebContents(web_contents);
@@ -339,9 +586,9 @@
 +  }
 +  const gfx::Size paper =
 +      printing::GetDefaultPaperSizeFromLocaleMicrons(PaperLocale());
-+  // The header and footer record the page's title, URL and capture date.
++  // The header and footer record the page's title, address and capture date.
 +  auto params = print_to_pdf::GetPrintPagesParams(
-+      url, /*landscape=*/false, /*display_header_footer=*/true,
++      ArchiveAddress(target.url), /*landscape=*/false, /*display_header_footer=*/true,
 +      /*print_background=*/true, /*scale=*/1.0,
 +      paper.width() / kMicronsPerInch, paper.height() / kMicronsPerInch,
 +      kPdfMarginInches, kPdfMarginInches, kPdfMarginInches, kPdfMarginInches,
@@ -353,8 +600,7 @@
 +  manager->PrintToPdf(
 +      web_contents->GetPrimaryMainFrame(), "",
 +      std::move(std::get<printing::mojom::PrintPagesParamsPtr>(params)),
-+      base::BindOnce(&PdfPrinted, web_contents->GetWeakPtr(), url, path,
-+                     restore_layout));
++      base::BindOnce(&PdfPrinted, target, restore_layout));
 +  return true;
 +}
 +#endif  // BUILDFLAG(ENABLE_PRINTING)
@@ -455,7 +701,7 @@
 +    return;
 +  }
 +#if BUILDFLAG(ENABLE_PRINTING)
-+  if (PrintToPdf(web_contents, target.url, target.path, restore_layout)) {
++  if (PrintToPdf(web_contents, target, restore_layout)) {
 +    return;
 +  }
 +#endif
@@ -489,7 +735,7 @@
 +  if (pdf_document) {
 +    // The PDF viewer cannot be printed like a page; save the PDF itself. Its
 +    // file is always named .pdf.
-+    DownloadToPath(web_contents, target.url, target.path);
++    DownloadToPath(web_contents, target.url, target.path, target.url);
 +    return;
 +  }
 +  // Rendered archives keep only what the page has loaded, so first load the
@@ -576,10 +822,11 @@
 +  target.web_contents = web_contents->GetWeakPtr();
 +  target.url = url;
 +  target.entry_id = entry->GetUniqueID();
++  target.title = title;
++  target.time = base::Time::Now();
 +  base::ThreadPool::PostTaskAndReplyWithResult(
 +      FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
-+      base::BindOnce(&PrepareArchivePath, directory, title, url,
-+                     base::Time::Now()),
++      base::BindOnce(&PrepareArchivePath, directory, title, url, target.time),
 +      base::BindOnce(&PathReady, std::move(target),
 +                     /*pdf_document=*/mime_type == "application/pdf"));
 +}
