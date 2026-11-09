@@ -7,6 +7,6 @@
   "sparkle_public_key": "z3Cw9w6Pym6DR6ObaYyDO/Mpj4NC/ulrSKIssfC57LE=",
   "sparkle_keychain_account": "no.aagedal.helium-neo",
   "primary_feed": "https://github.com/aagedal/helium/releases/latest/download/helium-neo.xml",
-  "backup_feed": "https://aagedal.me/apps/appcast/helium-neo.xml",
+  "backup_feed": "https://aagedal.me/apps/helium-neo/helium-neo.xml",
   "backup_download_base": "https://aagedal.me/apps/helium-neo/"
 }

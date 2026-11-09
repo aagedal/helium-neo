@@ -1,8 +1,11 @@
 # Helium Neo stable releases
 
 The updater uses the public GitHub release asset `helium-neo.xml` as its primary
-feed. Its backup is `https://aagedal.me/apps/appcast/helium-neo.xml`; that feed
-downloads independently mirrored installers from `/apps/helium-neo/`.
+feed. Its backup is `https://aagedal.me/apps/helium-neo/helium-neo.xml`; that
+feed downloads independently mirrored installers from the same directory.
+Releases up to 0.21.1.1 look for the backup at the old
+`https://aagedal.me/apps/appcast/helium-neo.xml`, which is no longer updated; they
+pick up the new location with their next update from GitHub.
 
 Neo retains Helium's service consent and browser-update preference. An enabled
 installation checks on startup and daily, downloads in the background, and uses
@@ -95,16 +98,22 @@ draft and verified. Set it as the latest release so the primary feed URL resolve
 Existing betas need one manual installation to acquire the updater.
 
 The `Publish Neo update mirror` workflow runs when a stable release is published
-and can be rerun manually with a tag. Its `Aagedal Apps` environment needs:
+and can be rerun manually with a tag, from the default branch only. It always
+runs the deploy script from the default branch, not from the release's commit.
+Its `Helium_Neo_App` environment needs:
 
-- `APPCAST_FTP_HOST` (hostname; a pasted FTP URL without credentials or a path is also accepted)
-- `APPCAST_FTP_PORT` (defaults to 21 when empty)
-- `APPCAST_FTP_USERNAME`
-- `APPCAST_FTP_PASSWORD`
+- `HELIUM_NEO_FTP_HOST` (hostname; a pasted FTP URL without credentials or a path is also accepted)
+- `HELIUM_NEO_FTP_PORT` (defaults to 21 when empty)
+- `HELIUM_NEO_FTP_USERNAME`
+- `HELIUM_NEO_PASSWORD`
 
-The FTP login directory is the public `/apps` directory, matching the relative
-paths in the other Aagedal apps' curl deployment. Uploads and cleanup stay relative
-to that directory, even when the server's filesystem root is different.
+Limit the environment's deployment branches and tags to `main` and `v*-neo`.
+
+The FTP account is Neo's own and its login directory is the public
+`/apps/helium-neo` directory; it should not reach other apps' files. Uploads and
+cleanup stay relative to that directory, even when the server's filesystem root
+is different. The installer's public SHA-256 check confirms the directory before
+the feed is replaced.
 Deployment uses explicit FTPS with certificate verification and protected data
 connections. It validates the assets, uploads under a temporary name, renames,
 downloads the public installer to verify SHA-256, then publishes/verifies the
@@ -114,8 +123,9 @@ a newer feed with an older release. Neither source trees nor keys are uploaded.
 The existing-feed check reads the authenticated FTP file directly, so a website's
 HTML fallback for missing URLs does not block first-time deployment.
 
-For manual deployment, the same script accepts the four variables in its
-environment: `python3 devutils/macos/deploy_mirror.py '<release>'`.
+For manual deployment, the same script reads `HELIUM_NEO_FTP_HOST`,
+`HELIUM_NEO_FTP_PORT`, `HELIUM_NEO_FTP_USERNAME` and `HELIUM_NEO_FTP_PASSWORD` from
+its environment: `python3 devutils/macos/deploy_mirror.py '<release>'`.
 
 For isolated updater testing, `--custom-update-server-url` replaces the feed base
 and disables production fallback. An explicit `--custom-update-fallback-url`

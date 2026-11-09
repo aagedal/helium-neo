@@ -51,6 +51,23 @@ class ReleaseTests(unittest.TestCase):
     def test_same_signed_archive_on_both_hosts(self):
         self.assertEqual(validate_bundle(self.root), self.manifest)
 
+    def test_release_from_before_the_feed_move_is_accepted(self):
+        self.manifest['backup_feed'] = 'https://aagedal.me/apps/appcast/helium-neo.xml'
+        self.write_bundle()
+        self.assertEqual(validate_bundle(self.root), self.manifest)
+
+    def test_unexpected_updater_key_rejected(self):
+        self.manifest['sparkle_public_key'] = 'AAAA' + self.config['sparkle_public_key'][4:]
+        self.write_bundle()
+        with self.assertRaisesRegex(ValueError, 'key'):
+            validate_bundle(self.root)
+
+    def test_unexpected_primary_download_rejected(self):
+        self.manifest['primary_download'] = 'https://example.com/' + self.archive.name
+        self.write_bundle()
+        with self.assertRaisesRegex(ValueError, 'primary'):
+            validate_bundle(self.root)
+
     def test_modified_archive_rejected_before_upload(self):
         self.archive.write_bytes(b'corrupted installer')
         with self.assertRaisesRegex(ValueError, 'manifest'):
@@ -87,17 +104,17 @@ class ReleaseTests(unittest.TestCase):
 
     def test_first_deployment_has_no_existing_feed(self):
         ftp = Mock()
-        ftp.nlst.side_effect = [['appcast'], ['mediaconverter.xml']]
-        self.assertIsNone(read_existing_feed(ftp, '/hosting/www/apps'))
+        ftp.nlst.return_value = ['Helium-Neo-0.21.1.1-macOS-arm64-signed.dmg']
+        self.assertIsNone(read_existing_feed(ftp, '/hosting/www/apps/helium-neo'))
         ftp.retrbinary.assert_not_called()
         check_not_older(self.manifest, None)
 
     def test_existing_feed_is_read_from_ftp(self):
         ftp = Mock()
-        ftp.nlst.side_effect = [['appcast'], ['helium-neo.xml']]
+        ftp.nlst.return_value = ['helium-neo.xml']
         feed = (self.root / 'helium-neo-backup.xml').read_bytes()
         ftp.retrbinary.side_effect = lambda command, callback: callback(feed)
-        self.assertEqual(read_existing_feed(ftp, '/hosting/www/apps'), feed)
+        self.assertEqual(read_existing_feed(ftp, '/hosting/www/apps/helium-neo'), feed)
 
     def test_invalid_existing_feed_still_blocks_deployment(self):
         with self.assertRaises(ET.ParseError):
@@ -105,8 +122,9 @@ class ReleaseTests(unittest.TestCase):
 
     def test_upload_uses_login_directory_instead_of_server_root(self):
         ftp = Mock()
-        upload_atomic(ftp, self.archive, 'helium-neo', self.archive.name, '/hosting/www/apps')
-        self.assertEqual(ftp.cwd.call_args_list, [call('/hosting/www/apps'), call('helium-neo')])
+        upload_atomic(ftp, self.archive, self.archive.name, '/hosting/www/apps/helium-neo')
+        self.assertEqual(ftp.cwd.call_args_list, [call('/hosting/www/apps/helium-neo')])
+        ftp.mkd.assert_not_called()
 
     def test_ftp_host_formats_are_normalized(self):
         for host in [
@@ -122,7 +140,7 @@ class ReleaseTests(unittest.TestCase):
                 'ftp.example.com:990'
         ]:
             with self.subTest(host=host):
-                with self.assertRaisesRegex(ValueError, 'APPCAST_FTP_HOST'):
+                with self.assertRaisesRegex(ValueError, 'HELIUM_NEO_FTP_HOST'):
                     ftp_endpoint(host, '21')
 
 

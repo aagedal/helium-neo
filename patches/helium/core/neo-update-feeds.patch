@@ -8,7 +8,7 @@
 +constexpr std::string_view kUpdateBaseUrl =
 +    "https://github.com/aagedal/helium/releases/latest/download/";
 +constexpr std::string_view kUpdateFallbackBaseUrl =
-+    "https://aagedal.me/apps/appcast/";
++    "https://aagedal.me/apps/helium-neo/";
 +#else
  constexpr std::string_view kUpdateBaseUrl = "https://updates.helium.computer/";
 +#endif
