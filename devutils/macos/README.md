@@ -9,10 +9,16 @@ pick up the new location with their next update from GitHub.
 
 Neo retains Helium's service consent and browser-update preference. An enabled
 installation checks on startup and daily, downloads in the background, and uses
-the existing relaunch/update-on-quit integration. A failed primary feed or archive
-download retries once through the mirror. Both hosts failing ends the attempt;
-the next check starts with GitHub. Signature, validation and installation errors
-do not trigger mirror retries. Development component builds keep Sparkle disabled.
+the existing relaunch/update-on-quit integration. Before downloading an update
+from GitHub, it measures GitHub and the mirror by fetching up to 2 MB of the same
+installer from each for at most 8 seconds, then downloads from the mirror only if
+it is at least 1.5 times faster (or GitHub failed the measurement). Sparkle
+verifies the signature whichever host served the file. A download that receives
+nothing for 30 seconds fails. A failed primary feed or archive download retries
+once through the mirror, and a failed mirror download chosen for speed retries
+once from GitHub. Both hosts failing ends the attempt; the next check starts
+with GitHub. Signature, validation and installation errors do not trigger
+retries. Development component builds keep Sparkle disabled.
 
 ## Build and package
 
@@ -81,7 +87,9 @@ installation on quit from a lower signed build. It requires the packaged release
 built chromedriver, source path and Developer ID identity.
 
 For example, run each of `current`, `feed-fallback`, `download-fallback`,
-`both-down`, `bad-signature`, `disabled`, and `no-consent` with:
+`slow-primary`, `both-down`, `bad-signature`, `disabled`, and `no-consent` with
+(`slow-primary` throttles GitHub's installer to about 64 KB/s and expects the
+download to come from the mirror):
 
 ```sh
 python3 devutils/macos/test_updater.py \

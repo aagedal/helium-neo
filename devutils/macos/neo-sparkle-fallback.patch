@@ -1,18 +1,267 @@
 --- a/chrome/browser/mac/sparkle_glue.mm
 +++ b/chrome/browser/mac/sparkle_glue.mm
-@@ -57,6 +57,7 @@
+@@ -41,6 +41,143 @@
+ @interface SparkleDriver : SPUHeadlessUserDriver {}
+ @end
+ 
++namespace {
++// Aborts a check while both download hosts are measured; never shown as a
++// failure. The check is then repeated and downloads from the faster host.
++NSString* const kNeoSourceProbeErrorDomain = @"NeoUpdateSourceProbe";
++// Measure each host by downloading up to this much of the installer...
++constexpr int64_t kNeoProbeBytes = 2 * 1024 * 1024;
++// ...for at most this long. A host that delivers less than kNeoProbeMinBytes
++// in that time counts as failed.
++constexpr NSTimeInterval kNeoProbeSeconds = 8;
++constexpr int64_t kNeoProbeMinBytes = 64 * 1024;
++// GitHub stays the default unless the mirror is clearly faster.
++constexpr double kNeoMirrorAdvantage = 1.5;
++// Fail a download that receives nothing for this long, instead of the default
++// 60 seconds, so the mirror retry starts sooner.
++constexpr NSTimeInterval kNeoDownloadIdleTimeout = 30;
++}  // namespace
++
++// Measures download speed from several URLs in parallel. Each result is in
++// bytes per second, or 0 if the host failed.
++@interface NeoDownloadProbe : NSObject <NSURLSessionDataDelegate>
++- (instancetype)initWithURLs:(NSArray<NSURL*>*)urls
++                  completion:(void (^)(NSArray<NSNumber*>*))completion;
++@end
++
++@implementation NeoDownloadProbe {
++  NSURLSession* session_;
++  NSArray<NSURLSessionDataTask*>* tasks_;
++  NSMutableArray<NSNumber*>* bytes_;
++  NSMutableArray<NSNumber*>* rates_;
++  NSDate* start_;
++  NSUInteger remaining_;
++  void (^completion_)(NSArray<NSNumber*>*);
++}
++
++- (instancetype)initWithURLs:(NSArray<NSURL*>*)urls
++                  completion:(void (^)(NSArray<NSNumber*>*))completion {
++  if ((self = [super init])) {
++    completion_ = [completion copy];
++    NSURLSessionConfiguration* config =
++        [NSURLSessionConfiguration ephemeralSessionConfiguration];
++    config.timeoutIntervalForRequest = kNeoProbeSeconds;
++    config.timeoutIntervalForResource = kNeoProbeSeconds + 2;
++    config.requestCachePolicy = NSURLRequestReloadIgnoringLocalCacheData;
++    // The session retains this delegate until it is invalidated in -finish.
++    session_ = [NSURLSession sessionWithConfiguration:config
++                                             delegate:self
++                                        delegateQueue:NSOperationQueue.mainQueue];
++    bytes_ = [NSMutableArray array];
++    rates_ = [NSMutableArray array];
++    NSMutableArray<NSURLSessionDataTask*>* tasks = [NSMutableArray array];
++    for (NSURL* url in urls) {
++      NSMutableURLRequest* request = [NSMutableURLRequest requestWithURL:url];
++      [request setValue:[NSString stringWithFormat:@"bytes=0-%lld",
++                                                   kNeoProbeBytes - 1]
++          forHTTPHeaderField:@"Range"];
++      [tasks addObject:[session_ dataTaskWithRequest:request]];
++      [bytes_ addObject:@0];
++      [rates_ addObject:@-1];
++    }
++    tasks_ = tasks;
++    remaining_ = tasks.count;
++    start_ = [NSDate date];
++    for (NSURLSessionDataTask* task in tasks_)
++      [task resume];
++    __weak NeoDownloadProbe* weakSelf = self;
++    dispatch_after(
++        dispatch_time(DISPATCH_TIME_NOW,
++                      (int64_t)(kNeoProbeSeconds * NSEC_PER_SEC)),
++        dispatch_get_main_queue(), ^{
++          NeoDownloadProbe* probe = weakSelf;
++          for (NSUInteger i = 0; probe && i < probe->tasks_.count; ++i)
++            [probe recordTaskAtIndex:i failed:NO];
++        });
++  }
++  return self;
++}
++
++// Records the rate for one host once, and cancels its transfer.
++- (void)recordTaskAtIndex:(NSUInteger)index failed:(BOOL)failed {
++  if (rates_[index].doubleValue >= 0)
++    return;
++  const int64_t bytes = bytes_[index].longLongValue;
++  const double seconds = MAX(-start_.timeIntervalSinceNow, 0.001);
++  rates_[index] = @(failed || bytes < kNeoProbeMinBytes ? 0 : bytes / seconds);
++  [tasks_[index] cancel];
++  if (--remaining_ == 0)
++    [self finish];
++}
++
++- (void)finish {
++  [session_ invalidateAndCancel];
++  auto completion = completion_;
++  completion_ = nil;
++  if (completion)
++    completion([rates_ copy]);
++}
++
++- (void)URLSession:(NSURLSession*)session
++              dataTask:(NSURLSessionDataTask*)task
++    didReceiveResponse:(NSURLResponse*)response
++     completionHandler:
++         (void (^)(NSURLSessionResponseDisposition))completionHandler {
++  NSInteger status = [response isKindOfClass:NSHTTPURLResponse.class]
++                         ? ((NSHTTPURLResponse*)response).statusCode
++                         : 0;
++  const BOOL ok = status == 200 || status == 206;
++  completionHandler(ok ? NSURLSessionResponseAllow
++                       : NSURLSessionResponseCancel);
++  if (!ok) {
++    NSUInteger index = [tasks_ indexOfObject:task];
++    if (index != NSNotFound)
++      [self recordTaskAtIndex:index failed:YES];
++  }
++}
++
++- (void)URLSession:(NSURLSession*)session
++          dataTask:(NSURLSessionDataTask*)task
++    didReceiveData:(NSData*)data {
++  NSUInteger index = [tasks_ indexOfObject:task];
++  if (index == NSNotFound)
++    return;
++  const int64_t bytes = bytes_[index].longLongValue + data.length;
++  bytes_[index] = @(bytes);
++  // A server that ignores Range sends the whole installer; stop at the limit.
++  if (bytes >= kNeoProbeBytes)
++    [self recordTaskAtIndex:index failed:NO];
++}
++
++- (void)URLSession:(NSURLSession*)session
++                    task:(NSURLSessionTask*)task
++    didCompleteWithError:(NSError*)error {
++  NSUInteger index = [tasks_ indexOfObject:task];
++  if (index != NSNotFound)
++    [self recordTaskAtIndex:index failed:error != nil];
++}
++@end
++
+ // SparkleObserver is a simple notification observer for Sparkle status.
+ @interface SparkleObserver : NSObject <SPUUpdaterDelegate> {
+   SparkleUpdaterCallbackList status_callbacks_;
+@@ -57,6 +194,18 @@
  
  @implementation SparkleObserver {
    base::WeakPtr<Profile> profile_;
 +  BOOL usingMirror_;
++  // The GitHub installer URL whose hosts were measured, and the result.
++  NSURL* probedURL_;
++  BOOL preferMirror_;
++  NeoDownloadProbe* probe_;
++  __weak SPUUpdater* probeUpdater_;
++  BOOL probeCycleFinished_;
++  // Set while the check repeated after a measurement (or after a failed
++  // mirror download) runs, so it does not measure again.
++  BOOL skipProbe_;
++  BOOL downloadingFromMirror_;
++  BOOL retriedPrimary_;
  }
  
  @synthesize invocationBlock = invocationBlock_;
-@@ -145,14 +146,41 @@
+@@ -145,16 +294,157 @@
    [self updateStatus:VersionUpdater::UPDATED error_string:nil];
  }
  
 -// Delegated method. Error handler for the Sparkle messages.
++// The mirror copy of the installer that |item| downloads from GitHub, or nil.
++- (NSURL*)mirrorURLForItem:(SUAppcastItem*)item {
++  if (!profile_ || !item.fileURL.lastPathComponent.length)
++    return nil;
++  GURL feed = helium::GetBrowserUpdateURL(*profile_->GetPrefs(), true);
++  if (feed == helium::GetDummyURL() || !feed.is_valid())
++    return nil;
++  GURL mirror =
++      feed.Resolve(base::SysNSStringToUTF8(item.fileURL.lastPathComponent));
++  return mirror.is_valid()
++             ? [NSURL URLWithString:base::SysUTF8ToNSString(mirror.spec())]
++             : nil;
++}
++
++// Before downloading from GitHub, measure GitHub and the mirror once and
++// repeat the check, so the download comes from the faster host. Both hosts
++// serve the same file; Sparkle verifies its signature either way.
++- (BOOL)updater:(SPUUpdater*)updater
++    shouldProceedWithUpdate:(SUAppcastItem*)item
++                updateCheck:(SPUUpdateCheck)updateCheck
++                      error:(NSError* __autoreleasing*)error {
++  if (usingMirror_ || skipProbe_ || [probedURL_ isEqual:item.fileURL])
++    return YES;
++  NSURL* mirror = [self mirrorURLForItem:item];
++  if (!mirror || !item.fileURL)
++    return YES;
++
++  probedURL_ = nil;
++  preferMirror_ = NO;
++  probeUpdater_ = updater;
++  probeCycleFinished_ = NO;
++  NSURL* primary = item.fileURL;
++  __weak SparkleObserver* weakSelf = self;
++  probe_ = [[NeoDownloadProbe alloc]
++      initWithURLs:@[ primary, mirror ]
++        completion:^(NSArray<NSNumber*>* rates) {
++          SparkleObserver* strongSelf = weakSelf;
++          if (strongSelf)
++            [strongSelf probeFinishedForURL:primary rates:rates];
++        }];
++  if (error) {
++    *error = [NSError
++        errorWithDomain:kNeoSourceProbeErrorDomain
++                   code:1
++               userInfo:@{
++                 NSLocalizedDescriptionKey : @"Choosing the fastest download"
++               }];
++  }
++  return NO;
++}
++
++- (void)probeFinishedForURL:(NSURL*)primary rates:(NSArray<NSNumber*>*)rates {
++  probe_ = nil;
++  const double github = rates[0].doubleValue;
++  const double mirror = rates[1].doubleValue;
++  probedURL_ = primary;
++  preferMirror_ = mirror > 0 && mirror > github * kNeoMirrorAdvantage;
++  VLOG(1) << "Update download speed, GitHub: " << github
++          << " B/s, mirror: " << mirror << " B/s";
++  [self restartAfterProbeIfReady];
++}
++
++// Repeat the check once both the measurement and Sparkle's aborted cycle are
++// done, so Sparkle is idle and accepts it.
++- (void)restartAfterProbeIfReady {
++  SPUUpdater* updater = probeUpdater_;
++  if (probe_ || !probeCycleFinished_ || !updater)
++    return;
++  probeUpdater_ = nil;
++  skipProbe_ = YES;
++  [self updateStatus:VersionUpdater::CHECKING error_string:nil];
++  [updater checkForUpdatesInBackground];
++}
++
++- (void)updater:(SPUUpdater*)updater
++    willDownloadUpdate:(SUAppcastItem*)item
++           withRequest:(NSMutableURLRequest*)request {
++  request.timeoutInterval = kNeoDownloadIdleTimeout;
++  downloadingFromMirror_ = NO;
++  if (usingMirror_ || !preferMirror_ || ![probedURL_ isEqual:item.fileURL])
++    return;
++  if (NSURL* mirror = [self mirrorURLForItem:item]) {
++    request.URL = mirror;
++    downloadingFromMirror_ = YES;
++  }
++}
++
++// After a failed download from the mirror chosen for speed, try GitHub once.
++- (BOOL)canRetryOnPrimary:(NSError*)error {
++  return downloadingFromMirror_ && !retriedPrimary_ &&
++         [error.domain isEqualToString:SUSparkleErrorDomain] &&
++         error.code == SUDownloadError && [self shouldAccessUpdateService];
++}
++
 +// Retry availability failures once through the independently hosted mirror.
 +// Validation, signature, extraction and installation failures must remain errors.
 +- (BOOL)canRetryOnMirror:(NSError*)error {
@@ -30,30 +279,52 @@
 +      error.code == SUNoUpdateError) {
 +    return;
 +  }
-+  if ([self canRetryOnMirror:error]) {
++  if ([error.domain isEqualToString:kNeoSourceProbeErrorDomain] ||
++      [self canRetryOnPrimary:error] || [self canRetryOnMirror:error]) {
      return;
    }
    [self updateStatus:VersionUpdater::FAILED
          error_string:[error.localizedDescription copy]];
-+}
-+
+ }
+ 
 +- (void)updater:(SPUUpdater*)updater
 +    didFinishUpdateCycleForUpdateCheck:(SPUUpdateCheck)updateCheck
 +                                error:(NSError*)error {
-+  if (error && [self canRetryOnMirror:error]) {
++  if ([error.domain isEqualToString:kNeoSourceProbeErrorDomain]) {
++    probeCycleFinished_ = YES;
++    [self restartAfterProbeIfReady];
++    return;
++  }
++  skipProbe_ = NO;
++  if (error && [self canRetryOnPrimary:error]) {
++    retriedPrimary_ = YES;
++    preferMirror_ = NO;
++    downloadingFromMirror_ = NO;
++    skipProbe_ = YES;
++    [self updateStatus:VersionUpdater::CHECKING error_string:nil];
++    [updater checkForUpdatesInBackground];
++  } else if (error && [self canRetryOnMirror:error]) {
 +    usingMirror_ = YES;
++    downloadingFromMirror_ = NO;
 +    [self updateStatus:VersionUpdater::CHECKING error_string:nil];
 +    // Start here while Sparkle is idle. Queuing this lets its scheduler reserve
 +    // another session first, causing checkForUpdatesInBackground to be ignored.
 +    [updater checkForUpdatesInBackground];
 +  } else {
-+    // The next independent check always tries GitHub first.
++    // The next independent check always tries GitHub first and measures the
++    // hosts again.
 +    usingMirror_ = NO;
++    retriedPrimary_ = NO;
++    downloadingFromMirror_ = NO;
++    probedURL_ = nil;
++    preferMirror_ = NO;
 +  }
- }
- 
++}
++
  // Delegated method. Return the appcast URL for the installed channel.
-@@ -164,12 +192,7 @@
+ - (NSString*)feedURLStringForUpdater:(SPUUpdater*)updater {
+   helium::TryAcquireProfilePtr();
+@@ -164,12 +454,7 @@
    }
  
    return base::SysUTF8ToNSString(
@@ -67,7 +338,7 @@
  }
  
  - (nonnull NSSet<NSString *> *)allowedChannelsForUpdater:
-@@ -372,12 +395,14 @@
+@@ -372,12 +657,14 @@ void InitializeSparkleFramework() {
      return;
    }
  
