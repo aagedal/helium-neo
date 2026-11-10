@@ -686,7 +686,7 @@
 +      continue;
 +    }
 +    // The service already opens in WebKit.
-+    if (always_open->GetValue()->GetList().contains(base::Value(service.id))) {
++    if (always_open->GetValue()->GetList().contains(service.id)) {
 +      return;
 +    }
 +
