@@ -131,7 +131,7 @@
 +  const char* service = StreamingService(url);
 +  PrefService* prefs = service ? StreamingPrefs(context) : nullptr;
 +  return prefs && prefs->GetList(helium::kWebKitStreamingAlwaysOpenPref)
-+                      .contains(base::Value(service));
++                      .contains(service);
 +}
 +
 +void SetAlwaysOpenInWebKit(content::BrowserContext* context,
