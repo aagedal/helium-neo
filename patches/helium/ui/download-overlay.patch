@@ -286,12 +286,12 @@
 +          ->GetDisplayNearestView(browser_view_->GetWidget()->GetNativeView())
 +          .device_scale_factor();
 +  if (gfx::Image* image = icon_manager->LookupIconFromFilepath(
-+          item_->GetTargetFilePath(), IconLoader::LARGE, scale);
++          item_->GetTargetFilePath(), IconLoader::NORMAL, scale);
 +      image && !image->IsEmpty()) {
 +    OnFileIconLoaded(*image);
 +  } else {
 +    icon_manager->LoadIcon(
-+        item_->GetTargetFilePath(), IconLoader::LARGE, scale,
++        item_->GetTargetFilePath(), IconLoader::NORMAL, scale,
 +        base::BindOnce(&HeliumDownloadOverlay::OnFileIconLoaded,
 +                       weak_factory_.GetWeakPtr()),
 +        &icon_tracker_);
