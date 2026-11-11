@@ -42,7 +42,7 @@
 +#endif  // CHROME_BROWSER_UI_VIEWS_HELIUM_PAGE_ARCHIVE_H_
 --- /dev/null
 +++ b/chrome/browser/ui/views/helium/page_archive.cc
-@@ -0,0 +1,789 @@
+@@ -0,0 +1,805 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -70,9 +70,11 @@
 +#include "base/strings/utf_string_conversions.h"
 +#include "base/task/single_thread_task_runner.h"
 +#include "base/task/thread_pool.h"
++#include "base/uuid.h"
 +#include "base/values.h"
 +#include "chrome/browser/browser_process.h"
 +#include "chrome/browser/download/download_prefs.h"
++#include "chrome/browser/download/download_target_determiner.h"
 +#include "chrome/browser/profiles/profile.h"
 +#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 +#include "chrome/browser/ui/tabs/tab_strip_model.h"
@@ -451,6 +453,19 @@
 +};
 +#endif  // BUILDFLAG(IS_MAC)
 +
++void DownloadStarted(const std::string& guid,
++                     const GURL& page_url,
++                     download::DownloadItem* item,
++                     download::DownloadInterruptReason reason) {
++  if (!item || reason != download::DOWNLOAD_INTERRUPT_REASON_NONE) {
++    ClearDownloadTargetPath(guid);
++    return;
++  }
++#if BUILDFLAG(IS_MAC)
++  WhereFromUpdater::Watch(ArchiveAddress(page_url), item, reason);
++#endif
++}
++
 +// Runs on a blocking thread. Creates the archive folder and returns a path in
 +// it that does not exist yet, or an empty path on failure.
 +base::FilePath PrepareArchivePath(const base::FilePath& directory,
@@ -495,12 +510,13 @@
 +  auto params =
 +      content::DownloadRequestUtils::CreateDownloadForWebContentsMainFrame(
 +          web_contents, url, kTrafficAnnotation);
-+  params->set_file_path(path);
++  // A path set on the parameters would make the download temporary, which
++  // keeps it out of the downloads bubble and history.
++  const std::string guid = base::Uuid::GenerateRandomV4().AsLowercaseString();
++  SetDownloadTargetPath(guid, path);
++  params->set_guid(guid);
 +  params->set_prompt(false);
-+#if BUILDFLAG(IS_MAC)
-+  params->set_callback(base::BindOnce(&WhereFromUpdater::Watch,
-+                                      ArchiveAddress(page_url)));
-+#endif
++  params->set_callback(base::BindOnce(&DownloadStarted, guid, page_url));
 +  auto* download_manager =
 +      Profile::FromBrowserContext(web_contents->GetBrowserContext())
 +          ->GetDownloadManager();
@@ -1226,3 +1242,102 @@
    ]
  
    public_deps = [ "//chrome/browser:browser_public_dependencies" ]
+--- a/chrome/browser/download/download_target_determiner.h
++++ b/chrome/browser/download/download_target_determiner.h
+@@ -29,6 +29,19 @@
+ class Profile;
+ class DownloadPrefs;
+ 
++namespace helium {
++
++// Saves the download started with `guid` to `path` without prompting. Unlike
++// DownloadUrlParameters::set_file_path(), which makes the download temporary,
++// it stays a regular download that shows in the downloads bubble and history.
++// `path` should not exist yet. Call before starting the download.
++void SetDownloadTargetPath(const std::string& guid, const base::FilePath& path);
++
++// Forgets the path set for a download that did not start.
++void ClearDownloadTargetPath(const std::string& guid);
++
++}  // namespace helium
++
+ // Determines the target of the download.
+ //
+ // Terminology:
+--- a/chrome/browser/download/download_target_determiner.cc
++++ b/chrome/browser/download/download_target_determiner.cc
+@@ -8,10 +8,12 @@
+ #include <string>
+ #include <vector>
+ 
++#include "base/containers/flat_map.h"
+ #include "base/files/file_path.h"
+ #include "base/functional/bind.h"
+ #include "base/location.h"
+ #include "base/metrics/histogram_functions.h"
++#include "base/no_destructor.h"
+ #include "base/rand_util.h"
+ #include "base/strings/string_util.h"
+ #include "base/strings/stringprintf.h"
+@@ -101,6 +103,22 @@
+ const base::FilePath::CharType kCrdownloadSuffix[] =
+     FILE_PATH_LITERAL(".crdownload");
+ 
++// Paths set with helium::SetDownloadTargetPath(), by download GUID.
++base::flat_map<std::string, base::FilePath>& HeliumTargetPaths() {
++  static base::NoDestructor<base::flat_map<std::string, base::FilePath>> paths;
++  return *paths;
++}
++
++std::optional<base::FilePath> TakeHeliumTargetPath(const std::string& guid) {
++  auto it = HeliumTargetPaths().find(guid);
++  if (it == HeliumTargetPaths().end()) {
++    return std::nullopt;
++  }
++  base::FilePath path = std::move(it->second);
++  HeliumTargetPaths().erase(it);
++  return path;
++}
++
+ // Condenses the results from HistoryService::GetVisibleVisitCountToHost() to a
+ // single bool. A host is considered visited before if prior visible visits were
+ // found in history and the first such visit was earlier than the most recent
+@@ -175,6 +193,22 @@
+ 
+ }  // namespace
+ 
++namespace helium {
++
++void SetDownloadTargetPath(const std::string& guid,
++                           const base::FilePath& path) {
++  CHECK_CURRENTLY_ON(BrowserThread::UI);
++  CHECK(path.IsAbsolute());
++  HeliumTargetPaths()[guid] = path;
++}
++
++void ClearDownloadTargetPath(const std::string& guid) {
++  CHECK_CURRENTLY_ON(BrowserThread::UI);
++  HeliumTargetPaths().erase(guid);
++}
++
++}  // namespace helium
++
+ DownloadTargetDeterminerDelegate::~DownloadTargetDeterminerDelegate() = default;
+ 
+ DownloadTargetDeterminer::DownloadTargetDeterminer(
+@@ -324,6 +358,15 @@
+     RecordDownloadPathGeneration(
+         DownloadPathGenerationEvent::USE_EXISTING_VIRTUAL_PATH, false);
+     containment_directory_ = virtual_path_.DirName();
++  } else if (std::optional<base::FilePath> helium_path =
++                 is_forced_path ? std::nullopt
++                                : TakeHeliumTargetPath(download_->GetGuid())) {
++    // Helium chose the path, e.g. for a page archive. Save it there without
++    // prompting.
++    virtual_path_ = std::move(*helium_path);
++    containment_directory_ = virtual_path_.DirName();
++    RecordDownloadPathGeneration(DownloadPathGenerationEvent::USE_FORCE_PATH,
++                                 false);
+   } else if (!is_forced_path) {
+     // If we don't have a forced path, we should construct a path for the
+     // download. Forced paths are only specified for programmatic downloads

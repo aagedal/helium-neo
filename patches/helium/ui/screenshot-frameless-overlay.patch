@@ -1,0 +1,80 @@
+--- a/chrome/browser/ui/views/sharing_hub/screenshot/screenshot_captured_bubble.h
++++ b/chrome/browser/ui/views/sharing_hub/screenshot/screenshot_captured_bubble.h
+@@ -53,7 +53,13 @@
+                            Profile* profile);
+   ~ScreenshotCapturedBubble() override;
+ 
++  // Shows the bubble over the top right of the anchor, the browser window in
++  // frameless mode, instead of below a toolbar button that would reveal the
++  // toolbar.
++  void set_overlay(bool overlay) { overlay_ = overlay; }
++
+  private:
++  gfx::Rect GetBubbleBounds() override;
+   views::View* GetInitiallyFocusedView() override;
+   bool ShouldShowCloseButton() const override;
+   void Init() override;
+@@ -86,6 +92,7 @@
+   const image_editor::ScreenshotCaptureResult capture_;
+   const image_editor::ScreenshotColorInfo color_info_;
+   int column_width_ = 400;
++  bool overlay_ = false;
+   base::WeakPtr<content::WebContents> web_contents_;
+   std::vector<std::string> suggested_permalinks_;
+   std::string selected_suggestion_;
+--- a/chrome/browser/ui/views/sharing_hub/screenshot/screenshot_captured_bubble.cc
++++ b/chrome/browser/ui/views/sharing_hub/screenshot/screenshot_captured_bubble.cc
+@@ -120,6 +120,19 @@
+   return true;
+ }
+ 
++gfx::Rect ScreenshotCapturedBubble::GetBubbleBounds() {
++  gfx::Rect bounds = LocationBarBubbleDelegateView::GetBubbleBounds();
++  views::View* anchor = GetAnchorView();
++  if (!overlay_ || !anchor) {
++    return bounds;
++  }
++  constexpr int kOverlayInset = 16;
++  const gfx::Rect anchor_bounds = anchor->GetBoundsInScreen();
++  bounds.set_x(anchor_bounds.right() - bounds.width() - kOverlayInset);
++  bounds.set_y(anchor_bounds.y() + kOverlayInset);
++  return bounds;
++}
++
+ void ScreenshotCapturedBubble::Init() {
+   set_margins(gfx::Insets(20));
+   SetLayoutManager(std::make_unique<views::BoxLayout>(
+--- a/chrome/browser/ui/sharing_hub/sharing_hub_window_controller.cc
++++ b/chrome/browser/ui/sharing_hub/sharing_hub_window_controller.cc
+@@ -11,6 +11,7 @@
+ #include "chrome/browser/ui/browser_window/public/browser_window_features.h"
+ #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
+ #include "chrome/browser/ui/sharing_hub/sharing_hub_bubble_controller.h"
++#include "chrome/browser/ui/views/frame/browser_view.h"
+ #include "chrome/browser/ui/views/frame/toolbar_button_provider.h"
+ #include "chrome/browser/ui/views/sharing_hub/screenshot/screenshot_captured_bubble.h"
+ #include "chrome/browser/ui/views/toolbar/pinned_toolbar_actions.h"
+@@ -62,12 +63,21 @@
+ SharingHubWindowController::ShowScreenshotCapturedBubble(
+     content::WebContents* contents,
+     const image_editor::ScreenshotCaptureResult& capture) {
+-  views::BubbleAnchor anchor =
+-      ToolbarButtonProvider::From(&*browser_)->GetBubbleAnchor(std::nullopt);
++  // In frameless mode, a bubble anchored in the toolbar would reveal it.
++  BrowserView* browser_view = BrowserView::GetBrowserViewForBrowser(&*browser_);
++  const bool overlay =
++      browser_view && browser_view->IsZenModeEnabledForLayout();
++  views::BubbleAnchor anchor = overlay ? views::BubbleAnchor(browser_view)
++                                       : ToolbarButtonProvider::From(&*browser_)
++                                             ->GetBubbleAnchor(std::nullopt);
+   auto bubble = std::make_unique<ScreenshotCapturedBubble>(
+       anchor, contents, capture,
+       Profile::FromBrowserContext(contents->GetBrowserContext()));
+   auto* bubble_ptr = bubble.get();
++  if (overlay) {
++    bubble->set_overlay(true);
++    bubble->SetArrow(views::BubbleBorder::FLOAT);
++  }
+ 
+   views::BubbleDialogDelegateView::CreateBubble(std::move(bubble));
+   bubble_ptr->ShowForReason(LocationBarBubbleDelegateView::USER_GESTURE);

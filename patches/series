@@ -396,3 +396,5 @@ helium/ui/command-bar.patch
 helium/ui/archive-page.patch
 helium/ui/macos-webkit-opt-in.patch
 helium/ui/macos-webkit-tab-fixes.patch
+helium/ui/download-overlay.patch
+helium/ui/screenshot-frameless-overlay.patch
