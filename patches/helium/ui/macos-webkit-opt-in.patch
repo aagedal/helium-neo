@@ -1,0 +1,742 @@
+--- a/chrome/browser/BUILD.gn
++++ b/chrome/browser/BUILD.gn
+@@ -347,7 +347,10 @@ if (is_mac) {
+       "//ui/gfx",
+     ]
+     deps = [
++      "//components/prefs",
++      "//components/user_prefs",
+       "//content/public/browser",
++      "//net",
+       "//ui/base",
+       "//url",
+     ]
+--- a/chrome/browser/helium_flag_entries.h
++++ b/chrome/browser/helium_flag_entries.h
+@@ -99,7 +99,8 @@
+      kOsMac, SINGLE_VALUE_TYPE("helium-webkit-streaming")},
+ #if BUILDFLAG(IS_MAC)
+     {"helium-webkit-streaming-tabs", "WebKit streaming tabs",
+-     "Hosts streaming services in Helium tabs on macOS 14+. Use the tab menu to "
++     "Hosts streaming services in Helium tabs on macOS 14+ when chosen from "
++     "the address bar, or always once the user agrees. Use the tab menu to "
+      "switch other HTTP(S) pages manually. Uses Helium’s address bar and "
+      "navigation controls. Separate logins; no extensions or session restore. "
+      "Hidden media is paused. Excludes private/guest windows. Overrides "
+--- a/chrome/browser/helium_webkit_streaming_mac.h
++++ b/chrome/browser/helium_webkit_streaming_mac.h
+@@ -12,6 +12,7 @@
+ #include "ui/gfx/native_ui_types.h"
+ 
+ class GURL;
++class PrefRegistrySimple;
+ 
+ namespace content {
+ class WebContents;
+@@ -20,10 +21,20 @@ class NavigationThrottleRegistry;
+ 
+ namespace helium {
+ // Hosts streaming services in Helium tabs on macOS 14+. Enabled by default;
+-// can be turned off from chrome://flags.
++// can be turned off from chrome://flags. A service opens in WebKit only when
++// the user picks "Open ... in WebKit" in the address bar, or has chosen to
++// always open it there.
+ COMPONENT_EXPORT(HELIUM_WEBKIT_STREAMING)
+ BASE_DECLARE_FEATURE(kHeliumWebKitStreamingTabs);
+ 
++// List of streaming service ids that always open in WebKit. Registered only
++// while WebKit streaming tabs are available; the omnibox, which cannot depend
++// on this component, offers WebKit only when the pref exists.
++inline constexpr char kWebKitStreamingAlwaysOpenPref[] =
++    "helium.webkit_streaming.always_open";
++COMPONENT_EXPORT(HELIUM_WEBKIT_STREAMING)
++void RegisterWebKitStreamingProfilePrefs(PrefRegistrySimple* registry);
++
+ // The WebContents remains a blank Chromium shell. Its user data owns the
+ // optional WebKit session; no Chromium security state represents the WK page.
+ // URL is for display only; it does not fabricate Chromium navigation/security.
+--- a/chrome/browser/helium_webkit_streaming_mac.mm
++++ b/chrome/browser/helium_webkit_streaming_mac.mm
+@@ -9,7 +9,9 @@
+ 
+ #include <map>
+ #include <memory>
++#include <optional>
+ #include <string>
++#include <string_view>
+ 
+ #include "base/command_line.h"
+ #include "base/containers/span.h"
+@@ -26,6 +28,11 @@
+ #include "base/strings/string_util.h"
+ #include "base/strings/sys_string_conversions.h"
+ #include "base/uuid.h"
++#include "base/values.h"
++#include "components/prefs/pref_registry_simple.h"
++#include "components/prefs/pref_service.h"
++#include "components/prefs/scoped_user_pref_update.h"
++#include "components/user_prefs/user_prefs.h"
+ #include "content/public/browser/browser_context.h"
+ #include "content/public/browser/navigation_controller.h"
+ #include "content/public/browser/navigation_entry.h"
+@@ -37,6 +44,7 @@
+ #include "content/public/browser/web_contents_delegate.h"
+ #include "content/public/browser/web_contents_observer.h"
+ #include "content/public/common/referrer.h"
++#include "net/http/http_request_headers.h"
+ #include "ui/base/page_transition_types.h"
+ #include "ui/base/window_open_disposition.h"
+ #include "url/gurl.h"
+@@ -73,6 +81,62 @@ bool IsStreamingURL(const GURL& url) {
+   return StreamingService(url) != nullptr;
+ }
+ 
++NSString* StreamingServiceName(const char* service) {
++  std::string_view id(service);
++  if (id == "netflix")
++    return @"Netflix";
++  if (id == "tv2")
++    return @"TV 2 Play";
++  if (id == "hbomax")
++    return @"HBO Max";
++  if (id == "disneyplus")
++    return @"Disney+";
++  return @"this service";
++}
++
++// The omnibox marks "Open ... in WebKit" with this header (see
++// kHeliumWebKitHeader in components/omnibox/browser/autocomplete_match.h).
++// Only browser-initiated navigations may carry it; the throttle removes it
++// before the request is sent.
++constexpr char kWebKitRequestHeader[] = "x-helium-webkit";
++
++enum class WebKitRequest { kNone, kOpen };
++
++WebKitRequest GetWebKitRequest(content::NavigationHandle* handle) {
++  if (!handle->IsInPrimaryMainFrame() || handle->IsRendererInitiated())
++    return WebKitRequest::kNone;
++  std::optional<std::string> value =
++      handle->GetRequestHeaders().GetHeader(kWebKitRequestHeader);
++  return value == "open" ? WebKitRequest::kOpen : WebKitRequest::kNone;
++}
++
++PrefService* StreamingPrefs(content::BrowserContext* context) {
++  PrefService* prefs = context ? user_prefs::UserPrefs::Get(context) : nullptr;
++  return prefs && prefs->FindPreference(helium::kWebKitStreamingAlwaysOpenPref)
++             ? prefs
++             : nullptr;
++}
++
++bool IsAlwaysOpenInWebKit(content::BrowserContext* context, const GURL& url) {
++  const char* service = StreamingService(url);
++  PrefService* prefs = service ? StreamingPrefs(context) : nullptr;
++  return prefs && prefs->GetList(helium::kWebKitStreamingAlwaysOpenPref)
++                      .contains(service);
++}
++
++void SetAlwaysOpenInWebKit(content::BrowserContext* context,
++                           const char* service,
++                           bool always) {
++  PrefService* prefs = StreamingPrefs(context);
++  if (!prefs || !service)
++    return;
++  ScopedListPrefUpdate update(prefs, helium::kWebKitStreamingAlwaysOpenPref);
++  base::Value value(service);
++  update->EraseValue(value);
++  if (always)
++    update->Append(std::move(value));
++}
++
+ // Main-frame pages an automatic session may stay on: the routed services plus
+ // their sign-in hosts. Everything else goes back to Chromium, where Safe
+ // Browsing, extensions and the usual security UI apply. Add a service's
+@@ -234,6 +298,10 @@ void WithStoreIdentifier(const base::FilePath& profile_path,
+ // whether they were requested as a new window.
+ - (void)setHandOffCallback:
+     (base::RepeatingCallback<void(const GURL&, bool)>)callback;
++// Shows a dismissible notification over the page offering to always open
++// |serviceName| in WebKit; |accept| runs if the user agrees.
++- (void)offerAlwaysOpen:(NSString*)serviceName
++                 accept:(base::OnceClosure)accept;
+ - (NSView*)streamingView;
+ - (NSURL*)pageURL;
+ - (WKWebView*)webView;
+@@ -251,6 +319,8 @@ void WithStoreIdentifier(const base::FilePath& profile_path,
+   base::RepeatingClosure _navigationChanged;
+   base::RepeatingCallback<void(const GURL&, bool)> _handOff;
+   BOOL _restrictToServices;
++  NSView* _offer;
++  base::OnceClosure _acceptOffer;
+ }
+ 
+ - (instancetype)initWithURL:(NSURL*)url
+@@ -388,6 +458,69 @@ void WithStoreIdentifier(const base::FilePath& profile_path,
+     (base::RepeatingCallback<void(const GURL&, bool)>)callback {
+   _handOff = std::move(callback);
+ }
++- (void)offerAlwaysOpen:(NSString*)serviceName
++                 accept:(base::OnceClosure)accept {
++  [self dismissOffer:nil];
++  _acceptOffer = std::move(accept);
++
++  NSVisualEffectView* offer = [[NSVisualEffectView alloc] init];
++  offer.material = NSVisualEffectMaterialPopover;
++  offer.blendingMode = NSVisualEffectBlendingModeWithinWindow;
++  offer.state = NSVisualEffectStateActive;
++  offer.wantsLayer = YES;
++  offer.layer.cornerRadius = 10;
++  offer.layer.masksToBounds = YES;
++
++  NSTextField* label = [NSTextField
++      labelWithString:[NSString
++                          stringWithFormat:@"Always open %@ in WebKit?",
++                                           serviceName]];
++  label.lineBreakMode = NSLineBreakByTruncatingTail;
++  NSButton* always = [NSButton buttonWithTitle:@"Always"
++                                        target:self
++                                        action:@selector(acceptOffer:)];
++  always.keyEquivalent = @"";
++  NSButton* notNow = [NSButton buttonWithTitle:@"Not Now"
++                                        target:self
++                                        action:@selector(dismissOffer:)];
++  NSStackView* row =
++      [NSStackView stackViewWithViews:@[ label, always, notNow ]];
++  row.orientation = NSUserInterfaceLayoutOrientationHorizontal;
++  row.spacing = 10;
++  row.edgeInsets = NSEdgeInsetsMake(8, 14, 8, 10);
++  [label setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow
++                                  forOrientation:
++                                      NSLayoutConstraintOrientationHorizontal];
++
++  row.translatesAutoresizingMaskIntoConstraints = NO;
++  offer.translatesAutoresizingMaskIntoConstraints = NO;
++  [offer addSubview:row];
++  // Native views sit above the page, which cannot cover or click them.
++  [_root addSubview:offer positioned:NSWindowAbove relativeTo:_webView];
++  [NSLayoutConstraint activateConstraints:@[
++    [row.topAnchor constraintEqualToAnchor:offer.topAnchor],
++    [row.bottomAnchor constraintEqualToAnchor:offer.bottomAnchor],
++    [row.leadingAnchor constraintEqualToAnchor:offer.leadingAnchor],
++    [row.trailingAnchor constraintEqualToAnchor:offer.trailingAnchor],
++    [offer.topAnchor constraintEqualToAnchor:_webView.topAnchor constant:12],
++    [offer.centerXAnchor constraintEqualToAnchor:_webView.centerXAnchor],
++    [offer.widthAnchor
++        constraintLessThanOrEqualToAnchor:_webView.widthAnchor
++                                 constant:-24],
++  ]];
++  _offer = offer;
++}
++- (void)acceptOffer:(id)sender {
++  base::OnceClosure accept = std::move(_acceptOffer);
++  [self dismissOffer:sender];
++  if (accept)
++    std::move(accept).Run();
++}
++- (void)dismissOffer:(id)sender {
++  _acceptOffer.Reset();
++  [_offer removeFromSuperview];
++  _offer = nil;
++}
+ - (void)observeValueForKeyPath:(NSString*)keyPath
+                       ofObject:(id)object
+                         change:(NSDictionary<NSKeyValueChangeKey, id>*)change
+@@ -412,6 +545,7 @@ void WithStoreIdentifier(const base::FilePath& profile_path,
+   [_webView pauseAllMediaPlaybackWithCompletionHandler:nil];
+ }
+ - (void)shutdown {
++  [self dismissOffer:nil];
+   _navigationChanged.Reset();
+   _handOff.Reset();
+   [_root setActivateCallback:base::RepeatingClosure()];
+@@ -550,23 +684,27 @@ class StreamingTab : public base::SupportsUserData::Data,
+       : content::WebContentsObserver(contents) {}
+   ~StreamingTab() override { Deactivate(); }
+ 
+-  void Open(const GURL& url) {
++  // |offer_always| shows the offer to always open the service in WebKit.
++  void Open(const GURL& url, bool offer_always = false) {
+     last_requested_url_ = url;
+     if (controller_) {
+       [controller_ setRestrictToServices:!manual_webkit_];
+       [controller_ loadURL:
+           [NSURL URLWithString:base::SysUTF8ToNSString(url.spec())]];
++      if (offer_always)
++        OfferAlwaysOpen(url);
+       return;
+     }
+     // A navigation that starts meanwhile invalidates this callback.
+     WithStoreIdentifier(
+         web_contents()->GetBrowserContext()->GetPath(),
+-        base::BindOnce(&StreamingTab::Create, weak_factory_.GetWeakPtr(), url));
++        base::BindOnce(&StreamingTab::Create, weak_factory_.GetWeakPtr(), url,
++                       offer_always));
+   }
+ 
+-  void Create(const GURL& url, const std::string& store_id) {
++  void Create(const GURL& url, bool offer_always, const std::string& store_id) {
+     if (controller_) {
+-      Open(url);
++      Open(url, offer_always);
+       return;
+     }
+     {
+@@ -598,9 +736,30 @@ class StreamingTab : public base::SupportsUserData::Data,
+       web_contents()->GetController().LoadURLWithParams(params);
+       changed_.Notify();
+       VLOG(1) << "WebKit streaming tab opened";
++      if (offer_always)
++        OfferAlwaysOpen(url);
+     }
+   }
+ 
++  void OfferAlwaysOpen(const GURL& url) {
++    const char* service = StreamingService(url);
++    if (!controller_ || !service ||
++        IsAlwaysOpenInWebKit(web_contents()->GetBrowserContext(), url))
++      return;
++    [controller_
++        offerAlwaysOpen:StreamingServiceName(service)
++                 accept:base::BindOnce(&StreamingTab::AlwaysOpen,
++                                       activation_factory_.GetWeakPtr(),
++                                       std::string(service))];
++  }
++  void AlwaysOpen(const std::string& service) {
++    if (web_contents())
++      SetAlwaysOpenInWebKit(web_contents()->GetBrowserContext(),
++                            service.c_str(), true);
++  }
++  // An explicit "Open ... in WebKit" overrides an earlier Chromium choice.
++  void PreferWebKit() { prefer_chromium_ = false; }
++
+   // Called from WebKit delegate callbacks; navigate Chromium afterwards.
+   void HandOff(const GURL& url, bool new_window) {
+     base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+@@ -676,9 +835,12 @@ class StreamingTab : public base::SupportsUserData::Data,
+     return changed_.Add(std::move(callback));
+   }
+   void Pause() { [controller_ pauseMedia]; }
+-  bool ShouldRoute(const GURL& url) const {
++  bool ShouldRoute(const GURL& url, WebKitRequest request) const {
++    if (request == WebKitRequest::kOpen)
++      return IsStreamingURL(url);
+     return !prefer_chromium_ &&
+-           (IsStreamingURL(url) || (manual_webkit_ && IsWebKitPageURL(url)));
++           (IsAlwaysOpenInWebKit(web_contents()->GetBrowserContext(), url) ||
++            (manual_webkit_ && IsWebKitPageURL(url)));
+   }
+   void Toggle() {
+     weak_factory_.InvalidateWeakPtrs();
+@@ -690,7 +852,10 @@ class StreamingTab : public base::SupportsUserData::Data,
+         url = last_requested_url_;
+       // An explicit Chromium choice wins over the automatic service list for
+       // the lifetime of this tab, including subsequent streaming navigations.
++      // It also ends "always open in WebKit" for the service.
+       prefer_chromium_ = true;
++      SetAlwaysOpenInWebKit(web_contents()->GetBrowserContext(),
++                            StreamingService(url), false);
+       manual_webkit_ = false;
+       Deactivate();
+       content::NavigationController::LoadURLParams params(url);
+@@ -719,7 +884,7 @@ class StreamingTab : public base::SupportsUserData::Data,
+     // Cross-domain links inside WK keep its service/authentication session.
+     if (handle->IsPost() ||
+         (handle->IsRendererInitiated() && !handle->HasUserGesture()) ||
+-        !ShouldRoute(handle->GetURL())) {
++        !ShouldRoute(handle->GetURL(), GetWebKitRequest(handle))) {
+       manual_webkit_ = false;
+       Deactivate();
+     }
+@@ -763,7 +928,9 @@ StreamingTab* GetStreamingTab(content::WebContents* contents) {
+                   : nullptr;
+ }
+ 
+-bool OpenStreamingTab(content::WebContents* contents, const GURL& url) {
++bool OpenStreamingTab(content::WebContents* contents,
++                      const GURL& url,
++                      bool offer_always) {
+   auto* tab = GetStreamingTab(contents);
+   if (!tab) {
+     auto owned = std::make_unique<StreamingTab>(contents);
+@@ -772,7 +939,8 @@ bool OpenStreamingTab(content::WebContents* contents, const GURL& url) {
+   }
+   // Never start another navigation inside a NavigationThrottle callback.
+   base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+-      FROM_HERE, base::BindOnce(&StreamingTab::Open, tab->GetWeakPtr(), url));
++      FROM_HERE, base::BindOnce(&StreamingTab::Open, tab->GetWeakPtr(), url,
++                                offer_always));
+   return true;
+ }
+ 
+@@ -824,6 +992,10 @@ class WebKitStreamingThrottle : public content::NavigationThrottle {
+  private:
+   ThrottleCheckResult MaybeOpen() {
+     auto* handle = navigation_handle();
++    // The omnibox's marker is for Helium only; never send it to the site.
++    const WebKitRequest request = GetWebKitRequest(handle);
++    if (handle->GetRequestHeaders().HasHeader(kWebKitRequestHeader))
++      handle->RemoveRequestHeader(kWebKitRequestHeader);
+     if (!handle->IsInPrimaryMainFrame() || handle->IsPost() ||
+         (handle->IsRendererInitiated() && !handle->HasUserGesture())) {
+       return PROCEED;
+@@ -831,14 +1003,28 @@ class WebKitStreamingThrottle : public content::NavigationThrottle {
+     auto* profile = handle->GetWebContents()->GetBrowserContext();
+     if (profile->IsOffTheRecord())
+       return PROCEED;
++    const GURL& url = handle->GetURL();
+     const bool in_tab = IsWebKitStreamingTabsEnabled();
+-    auto* tab = in_tab ? GetStreamingTab(handle->GetWebContents()) : nullptr;
+-    if (!(tab ? tab->ShouldRoute(handle->GetURL())
+-              : IsStreamingURL(handle->GetURL())))
++    if (!in_tab) {
++      // The command-line streaming window opens every service.
++      return IsStreamingURL(url) && OpenStreamingWindow(profile, url)
++                 ? CANCEL_AND_IGNORE
++                 : PROCEED;
++    }
++    auto* tab = GetStreamingTab(handle->GetWebContents());
++    const bool route =
++        tab ? tab->ShouldRoute(url, request)
++            : (request == WebKitRequest::kOpen
++                   ? IsStreamingURL(url)
++                   : IsAlwaysOpenInWebKit(profile, url));
++    if (!route)
+       return PROCEED;
+-    return (in_tab ? OpenStreamingTab(handle->GetWebContents(), handle->GetURL())
+-                   : OpenStreamingWindow(profile, handle->GetURL())) ? CANCEL_AND_IGNORE
+-                                                          : PROCEED;
++    if (tab && request == WebKitRequest::kOpen)
++      tab->PreferWebKit();
++    return OpenStreamingTab(handle->GetWebContents(), url,
++                            /*offer_always=*/request == WebKitRequest::kOpen)
++               ? CANCEL_AND_IGNORE
++               : PROCEED;
+   }
+ };
+ }  // namespace
+@@ -917,6 +1103,11 @@ void ToggleWebKitStreamingTab(content::WebContents* contents,
+   tab->Toggle();
+ }
+ 
++void RegisterWebKitStreamingProfilePrefs(PrefRegistrySimple* registry) {
++  if (IsWebKitStreamingTabsEnabled())
++    registry->RegisterListPref(kWebKitStreamingAlwaysOpenPref);
++}
++
+ void MaybeAddWebKitStreamingThrottle(
+     content::NavigationThrottleRegistry& registry, bool profile_allowed) {
+   if (!profile_allowed)
+--- a/chrome/browser/ui/BUILD.gn
++++ b/chrome/browser/ui/BUILD.gn
+@@ -1062,6 +1062,9 @@ source_set("browser_ui_prefs") {
+   if (is_win && is_chrome_branded) {
+     deps += [ "//chrome/browser/win/installer_downloader:prefs" ]
+   }
++  if (is_mac) {
++    deps += [ "//chrome/browser:helium_webkit_streaming" ]
++  }
+ }
+ 
+ source_set("browser_otr_state") {
+--- a/chrome/browser/ui/browser_ui_prefs.cc
++++ b/chrome/browser/ui/browser_ui_prefs.cc
+@@ -36,6 +36,10 @@
+ #include "ui/accessibility/accessibility_features.h"
+ #endif
+ 
++#if BUILDFLAG(IS_MAC)
++#include "chrome/browser/helium_webkit_streaming_mac.h"
++#endif
++
+ void RegisterBrowserPrefs(PrefRegistrySimple* registry) {
+   registry->RegisterBooleanPref(prefs::kAllowFileSelectionDialogs, true);
+ 
+@@ -236,6 +240,7 @@ void RegisterBrowserUserPrefs(user_prefs::PrefRegistrySyncable* registry) {
+   registry->RegisterBooleanPref(
+       prefs::kAllowJavascriptAppleEvents, false,
+       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
++  helium::RegisterWebKitStreamingProfilePrefs(registry);
+ #else
+   registry->RegisterBooleanPref(prefs::kFullscreenAllowed, true);
+ #endif
+--- a/chrome/browser/ui/views/helium/command_bar_view.cc
++++ b/chrome/browser/ui/views/helium/command_bar_view.cc
+@@ -889,7 +889,9 @@ void CommandBarView::RebuildEntries() {
+       continue;
+     }
+     Entry entry;
+-    if (!AutocompleteMatch::IsSearchType(match.type)) {
++    // "Open ... in WebKit" must not become a switch to an open tab.
++    if (!AutocompleteMatch::IsSearchType(match.type) &&
++        !match.extra_headers.contains(kHeliumWebKitHeader)) {
+       const GURL stripped =
+           match.stripped_destination_url.is_valid()
+               ? match.stripped_destination_url
+@@ -1361,6 +1363,11 @@ CommandBarView::Entry CommandBarView::CreateMatchEntry(
+         engine != template_url_service->GetDefaultSearchProvider()) {
+       entry.favicon_url = GURL(engine->url()).GetWithEmptyPath();
+     }
++  } else if (match.extra_headers.contains(kHeliumWebKitHeader)) {
++    // "Open Netflix in WebKit" with its explanation below.
++    entry.title = match.contents;
++    entry.detail = match.description;
++    entry.favicon_url = match.destination_url;
+   } else {
+     entry.title = match.description.empty() ? match.contents
+                                             : match.description;
+--- a/components/omnibox/browser/autocomplete_match.h
++++ b/components/omnibox/browser/autocomplete_match.h
+@@ -69,6 +69,9 @@ const char kACMatchPropertyContentsStartIndex[] = "match contents start index";
+ // scoring non-default match.
+ const char kACMatchPropertyScoreBoostedFrom[] = "score_boosted_from";
+ inline constexpr char kXGeoHeader[] = "x-geo";
++// Marks a Helium match that opens a streaming service in a WebKit tab. The
++// browser consumes it before the request is sent.
++inline constexpr char kHeliumWebKitHeader[] = "x-helium-webkit";
+ 
+ // Util structs/enums ----------------------------------------------------------
+ 
+@@ -178,6 +181,9 @@ enum class AutocompleteMatchDedupeType {
+   // Search matches created as a duplicate of an existing match which
+   // additionally send location data when selected.
+   kInlineLocationSignaling,
++  // Helium matches that open the URL in a WebKit tab, shown next to the
++  // ordinary match for the same URL.
++  kHeliumWebKit,
+ };
+ 
+ // GENERATED_JAVA_ENUM_PACKAGE: org.chromium.components.omnibox
+--- a/components/omnibox/browser/autocomplete_result.cc
++++ b/components/omnibox/browser/autocomplete_result.cc
+@@ -1834,7 +1834,9 @@ void AutocompleteResult::MergeMatchesByProvider(ACMatches* old_matches,
+ AutocompleteResult::MatchDedupComparator
+ AutocompleteResult::GetMatchComparisonFields(const AutocompleteMatch& match) {
+   AutocompleteMatchDedupeType type;
+-  if (match.provider != nullptr &&
++  if (match.extra_headers.contains(kHeliumWebKitHeader)) {
++    type = AutocompleteMatchDedupeType::kHeliumWebKit;
++  } else if (match.provider != nullptr &&
+       match.provider->type() == AutocompleteProvider::Type::kVerbatimMatch) {
+     type = AutocompleteMatchDedupeType::kVerbatimProvider;
+   } else if (match.type == AutocompleteMatchType::kCalculator) {
+--- a/components/omnibox/browser/builtin_provider.cc
++++ b/components/omnibox/browser/builtin_provider.cc
+@@ -6,15 +6,20 @@
+ 
+ #include <stddef.h>
+ 
++#include <algorithm>
+ #include <string>
+ 
+ #include "base/strings/strcat.h"
+ #include "base/strings/string_util.h"
+ #include "base/strings/utf_string_conversions.h"
++#include "base/values.h"
++#include "build/build_config.h"
+ #include "components/omnibox/browser/autocomplete_input.h"
+ #include "components/omnibox/browser/autocomplete_match.h"
+ #include "components/omnibox/browser/autocomplete_match_classification.h"
+ #include "components/omnibox/browser/autocomplete_provider_client.h"
++#include "components/prefs/pref_service.h"
++#include "net/base/registry_controlled_domains/registry_controlled_domain.h"
+ #include "components/url_formatter/url_fixer.h"
+ #include "third_party/metrics_proto/omnibox_focus_type.pb.h"
+ #include "third_party/metrics_proto/omnibox_input_type.pb.h"
+@@ -22,6 +27,74 @@
+ 
+ const int BuiltinProvider::kRelevance = 860;
+ 
++namespace {
++
++#if BUILDFLAG(IS_MAC)
++// Keep in sync with StreamingService() in
++// chrome/browser/helium_webkit_streaming_mac.mm.
++struct HeliumStreamingService {
++  const char* id;
++  const char16_t* name;
++  // Hosts, with their subdomains. Typing the start of one completes it.
++  const char* hosts[4];
++  // For services with a domain per country: the first label of the site,
++  // e.g. "viaplay" for viaplay.dk. Matches typed URLs only.
++  const char* site_label;
++};
++constexpr HeliumStreamingService kHeliumStreamingServices[] = {
++    {"netflix", u"Netflix", {"netflix.com"}, nullptr},
++    {"tv2", u"TV 2 Play", {"play.tv2.no"}, nullptr},
++    {"hbomax", u"HBO Max", {"hbomax.com", "max.com"}, nullptr},
++    {"disneyplus", u"Disney+", {"disneyplus.com"}, nullptr},
++    // Also Prime Video on Amazon's own sites; see IsAmazonVideoUrl().
++    {"primevideo", u"Prime Video", {"primevideo.com"}, nullptr},
++    {"appletv", u"Apple TV+", {"tv.apple.com"}, nullptr},
++    {"viaplay", u"Viaplay",
++     {"viaplay.no", "viaplay.se", "viaplay.dk", "viaplay.fi"}, "viaplay"},
++    {"skyshowtime", u"SkyShowtime", {"skyshowtime.com"}, nullptr},
++    {"discoveryplus", u"discovery+", {"discoveryplus.com"}, "discoveryplus"},
++    {"teliaplay", u"Telia Play", {"teliaplay.se"}, "teliaplay"},
++    {"nrktv", u"NRK TV", {"tv.nrk.no"}, nullptr},
++    {"hulu", u"Hulu", {"hulu.com"}, nullptr},
++    {"paramountplus", u"Paramount+", {"paramountplus.com"}, nullptr},
++    {"peacock", u"Peacock", {"peacocktv.com"}, nullptr},
++    {"spotify", u"Spotify", {"spotify.com"}, nullptr},
++};
++
++std::string SiteLabel(const GURL& url) {
++  const std::string site =
++      net::registry_controlled_domains::GetDomainAndRegistry(
++          url, net::registry_controlled_domains::EXCLUDE_PRIVATE_REGISTRIES);
++  return site.substr(0, site.find('.'));
++}
++
++// Prime Video on Amazon's own sites, e.g. amazon.de/gp/video or
++// amazon.de/-/en/gp/video, but not the rest of the shop.
++bool IsAmazonVideoUrl(const GURL& url) {
++  if (SiteLabel(url) != "amazon") {
++    return false;
++  }
++  std::string_view path = url.path();
++  if (path.starts_with("/-/")) {
++    const size_t next = path.find('/', 3);
++    path = next == std::string_view::npos ? std::string_view()
++                                          : path.substr(next);
++  }
++  return path.starts_with("/gp/video") || path.starts_with("/Amazon-Video") ||
++         path.starts_with("/Prime-Video");
++}
++
++// Chrome registers this list of service ids only while WebKit streaming tabs
++// are available, so its absence also means "do not offer WebKit".
++constexpr char kHeliumWebKitAlwaysOpenPref[] =
++    "helium.webkit_streaming.always_open";
++
++// Above url-what-you-typed and history, so WebKit is the first suggestion.
++constexpr int kHeliumWebKitRelevance = 1500;
++#endif  // BUILDFLAG(IS_MAC)
++
++}  // namespace
++
+ BuiltinProvider::BuiltinProvider(AutocompleteProviderClient* client)
+     : AutocompleteProvider(AutocompleteProvider::Type::kBuiltin),
+       client_(client) {
+@@ -41,6 +114,95 @@
+     DoBuiltinAutocompletion(input.text());
+     UpdateRelevanceScores(input);
+   }
++  // After UpdateRelevanceScores(), which would rescore this match.
++  AddHeliumWebKitMatch(input);
++}
++
++void BuiltinProvider::AddHeliumWebKitMatch(const AutocompleteInput& input) {
++#if BUILDFLAG(IS_MAC)
++  PrefService* prefs = client_->GetPrefs();
++  if (client_->IsOffTheRecord() || !prefs) {
++    return;
++  }
++  const PrefService::Preference* always_open =
++      prefs->FindPreference(kHeliumWebKitAlwaysOpenPref);
++  if (!always_open || !always_open->GetValue()->is_list()) {
++    return;
++  }
++  const std::u16string& text = input.text();
++  if (text.empty() ||
++      std::ranges::any_of(text, [](char16_t c) {
++        return base::IsUnicodeWhitespace(c);
++      })) {
++    return;
++  }
++
++  // Either a URL on the service ("netflix.com/browse"), or a prefix of its
++  // host that the match completes inline ("netf" -> "netflix.com").
++  const GURL typed_url = url_formatter::FixupURL(base::UTF16ToUTF8(text),
++                                                 std::string());
++  std::string prefix = base::ToLowerASCII(base::UTF16ToUTF8(text));
++  if (prefix.starts_with("www.")) {
++    prefix = prefix.substr(4);
++  }
++  const bool can_complete = prefix.size() >= 4 &&
++                            prefix.find_first_of("/:?#") == std::string::npos;
++
++  const bool usable_url = typed_url.is_valid() &&
++                          typed_url.SchemeIsHTTPOrHTTPS() &&
++                          !typed_url.has_username() &&
++                          !typed_url.has_password() && !typed_url.has_port();
++  GURL::Replacements https;
++  https.SetSchemeStr("https");
++  for (const HeliumStreamingService& service : kHeliumStreamingServices) {
++    GURL destination;
++    std::u16string completion;
++    if (usable_url &&
++        ((service.site_label && SiteLabel(typed_url) == service.site_label) ||
++         (std::string_view(service.id) == "primevideo" &&
++          IsAmazonVideoUrl(typed_url)))) {
++      destination = typed_url.ReplaceComponents(https);
++    }
++    for (const char* host : service.hosts) {
++      if (!host || destination.is_valid()) {
++        continue;
++      }
++      if (usable_url && typed_url.DomainIs(host)) {
++        destination = typed_url.ReplaceComponents(https);
++      } else if (can_complete && std::string_view(host).starts_with(prefix) &&
++                 prefix != host) {
++        destination = GURL(base::StrCat({"https://", host, "/"}));
++        completion = base::UTF8ToUTF16(std::string_view(host).substr(
++            prefix.size()));
++      }
++    }
++    if (!destination.is_valid()) {
++      continue;
++    }
++    // The service already opens in WebKit.
++    if (always_open->GetValue()->GetList().contains(service.id)) {
++      return;
++    }
++
++    AutocompleteMatch match(this, kHeliumWebKitRelevance, false,
++                            omnibox::AutocompleteMatchType::kNavsuggest);
++    match.suggest_type = omnibox::TYPE_NAVIGATION;
++    match.destination_url = destination;
++    match.fill_into_edit = text + completion;
++    match.inline_autocompletion = completion;
++    match.allowed_to_be_default_match =
++        completion.empty() || !input.prevent_inline_autocomplete();
++    match.contents = base::StrCat({u"Open ", service.name, u" in WebKit"});
++    match.contents_class = {ACMatchClassification(0, ACMatchClassification::NONE)};
++    match.description =
++        u"Without WebKit, playback may fail or be lower quality";
++    match.description_class = {
++        ACMatchClassification(0, ACMatchClassification::DIM)};
++    match.extra_headers[kHeliumWebKitHeader] = "open";
++    matches_.push_back(std::move(match));
++    return;
++  }
++#endif  // BUILDFLAG(IS_MAC)
+ }
+ 
+ BuiltinProvider::~BuiltinProvider() = default;
+--- a/components/omnibox/browser/builtin_provider.h
++++ b/components/omnibox/browser/builtin_provider.h
+@@ -37,6 +37,10 @@ class BuiltinProvider : public AutocompleteProvider {
+   // chrome://version.
+   void DoBuiltinAutocompletion(const std::u16string& text);
+ 
++  // Offers to open a streaming service typed into the omnibox in a WebKit tab
++  // (macOS only).
++  void AddHeliumWebKitMatch(const AutocompleteInput& input);
++
+   // De-deupes the relevance scores, determines if a match can be default, and
+   // if a match can be default, updates its relevance score accordingly.
+   void UpdateRelevanceScores(const AutocompleteInput& input);
+--- a/components/omnibox/browser/shortcuts_backend.cc
++++ b/components/omnibox/browser/shortcuts_backend.cc
+@@ -342,6 +342,12 @@ void ShortcutsBackend::AddOrUpdateShortcut(const std::u16string& text,
+     return;
+   }
+ 
++  // A shortcut would keep the text of a Helium WebKit match but not its
++  // header, so it would no longer open WebKit.
++  if (match.extra_headers.contains(kHeliumWebKitHeader)) {
++    return;
++  }
++
+   // Answers are visually loud and context specific (e.g. history embedding
+   // answers are limited to the @history scope and question-like inputs).
+   // Showing them in a different context would look bad.

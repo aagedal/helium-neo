@@ -71,13 +71,14 @@ def main(): # pylint: disable=too-many-locals,too-many-branches,too-many-stateme
     parser.add_argument('--source', type=Path, required=True)
     parser.add_argument('--scenario',
                         choices=[
-                            'current', 'feed-fallback', 'download-fallback', 'both-down',
-                            'bad-signature', 'disabled', 'no-consent'
+                            'current', 'feed-fallback', 'download-fallback', 'slow-primary',
+                            'both-down', 'bad-signature', 'disabled', 'no-consent'
                         ],
                         required=True)
     args = parser.parse_args()
     manifest = json.loads((args.release / 'update-manifest.json').read_text())
     archive = args.release / manifest['installer']
+    installer_paths = ('/primary/' + archive.name, '/backup/' + archive.name)
     requests = []
     http_port = free_port()
     origin = 'http://127.0.0.1:' + str(http_port)
@@ -88,11 +89,42 @@ def main(): # pylint: disable=too-many-locals,too-many-branches,too-many-stateme
         def log_message(self, *unused):
             pass
 
+        def send_installer(self, primary):
+            """Serve the installer or a byte range of it, throttling a slow primary."""
+            size = archive.stat().st_size
+            start, end = 0, size - 1
+            ranged = self.headers.get('Range', '')
+            if ranged.startswith('bytes='):
+                first, _, last = ranged[len('bytes='):].partition('-')
+                start = int(first or 0)
+                end = min(int(last), size - 1) if last else size - 1
+                self.send_response(206)
+                self.send_header('Content-Range', f'bytes {start}-{end}/{size}')
+            else:
+                self.send_response(200)
+            self.send_header('Content-Type', 'application/octet-stream')
+            self.send_header('Content-Length', str(end - start + 1))
+            self.end_headers()
+            slow = primary and args.scenario == 'slow-primary'
+            block_size = 16 * 1024 if slow else 1024 * 1024
+            try:
+                with archive.open('rb') as stream:
+                    stream.seek(start)
+                    remaining = end - start + 1
+                    while remaining > 0 and (block := stream.read(min(block_size, remaining))):
+                        self.wfile.write(block)
+                        remaining -= len(block)
+                        if slow:
+                            time.sleep(.25)  # About 64 KB/s.
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+
         def do_GET(self): # pylint: disable=invalid-name
             """Serve an appcast or signed installer, injecting the requested failure."""
             path = self.path.split('?')[0]
-            requests.append(path)
-            print('Updater request:', path, flush=True)
+            # Mark the updater's short speed measurements apart from downloads.
+            requests.append(path + (' (range)' if 'Range' in self.headers else ''))
+            print('Updater request:', requests[-1], flush=True)
             primary = path.startswith('/primary/')
             if args.scenario == 'both-down' or (primary and args.scenario == 'feed-fallback'):
                 self.send_error(503)
@@ -101,10 +133,11 @@ def main(): # pylint: disable=too-many-locals,too-many-branches,too-many-stateme
                 root = ET.parse(args.release / 'helium-neo.xml').getroot()
                 item = root.find('./channel/item')
                 enclosure = item.find('enclosure')
+                # Like production, both hosts serve the installer under the same name.
                 enclosure.set(
-                    'url',
-                    origin + ('/missing.dmg' if primary and args.scenario == 'download-fallback'
-                              else '/installer.dmg'))
+                    'url', origin + ('/primary/' if primary else '/backup/') +
+                    ('missing.dmg' if primary and args.scenario == 'download-fallback' else
+                     archive.name))
                 if args.scenario == 'bad-signature':
                     enclosure.set(f'{{{SPARKLE}}}edSignature', 'A' * 86 + '==')
                 data = ET.tostring(root, encoding='utf-8', xml_declaration=True)
@@ -113,17 +146,8 @@ def main(): # pylint: disable=too-many-locals,too-many-branches,too-many-stateme
                 self.send_header('Content-Length', str(len(data)))
                 self.end_headers()
                 self.wfile.write(data)
-            elif path == '/installer.dmg':
-                self.send_response(200)
-                self.send_header('Content-Type', 'application/octet-stream')
-                self.send_header('Content-Length', str(archive.stat().st_size))
-                self.end_headers()
-                try:
-                    with archive.open('rb') as stream:
-                        while block := stream.read(1024 * 1024):
-                            self.wfile.write(block)
-                except (BrokenPipeError, ConnectionResetError):
-                    pass
+            elif path in installer_paths:
+                self.send_installer(primary)
             else:
                 self.send_error(404)
 
@@ -138,7 +162,8 @@ def main(): # pylint: disable=too-many-locals,too-many-branches,too-many-stateme
             root = Path(temporary)
             test_app = root / args.app.name
             subprocess.run(['ditto', str(args.app), str(test_app)], check=True)
-            needs_update = args.scenario in ('feed-fallback', 'download-fallback', 'bad-signature')
+            needs_update = args.scenario in ('feed-fallback', 'download-fallback', 'slow-primary',
+                                             'bad-signature')
             info_path = test_app / 'Contents/Info.plist'
             with info_path.open('rb') as stream:
                 info = plistlib.load(stream)
@@ -225,6 +250,7 @@ def main(): # pylint: disable=too-many-locals,too-many-branches,too-many-stateme
                         'current': 'updated',
                         'feed-fallback': 'nearly_updated',
                         'download-fallback': 'nearly_updated',
+                        'slow-primary': 'nearly_updated',
                         'both-down': 'failed',
                         'bad-signature': 'failed',
                         'disabled': 'disabled',
@@ -247,6 +273,12 @@ def main(): # pylint: disable=too-many-locals,too-many-branches,too-many-stateme
                             '/primary/helium-neo.xml'), requests
                     else:
                         assert '/backup/helium-neo.xml' not in requests, requests
+                    if args.scenario == 'slow-primary':
+                        # Measured both hosts, then downloaded only from the faster mirror.
+                        assert installer_paths[0] + ' (range)' in requests, requests
+                        assert installer_paths[1] + ' (range)' in requests, requests
+                        assert installer_paths[1] in requests, requests
+                        assert installer_paths[0] not in requests, requests
                     if args.scenario in ('disabled', 'no-consent'):
                         assert not requests, requests
                     else:
@@ -265,7 +297,7 @@ def main(): # pylint: disable=too-many-locals,too-many-branches,too-many-stateme
                             pass
                     driver.terminate()
                     driver.wait(timeout=20)
-                if args.scenario in ('feed-fallback', 'download-fallback'):
+                if args.scenario in ('feed-fallback', 'download-fallback', 'slow-primary'):
                     deadline = time.monotonic() + 60
                     while time.monotonic() < deadline:
                         try:

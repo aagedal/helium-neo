@@ -180,6 +180,7 @@ helium/core/ublock-reconfigure-defaults.patch
 helium/core/ublock-helium-services.patch
 helium/core/ublock-dns-uncloaking.patch
 helium/core/clean-omnibox-suggestions.patch
+helium/core/omnibox-suggestions.patch
 helium/core/increase-incognito-storage-quota.patch
 
 helium/core/noise/core.patch
@@ -233,9 +234,11 @@ helium/core/lazy-session-restore.patch
 helium/core/enable-back-to-opener.patch
 helium/core/ridiculous-google-compat-exceptions.patch
 helium/core/disable-password-manager.patch
+helium/core/web-push-service.patch
 
 helium/settings/settings-page-icons.patch
 helium/settings/move-search-suggest.patch
+helium/settings/omnibox-suggestions-settings.patch
 helium/settings/remove-autofill.patch
 helium/settings/remove-profile-page-sections.patch
 helium/settings/fix-page-names.patch
@@ -248,7 +251,6 @@ helium/settings/reenable-update-status.patch
 helium/settings/privacy-page-tweaks.patch
 helium/settings/fix-section-separators.patch
 helium/settings/fix-text-on-cookies-page.patch
-helium/settings/update-search-suggest-text.patch
 helium/settings/fix-appearance-page.patch
 helium/settings/reorder-settings-menu.patch
 helium/settings/add-search-engine-button.patch
@@ -259,6 +261,7 @@ helium/settings/crash-reporting-settings.patch
 helium/settings/helium-noise-settings.patch
 helium/settings/network-and-security-page.patch
 helium/settings/sync-setup-contract.patch
+helium/settings/web-push-settings.patch
 
 helium/ui/layout-constants.patch
 helium/ui/layout-provider.patch
@@ -387,6 +390,11 @@ helium/ui/page-change-monitor.patch
 helium/core/open-links-in-chosen-profile.patch
 helium/core/neo-tab-sleep-defaults.patch
 helium/ui/macos-webkit-streaming-tabs-default.patch
+helium/ui/macos-webkit-hardening.patch
 helium/ui/find-image-on-page.patch
 helium/ui/command-bar.patch
 helium/ui/archive-page.patch
+helium/ui/macos-webkit-opt-in.patch
+helium/ui/macos-webkit-tab-fixes.patch
+helium/ui/download-overlay.patch
+helium/ui/screenshot-frameless-overlay.patch

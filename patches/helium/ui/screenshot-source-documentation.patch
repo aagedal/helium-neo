@@ -602,7 +602,7 @@
  #include "third_party/skia/include/core/SkColor.h"
  #include "ui/base/cursor/cursor.h"
  #include "ui/compositor/layer_textured.h"
-@@ -103,6 +121,7 @@ ScreenshotFlow::ScreenshotFlow(content::
+@@ -103,6 +121,7 @@
  }
  
  ScreenshotFlow::~ScreenshotFlow() {
@@ -610,7 +610,7 @@
    RemoveUIOverlay();
  }
  
-@@ -188,6 +207,8 @@ void ScreenshotFlow::RemoveUIOverlay() {
+@@ -188,6 +207,8 @@
  
  void ScreenshotFlow::Start(ScreenshotCaptureCallback flow_callback) {
    flow_callback_ = std::move(flow_callback);
@@ -619,7 +619,7 @@
    CreateAndAddUIOverlay();
    RequestRepaint(gfx::Rect());
  }
-@@ -210,17 +231,256 @@ void ScreenshotFlow::StartForRegionSelec
+@@ -210,17 +231,257 @@
  void ScreenshotFlow::CaptureAndRunScreenshotCompleteCallback(
      ScreenshotCaptureResultCode result_code,
      gfx::Rect region) {
@@ -689,6 +689,7 @@
 +  source_ready_ = true;
 +  source_timeout_.Stop();
 +  pending_sources_ = ValidateScreenshotSources(std::move(value));
++  RestrictScreenshotSourcesToPage(pending_sources_, pending_capture_->page_url);
 +  auto& sources = pending_sources_;
 +  sources.Set("observed_at_utc", base::TimeFormatAsIso8601(base::Time::Now()));
 +  sources.Set("unverified", true);
@@ -884,7 +885,7 @@
  }
  
  void ScreenshotFlow::CancelCapture() {
-@@ -230,6 +490,13 @@ void ScreenshotFlow::CancelCapture() {
+@@ -230,6 +491,13 @@
  
  void ScreenshotFlow::OnKeyEvent(ui::KeyEvent* event) {
    if (event->type() == ui::EventType::kKeyPressed &&
@@ -898,7 +899,7 @@
        event->key_code() == ui::VKEY_ESCAPE) {
      event->StopPropagation();
      CompleteCapture(ScreenshotCaptureResultCode::USER_ESCAPE_EXIT, gfx::Rect());
-@@ -289,20 +556,15 @@ void ScreenshotFlow::OnMouseEvent(ui::Mo
+@@ -289,20 +557,15 @@
        if ((capture_mode_ == CaptureMode::SELECTION_RECTANGLE ||
             capture_mode_ == CaptureMode::SELECTION_ELEMENT) &&
            is_dragging_) {
@@ -922,7 +923,7 @@
        break;
      default:
        break;
-@@ -310,21 +572,9 @@ void ScreenshotFlow::OnMouseEvent(ui::Mo
+@@ -310,21 +573,9 @@
  }
  
  void ScreenshotFlow::OnScrollEvent(ui::ScrollEvent* event) {
@@ -947,7 +948,7 @@
  }
  
  void ScreenshotFlow::CompleteCapture(ScreenshotCaptureResultCode result_code,
-@@ -340,17 +590,12 @@ void ScreenshotFlow::CompleteCapture(Scr
+@@ -340,17 +591,12 @@
  }
  
  void ScreenshotFlow::RunScreenshotCompleteCallback(
@@ -969,7 +970,7 @@
    std::move(flow_callback_).Run(result);
  }
  
-@@ -387,7 +632,18 @@ void ScreenshotFlow::OnPaintLayer(const
+@@ -387,7 +633,18 @@
    auto selection_rect = gfx::BoundingRect(drag_start_, drag_end_);
    // Draw border exclusively outside selected region.
    selection_rect.Inset(gfx::Insets::TLBR(-1, -1, 0, 0));
@@ -1082,7 +1083,7 @@
    gfx::Point drag_end_;
 --- /dev/null
 +++ b/chrome/browser/image_editor/screenshot_source.cc
-@@ -0,0 +1,1621 @@
+@@ -0,0 +1,1682 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -1091,6 +1092,7 @@
 +
 +#include <optional>
 +#include <string_view>
++#include <utility>
 +
 +#include "base/json/json_writer.h"
 +#include "base/strings/strcat.h"
@@ -2471,6 +2473,26 @@
 +         url.host() == "www.threads.com" || url.host() == "bsky.app";
 +}
 +
++// The platform a URL belongs to, across its domains and subdomains; empty for
++// other sites.
++std::string_view SiteFamily(const GURL& url) {
++  if (!url.is_valid() || !url.SchemeIs("https"))
++    return {};
++  static constexpr std::pair<const char*, const char*> kSites[] = {
++      {"x.com", "x"},           {"twitter.com", "x"},
++      {"instagram.com", "instagram"}, {"facebook.com", "facebook"},
++      {"truthsocial.com", "truthsocial"}, {"threads.com", "threads"},
++      {"threads.net", "threads"}, {"bsky.app", "bluesky"},
++      {"t.me", "telegram"},     {"telegram.org", "telegram"},
++      {"linkedin.com", "linkedin"}, {"youtube.com", "youtube"},
++      {"reddit.com", "reddit"}, {"tiktok.com", "tiktok"}};
++  for (const auto& [domain, family] : kSites) {
++    if (url.DomainIs(domain))
++      return family;
++  }
++  return {};
++}
++
 +bool ValidMastodonCandidate(const base::DictValue& candidate) {
 +  const auto* platform = candidate.FindString("platform");
 +  const auto* raw = candidate.FindString("url");
@@ -2621,6 +2643,46 @@
 +  }
 +}
 +
++void RestrictScreenshotSourcesToPage(base::DictValue& sources,
++                                     const GURL& page_url) {
++  auto* candidates = sources.FindList("candidates");
++  const auto* status = sources.FindString("status");
++  if (!candidates || !status)
++    return;
++  const std::string_view page_site = SiteFamily(page_url);
++  bool restricted = false;
++  base::ListValue kept;
++  for (auto& value : *candidates) {
++    auto& candidate = value.GetDict();
++    const auto* raw = candidate.FindString("url");
++    const auto* platform = candidate.FindString("platform");
++    const bool mastodon = platform && *platform == "mastodon";
++    const GURL url(raw ? *raw : "");
++    const bool on_site =
++        mastodon ? url.is_valid() && page_url.SchemeIs("https") &&
++                       url.host() == page_url.host()
++                 : !page_site.empty() && SiteFamily(url) == page_site;
++    if (!on_site) {
++      restricted = true;
++      // Its ownership proof came from a page on another server.
++      if (mastodon)
++        continue;
++      candidate.Remove("site_details");
++      candidate.Set("off_site", true);
++    }
++    kept.Append(std::move(value));
++  }
++  if (!restricted)
++    return;
++  const bool chosen = *status == "unique" || *status == "preferred";
++  *candidates = std::move(kept);
++  if (candidates->empty())
++    sources.Set("status", "none");
++  else if (chosen)
++    sources.Set("status", "ambiguous");
++  sources.Set("suggested_permalink", "");
++}
++
 +base::DictValue ValidateScreenshotSources(base::Value value) {
 +  auto unavailable = [] {
 +    return base::DictValue().Set("status", "unavailable");
@@ -2706,7 +2768,7 @@
 +}  // namespace image_editor
 --- /dev/null
 +++ b/chrome/browser/image_editor/screenshot_source.h
-@@ -0,0 +1,32 @@
+@@ -0,0 +1,40 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -2718,6 +2780,8 @@
 +#include "base/values.h"
 +#include "ui/gfx/geometry/rect.h"
 +#include "ui/gfx/geometry/size.h"
++
++class GURL;
 +
 +namespace image_editor {
 +// Read-only DOM inspection, run in an isolated world. Coordinates are renderer
@@ -2736,12 +2800,18 @@
 +// Renderer results remain unverified. Reject malformed/oversized results and
 +// any URL outside the supported social platforms before presenting suggestions.
 +base::DictValue ValidateScreenshotSources(base::Value value);
++// Any page can link to, or imitate, a post on another site. Suggestions are
++// trusted only on the platform's own site (a Mastodon post only on its own
++// server). Others stay selectable as references, without account, date or
++// text, and are never chosen automatically. Call after validation.
++void RestrictScreenshotSourcesToPage(base::DictValue& sources,
++                                     const GURL& page_url);
 +}  // namespace image_editor
 +
 +#endif  // CHROME_BROWSER_IMAGE_EDITOR_SCREENSHOT_SOURCE_H_
 --- /dev/null
 +++ b/chrome/browser/image_editor/screenshot_source_unittest.cc
-@@ -0,0 +1,540 @@
+@@ -0,0 +1,597 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -2751,6 +2821,7 @@
 +#include <utility>
 +
 +#include "testing/gtest/include/gtest/gtest.h"
++#include "url/gurl.h"
 +
 +namespace image_editor {
 +namespace {
@@ -3278,6 +3349,62 @@
 +    EXPECT_EQ(*result.FindString("status"), "none") << url;
 +    EXPECT_FALSE(result.FindDict("page_details")) << url;
 +  }
++}
++
++TEST(ScreenshotSourceTest, SuggestionsAreTrustedOnlyOnTheirOwnSite) {
++  const std::string post = "https://x.com/reporter/status/123";
++  auto with_details = [&] {
++    base::DictValue sources = ValidateScreenshotSources(Sources(post));
++    sources.FindList("candidates")
++        ->front()
++        .GetDict()
++        .Set("site_details", base::DictValue().Set("account", "@reporter"));
++    return sources;
++  };
++
++  // On the platform itself, including its other domains, nothing changes.
++  for (const char* page : {"https://x.com/home", "https://twitter.com/home",
++                           "https://mobile.x.com/home"}) {
++    base::DictValue sources = with_details();
++    RestrictScreenshotSourcesToPage(sources, GURL(page));
++    EXPECT_EQ(*sources.FindString("status"), "unique") << page;
++    EXPECT_EQ(*sources.FindString("suggested_permalink"), post) << page;
++    EXPECT_TRUE(sources.FindList("candidates")->front().GetDict().FindDict(
++        "site_details"))
++        << page;
++  }
++
++  // Elsewhere, a link to the post is a reference the user may still pick,
++  // without its details, and it is not suggested automatically.
++  for (const char* page :
++       {"https://news.example/story", "https://x.com.evil.example/status",
++        "https://www.instagram.com/feed/", "http://x.com/home"}) {
++    base::DictValue sources = with_details();
++    RestrictScreenshotSourcesToPage(sources, GURL(page));
++    EXPECT_EQ(*sources.FindString("status"), "ambiguous") << page;
++    EXPECT_EQ(*sources.FindString("suggested_permalink"), "") << page;
++    const auto& candidate = sources.FindList("candidates")->front().GetDict();
++    EXPECT_EQ(*candidate.FindString("url"), post) << page;
++    EXPECT_FALSE(candidate.FindDict("site_details")) << page;
++    EXPECT_TRUE(candidate.FindBool("off_site").value_or(false)) << page;
++  }
++}
++
++TEST(ScreenshotSourceTest, MastodonSuggestionsRequireTheirOwnServer) {
++  const std::string profile = "https://community.example/@alice";
++  const std::string url = profile + "/123";
++  base::DictValue sources =
++      ValidateScreenshotSources(MastodonSources(url, profile, "@alice"));
++  ASSERT_EQ(*sources.FindString("status"), "unique");
++  base::DictValue elsewhere = sources.Clone();
++  RestrictScreenshotSourcesToPage(sources,
++                                  GURL("https://community.example/home"));
++  EXPECT_EQ(*sources.FindString("status"), "unique");
++  // A page on another server could have built the ownership proof itself.
++  RestrictScreenshotSourcesToPage(elsewhere, GURL("https://evil.example/home"));
++  EXPECT_EQ(*elsewhere.FindString("status"), "none");
++  EXPECT_TRUE(elsewhere.FindList("candidates")->empty());
++  EXPECT_EQ(*elsewhere.FindString("suggested_permalink"), "");
 +}
 +
 +}  // namespace
@@ -4985,7 +5112,7 @@
  
 --- /dev/null
 +++ b/chrome/browser/ui/views/sharing_hub/screenshot/screenshot_documentation.cc
-@@ -0,0 +1,869 @@
+@@ -0,0 +1,886 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -5350,13 +5477,18 @@
 +  return host;
 +}
 +
-+// Prefer the reviewed post link. Otherwise use the captured page's platform.
++// The captured page's platform. Any page can link to, or imitate, a post on
++// another platform, so a reviewed link never names a different one. A
++// Mastodon post is credited as such only on its own server.
 +std::string ReviewedPlatform(const base::DictValue& automatic,
 +                             const base::DictValue& user_provided) {
++  const auto* page = automatic.FindString("page_url");
++  const GURL page_url(page ? *page : "");
 +  const auto* reviewed = user_provided.FindString("post_permalink");
-+  std::string source = reviewed ? ScreenshotPlatformName(GURL(*reviewed)) : "";
++  std::string source;
 +  const auto* suggestions = automatic.FindDict("permalink_suggestions");
-+  if (source.empty() && reviewed && suggestions) {
++  if (reviewed && suggestions && page_url.SchemeIs("https") &&
++      GURL(*reviewed).host() == page_url.host()) {
 +    if (const auto* candidates = suggestions->FindList("candidates")) {
 +      for (const auto& value : *candidates) {
 +        if (!value.is_dict())
@@ -5372,10 +5504,8 @@
 +      }
 +    }
 +  }
-+  if (source.empty()) {
-+    const auto* page = automatic.FindString("page_url");
-+    source = page ? ScreenshotPlatformName(GURL(*page)) : "";
-+  }
++  if (source.empty())
++    source = ScreenshotPlatformName(page_url);
 +  return source;
 +}
 +
@@ -5390,7 +5520,21 @@
 +  const auto* reviewed = user_provided.FindString("post_permalink");
 +  if (!url || (reviewed && !reviewed->empty() && *reviewed != *url))
 +    return {};
-+  return std::string(base::TruncateUTF8ToByteSize(Trimmed(*page, "site_name"), 96));
++  // A page can claim any name. Use it only when it matches the address, as
++  // "TV 2" does for tv2.no.
++  const std::string name = Trimmed(*page, "site_name");
++  std::string name_key, host_key;
++  for (char c : name) {
++    if (base::IsAsciiAlphaNumeric(c))
++      name_key += base::ToLowerASCII(c);
++  }
++  for (char c : ObservedHost(automatic, false)) {
++    if (base::IsAsciiAlphaNumeric(c))
++      host_key += base::ToLowerASCII(c);
++  }
++  if (name_key.empty() || host_key.find(name_key) == std::string::npos)
++    return {};
++  return std::string(base::TruncateUTF8ToByteSize(name, 96));
 +}
 +
 +bool Digits(std::string_view text, size_t count) {
@@ -5956,7 +6100,7 @@
 +#endif  // CHROME_BROWSER_UI_VIEWS_SHARING_HUB_SCREENSHOT_SCREENSHOT_DOCUMENTATION_H_
 --- /dev/null
 +++ b/chrome/browser/ui/views/sharing_hub/screenshot/screenshot_documentation_unittest.cc
-@@ -0,0 +1,962 @@
+@@ -0,0 +1,989 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -6376,6 +6520,11 @@
 +  automatic.Set("page_url", "https://www.instagram.com/feed/");
 +  user.Set("post_permalink", "https://x.com/reviewed/status/123");
 +  user.Set("posting_account", "@reviewed");
++  // The captured page decides the platform; a link to another one does not.
++  EXPECT_EQ(ScreenshotCopyrightNotice(automatic, user,
++                                      ScreenshotTextLanguage::kNorwegian),
++            "Skjermbilde / @reviewed / Instagram");
++  automatic.Set("page_url", "https://x.com/home");
 +  EXPECT_EQ(ScreenshotCopyrightNotice(automatic, user,
 +                                      ScreenshotTextLanguage::kNorwegian),
 +            "Skjermbilde / @reviewed / Twitter");
@@ -6475,22 +6624,27 @@
 +  }
 +}
 +
-+TEST(ScreenshotDocumentationTest, TelegramCreditRequiresExactDomain) {
++TEST(ScreenshotDocumentationTest, TelegramCreditRequiresCapturedTelegramPage) {
 +  base::DictValue automatic, user;
-+  automatic.Set("page_url", "https://example.com/feed");
++  automatic.Set("page_url", "https://t.me/s/source_channel");
 +  user.Set("posting_account", "@source_channel");
 +  user.Set("post_permalink", "https://t.me/source_channel/123");
 +  EXPECT_EQ(ScreenshotCopyrightNotice(automatic, user,
 +                                      ScreenshotTextLanguage::kEnglish),
 +            "Screenshot / @source_channel / Telegram");
-+  for (const char* url : {"https://www.t.me/source_channel/123",
-+                          "https://sub.t.me/source_channel/123",
-+                          "https://t.me.attacker.example/source_channel/123"}) {
-+    user.Set("post_permalink", url);
-+    EXPECT_EQ(ScreenshotCopyrightNotice(automatic, user,
++  // Another site linking to the post is credited as itself.
++  automatic.Set("page_url", "https://example.com/feed");
++  EXPECT_EQ(ScreenshotCopyrightNotice(automatic, user,
++                                      ScreenshotTextLanguage::kEnglish),
++            "Screenshot / @source_channel / example.com");
++  for (const char* page : {"https://www.t.me/s/source_channel",
++                           "https://sub.t.me/s/source_channel",
++                           "https://t.me.attacker.example/s/source_channel"}) {
++    automatic.Set("page_url", page);
++    EXPECT_NE(ScreenshotCopyrightNotice(automatic, user,
 +                                        ScreenshotTextLanguage::kEnglish),
-+              "Screenshot / @source_channel / example.com")
-+        << url;
++              "Screenshot / @source_channel / Telegram")
++        << page;
 +  }
 +}
 +
@@ -6498,14 +6652,15 @@
 +     MastodonCreditRequiresSelectedOwnedCandidate) {
 +  const std::string url = "https://community.example/@alice/123";
 +  base::DictValue automatic, user;
-+  automatic.Set("page_url", "https://view.example/timelines/public");
++  automatic.Set("page_url", "https://community.example/home");
 +  user.Set("posting_account", "@alice@identity.example");
 +  user.Set("post_permalink", url);
 +  auto credit = [&] {
 +    return ScreenshotCopyrightNotice(automatic, user,
 +                                     ScreenshotTextLanguage::kEnglish);
 +  };
-+  EXPECT_EQ(credit(), "Screenshot / @alice@identity.example / view.example");
++  EXPECT_EQ(credit(),
++            "Screenshot / @alice@identity.example / community.example");
 +  base::ListValue candidates;
 +  candidates.Append(
 +      base::DictValue()
@@ -6523,22 +6678,30 @@
 +  EXPECT_EQ(ScreenshotCopyrightNotice(automatic, user,
 +                                      ScreenshotTextLanguage::kNorwegian),
 +            "Skjermbilde / @alice@identity.example / Mastodon");
++  // Only on the post's own server.
++  automatic.Set("page_url", "https://view.example/timelines/public");
++  EXPECT_EQ(credit(), "Screenshot / @alice@identity.example / view.example");
++  automatic.Set("page_url", "https://community.example/home");
 +  // A manually entered or different status URL does not inherit the label
 +  // from another candidate, even if its URL resembles a Mastodon permalink.
 +  user.Set("post_permalink", "https://community.example/@alice/456");
-+  EXPECT_EQ(credit(), "Screenshot / @alice@identity.example / view.example");
++  EXPECT_EQ(credit(),
++            "Screenshot / @alice@identity.example / community.example");
 +  user.Set("post_permalink", url);
 +  auto& candidate = automatic.FindDict("permalink_suggestions")
 +                        ->FindList("candidates")
 +                        ->front()
 +                        .GetDict();
 +  candidate.Set("platform", "other");
-+  EXPECT_EQ(credit(), "Screenshot / @alice@identity.example / view.example");
++  EXPECT_EQ(credit(),
++            "Screenshot / @alice@identity.example / community.example");
 +  candidate.Set("platform", "mastodon");
 +  candidate.Remove("mastodon_ownership");
-+  EXPECT_EQ(credit(), "Screenshot / @alice@identity.example / view.example");
++  EXPECT_EQ(credit(),
++            "Screenshot / @alice@identity.example / community.example");
 +  user.Remove("post_permalink");
-+  EXPECT_EQ(credit(), "Screenshot / @alice@identity.example / view.example");
++  EXPECT_EQ(credit(),
++            "Screenshot / @alice@identity.example / community.example");
 +}
 +
 +TEST(ScreenshotDocumentationTest,
@@ -6882,6 +7045,14 @@
 +            "TV 2: Kari Nordmann\n\n"
 +            "Permalink: https://www.tv2.no/nyheter/1\n");
 +  reviewed.Set("post_permalink", "https://example.com/other");
++  EXPECT_TRUE(ScreenshotDescriptionHeader(page, reviewed,
++                                          ScreenshotTextLanguage::kEnglish)
++                  .starts_with("tv2.no: Kari Nordmann\n"));
++  // A site name that does not match the address is the page's own claim.
++  reviewed.Set("post_permalink", "https://www.tv2.no/nyheter/1");
++  page.FindDict("permalink_suggestions")
++      ->FindDict("page_details")
++      ->Set("site_name", "NRK");
 +  EXPECT_TRUE(ScreenshotDescriptionHeader(page, reviewed,
 +                                          ScreenshotTextLanguage::kEnglish)
 +                  .starts_with("tv2.no: Kari Nordmann\n"));

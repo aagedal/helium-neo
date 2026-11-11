@@ -1,0 +1,566 @@
+--- /dev/null
++++ b/chrome/browser/ui/views/download/bubble/helium_download_overlay.h
+@@ -0,0 +1,70 @@
++// Copyright 2026 The Helium Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_VIEWS_DOWNLOAD_BUBBLE_HELIUM_DOWNLOAD_OVERLAY_H_
++#define CHROME_BROWSER_UI_VIEWS_DOWNLOAD_BUBBLE_HELIUM_DOWNLOAD_OVERLAY_H_
++
++#include <memory>
++
++#include "base/memory/raw_ptr.h"
++#include "base/memory/weak_ptr.h"
++#include "base/task/cancelable_task_tracker.h"
++#include "base/timer/timer.h"
++#include "components/download/public/common/download_item.h"
++#include "ui/gfx/image/image.h"
++#include "ui/views/bubble/bubble_dialog_delegate_view.h"
++#include "ui/views/widget/widget.h"
++
++class BrowserView;
++
++namespace views {
++class ImageView;
++}  // namespace views
++
++// A card in the bottom right corner of the browser window for a finished
++// download, with buttons to open the file, show it in Finder and drag it into
++// another app. It replaces the partial download bubble, which is anchored in
++// the toolbar and reveals it in frameless mode. It closes after a few seconds
++// unless the pointer is over it.
++class HeliumDownloadOverlay : public views::BubbleDialogDelegate,
++                              public download::DownloadItem::Observer {
++ public:
++  // Shows the overlay for `item`, which must be complete, in place of the one
++  // already shown in the window.
++  static void Show(BrowserView* browser_view, download::DownloadItem* item);
++
++  HeliumDownloadOverlay(const HeliumDownloadOverlay&) = delete;
++  HeliumDownloadOverlay& operator=(const HeliumDownloadOverlay&) = delete;
++  ~HeliumDownloadOverlay() override;
++
++  // views::BubbleDialogDelegate:
++  gfx::Rect GetBubbleBounds() override;
++
++  // download::DownloadItem::Observer:
++  void OnDownloadUpdated(download::DownloadItem* item) override;
++  void OnDownloadDestroyed(download::DownloadItem* item) override;
++
++ private:
++  HeliumDownloadOverlay(BrowserView* browser_view,
++                        download::DownloadItem* item);
++
++  void Open();
++  void ShowInFolder();
++  void StartDrag();
++  void SetHovered(bool hovered);
++  void OnFileIconLoaded(gfx::Image icon);
++  void Close();
++  void OnClosed(views::Widget::ClosedReason reason);
++
++  const raw_ptr<BrowserView> browser_view_;
++  raw_ptr<download::DownloadItem> item_;
++  raw_ptr<views::ImageView> icon_view_ = nullptr;
++  gfx::Image file_icon_;
++  base::OneShotTimer close_timer_;
++  base::CancelableTaskTracker icon_tracker_;
++  std::unique_ptr<views::Widget> widget_;
++  base::WeakPtrFactory<HeliumDownloadOverlay> weak_factory_{this};
++};
++
++#endif  // CHROME_BROWSER_UI_VIEWS_DOWNLOAD_BUBBLE_HELIUM_DOWNLOAD_OVERLAY_H_
+--- /dev/null
++++ b/chrome/browser/ui/views/download/bubble/helium_download_overlay.cc
+@@ -0,0 +1,325 @@
++// Copyright 2026 The Helium Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#include "chrome/browser/ui/views/download/bubble/helium_download_overlay.h"
++
++#include <utility>
++
++#include "base/containers/flat_map.h"
++#include "base/functional/bind.h"
++#include "base/functional/callback.h"
++#include "base/no_destructor.h"
++#include "base/task/single_thread_task_runner.h"
++#include "chrome/app/vector_icons/vector_icons.h"
++#include "chrome/browser/browser_process.h"
++#include "chrome/browser/download/drag_download_item.h"
++#include "chrome/browser/icon_manager.h"
++#include "chrome/browser/ui/views/frame/browser_view.h"
++#include "chrome/grit/generated_resources.h"
++#include "components/vector_icons/vector_icons.h"
++#include "ui/base/l10n/l10n_util.h"
++#include "ui/base/metadata/metadata_header_macros.h"
++#include "ui/base/metadata/metadata_impl_macros.h"
++#include "ui/base/models/image_model.h"
++#include "ui/base/mojom/dialog_button.mojom.h"
++#include "ui/display/screen.h"
++#include "ui/gfx/text_elider.h"
++#include "ui/views/accessibility/view_accessibility.h"
++#include "ui/views/controls/button/image_button.h"
++#include "ui/views/controls/button/image_button_factory.h"
++#include "ui/views/controls/image_view.h"
++#include "ui/views/controls/label.h"
++#include "ui/views/layout/box_layout.h"
++#include "ui/views/view_class_properties.h"
++
++namespace {
++
++constexpr int kWindowInset = 16;
++constexpr int kCornerRadius = 12;
++constexpr int kFileIconSize = 32;
++constexpr int kButtonIconSize = 18;
++constexpr int kMaxNameWidth = 220;
++constexpr base::TimeDelta kCloseDelay = base::Seconds(6);
++
++ui::ImageModel DefaultIcon() {
++  return ui::ImageModel::FromVectorIcon(vector_icons::kDraftIcon,
++                                        ui::kColorIcon, kFileIconSize);
++}
++
++// The overlay shown in each window.
++base::flat_map<BrowserView*, HeliumDownloadOverlay*>& Overlays() {
++  static base::NoDestructor<
++      base::flat_map<BrowserView*, HeliumDownloadOverlay*>>
++      overlays;
++  return *overlays;
++}
++
++// Reports when the pointer enters or leaves the overlay, including its
++// buttons.
++class OverlayContents : public views::View {
++  METADATA_HEADER(OverlayContents, views::View)
++
++ public:
++  explicit OverlayContents(base::RepeatingCallback<void(bool)> on_hover)
++      : on_hover_(std::move(on_hover)) {
++    SetNotifyEnterExitOnChild(true);
++  }
++
++  void OnMouseEntered(const ui::MouseEvent& event) override {
++    on_hover_.Run(true);
++  }
++  void OnMouseExited(const ui::MouseEvent& event) override {
++    on_hover_.Run(false);
++  }
++
++ private:
++  base::RepeatingCallback<void(bool)> on_hover_;
++};
++
++BEGIN_METADATA(OverlayContents)
++END_METADATA
++
++// A handle that drags the file once the pointer moves past the drag threshold.
++class DragHandle : public views::ImageButton {
++  METADATA_HEADER(DragHandle, views::ImageButton)
++
++ public:
++  explicit DragHandle(base::RepeatingClosure start_drag)
++      : views::ImageButton(PressedCallback()),
++        start_drag_(std::move(start_drag)) {
++    views::ConfigureVectorImageButton(this);
++    views::SetImageFromVectorIconWithColor(
++        this, kHeliumDragIndicatorIcon, kButtonIconSize,
++        views::IconColors(ui::kColorIcon, ui::kColorIconDisabled));
++  }
++
++  bool OnMousePressed(const ui::MouseEvent& event) override {
++    views::ImageButton::OnMousePressed(event);
++    drag_start_ = event.location();
++    return true;
++  }
++
++  bool OnMouseDragged(const ui::MouseEvent& event) override {
++    if (ExceededDragThreshold(event.location() - drag_start_)) {
++      // May delete `this`.
++      start_drag_.Run();
++    }
++    return true;
++  }
++
++ private:
++  base::RepeatingClosure start_drag_;
++  gfx::Point drag_start_;
++};
++
++BEGIN_METADATA(DragHandle)
++END_METADATA
++
++}  // namespace
++
++// static
++void HeliumDownloadOverlay::Show(BrowserView* browser_view,
++                                 download::DownloadItem* item) {
++  CHECK_EQ(item->GetState(), download::DownloadItem::COMPLETE);
++  if (auto it = Overlays().find(browser_view); it != Overlays().end()) {
++    it->second->Close();
++  }
++  auto* overlay = new HeliumDownloadOverlay(browser_view, item);
++  Overlays()[browser_view] = overlay;
++  overlay->widget_ = views::BubbleDialogDelegate::CreateBubble(
++      overlay, base::BindOnce(&HeliumDownloadOverlay::OnClosed,
++                              overlay->weak_factory_.GetWeakPtr()));
++  overlay->widget_->ShowInactive();
++  overlay->close_timer_.Start(
++      FROM_HERE, kCloseDelay,
++      base::BindOnce(&HeliumDownloadOverlay::Close,
++                     overlay->weak_factory_.GetWeakPtr()));
++}
++
++HeliumDownloadOverlay::HeliumDownloadOverlay(BrowserView* browser_view,
++                                             download::DownloadItem* item)
++    : views::BubbleDialogDelegate(browser_view, views::BubbleBorder::FLOAT),
++      browser_view_(browser_view),
++      item_(item) {
++  item_->AddObserver(this);
++  SetButtons(static_cast<int>(ui::mojom::DialogButton::kNone));
++  SetShowCloseButton(false);
++  SetShowTitle(false);
++  set_margins(gfx::Insets::TLBR(10, 12, 10, 8));
++  set_corner_radius(kCornerRadius);
++  set_adjust_if_offscreen(false);
++  set_close_on_deactivate(false);
++  SetCanActivate(false);
++
++  const std::u16string file_name =
++      item_->GetFileNameToReportUser().LossyDisplayName();
++  SetTitle(file_name);
++
++  auto contents = std::make_unique<OverlayContents>(base::BindRepeating(
++      &HeliumDownloadOverlay::SetHovered, weak_factory_.GetWeakPtr()));
++  auto* layout = contents->SetLayoutManager(std::make_unique<views::BoxLayout>(
++      views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 8));
++  layout->set_cross_axis_alignment(
++      views::BoxLayout::CrossAxisAlignment::kCenter);
++
++  icon_view_ = contents->AddChildView(std::make_unique<views::ImageView>());
++  icon_view_->SetImageSize({kFileIconSize, kFileIconSize});
++
++  auto* name =
++      contents->AddChildView(std::make_unique<views::Label>(file_name));
++  name->SetElideBehavior(gfx::ELIDE_MIDDLE);
++  name->SetMaximumWidthSingleLine(kMaxNameWidth);
++  name->SetHorizontalAlignment(gfx::ALIGN_LEFT);
++  name->SetProperty(views::kMarginsKey, gfx::Insets::TLBR(0, 0, 0, 4));
++
++  auto* open =
++      contents->AddChildView(views::CreateVectorImageButtonWithNativeTheme(
++          base::BindRepeating(&HeliumDownloadOverlay::Open,
++                              weak_factory_.GetWeakPtr()),
++          kOpenInNewIcon, kButtonIconSize));
++  open->SetTooltipText(
++      l10n_util::GetStringUTF16(IDS_DOWNLOAD_BUBBLE_OPEN_QUICK_ACTION));
++  open->GetViewAccessibility().SetName(l10n_util::GetStringFUTF16(
++      IDS_DOWNLOAD_BUBBLE_OPEN_QUICK_ACTION_ACCESSIBILITY, file_name));
++
++  auto* show =
++      contents->AddChildView(views::CreateVectorImageButtonWithNativeTheme(
++          base::BindRepeating(&HeliumDownloadOverlay::ShowInFolder,
++                              weak_factory_.GetWeakPtr()),
++          vector_icons::kFolderOpenIcon, kButtonIconSize));
++  show->SetTooltipText(l10n_util::GetStringUTF16(
++      IDS_DOWNLOAD_BUBBLE_SHOW_IN_FOLDER_QUICK_ACTION));
++  show->GetViewAccessibility().SetName(l10n_util::GetStringFUTF16(
++      IDS_DOWNLOAD_BUBBLE_SHOW_IN_FOLDER_QUICK_ACTION_ACCESSIBILITY,
++      file_name));
++
++  auto* drag =
++      contents->AddChildView(std::make_unique<DragHandle>(base::BindRepeating(
++          &HeliumDownloadOverlay::StartDrag, weak_factory_.GetWeakPtr())));
++  drag->SetTooltipText(
++      l10n_util::GetStringUTF16(IDS_HELIUM_DOWNLOAD_OVERLAY_DRAG));
++  drag->GetViewAccessibility().SetName(l10n_util::GetStringFUTF16(
++      IDS_HELIUM_DOWNLOAD_OVERLAY_DRAG_ACCESSIBILITY, file_name));
++
++  SetContentsView(std::move(contents));
++
++  IconManager* icon_manager = g_browser_process->icon_manager();
++  const float scale =
++      display::Screen::Get()
++          ->GetDisplayNearestView(browser_view_->GetWidget()->GetNativeView())
++          .device_scale_factor();
++  if (gfx::Image* image = icon_manager->LookupIconFromFilepath(
++          item_->GetTargetFilePath(), IconLoader::NORMAL, scale);
++      image && !image->IsEmpty()) {
++    OnFileIconLoaded(*image);
++  } else {
++    icon_manager->LoadIcon(
++        item_->GetTargetFilePath(), IconLoader::NORMAL, scale,
++        base::BindOnce(&HeliumDownloadOverlay::OnFileIconLoaded,
++                       weak_factory_.GetWeakPtr()),
++        &icon_tracker_);
++  }
++}
++
++HeliumDownloadOverlay::~HeliumDownloadOverlay() {
++  if (item_) {
++    item_->RemoveObserver(this);
++  }
++  if (auto it = Overlays().find(browser_view_);
++      it != Overlays().end() && it->second == this) {
++    Overlays().erase(it);
++  }
++}
++
++gfx::Rect HeliumDownloadOverlay::GetBubbleBounds() {
++  gfx::Rect bounds = views::BubbleDialogDelegate::GetBubbleBounds();
++  views::View* anchor = GetAnchorView();
++  if (!anchor) {
++    return bounds;
++  }
++  // Near the Downloads folder in the Dock.
++  const gfx::Rect anchor_bounds = anchor->GetBoundsInScreen();
++  bounds.set_x(anchor_bounds.right() - bounds.width() - kWindowInset);
++  bounds.set_y(anchor_bounds.bottom() - bounds.height() - kWindowInset);
++  return bounds;
++}
++
++void HeliumDownloadOverlay::OnDownloadUpdated(download::DownloadItem* item) {
++  // The file was removed, renamed or opened from elsewhere.
++  if (item->GetState() != download::DownloadItem::COMPLETE ||
++      item->GetFileExternallyRemoved()) {
++    Close();
++  }
++}
++
++void HeliumDownloadOverlay::OnDownloadDestroyed(download::DownloadItem* item) {
++  item_->RemoveObserver(this);
++  item_ = nullptr;
++  Close();
++}
++
++void HeliumDownloadOverlay::Open() {
++  if (item_) {
++    item_->OpenDownload();
++  }
++  Close();
++}
++
++void HeliumDownloadOverlay::ShowInFolder() {
++  if (item_) {
++    item_->ShowDownloadInShell();
++  }
++  Close();
++}
++
++void HeliumDownloadOverlay::StartDrag() {
++  if (!item_ || !widget_ ||
++      item_->GetState() != download::DownloadItem::COMPLETE) {
++    return;
++  }
++  if (file_icon_.IsEmpty()) {
++    file_icon_ =
++        gfx::Image(DefaultIcon().Rasterize(icon_view_->GetColorProvider()));
++  }
++  close_timer_.Stop();
++  base::WeakPtr<HeliumDownloadOverlay> weak_this = weak_factory_.GetWeakPtr();
++  // Returns when the drag ends.
++  DragDownloadItem(item_, &file_icon_, widget_->GetNativeView());
++  if (weak_this) {
++    weak_this->Close();
++  }
++}
++
++void HeliumDownloadOverlay::SetHovered(bool hovered) {
++  if (hovered) {
++    close_timer_.Stop();
++  } else {
++    close_timer_.Start(FROM_HERE, kCloseDelay,
++                       base::BindOnce(&HeliumDownloadOverlay::Close,
++                                      weak_factory_.GetWeakPtr()));
++  }
++}
++
++void HeliumDownloadOverlay::OnFileIconLoaded(gfx::Image icon) {
++  if (icon.IsEmpty()) {
++    icon_view_->SetImage(DefaultIcon());
++    return;
++  }
++  file_icon_ = icon;
++  icon_view_->SetImage(ui::ImageModel::FromImage(icon));
++}
++
++void HeliumDownloadOverlay::Close() {
++  close_timer_.Stop();
++  if (widget_) {
++    widget_->Close();
++  }
++}
++
++void HeliumDownloadOverlay::OnClosed(views::Widget::ClosedReason reason) {
++  // The delegate must outlive the widget, so delete both after the close
++  // finishes.
++  base::SingleThreadTaskRunner::GetCurrentDefault()->DeleteSoon(FROM_HERE,
++                                                                this);
++}
+--- /dev/null
++++ b/chrome/app/vector_icons/helium_drag_indicator.icon
+@@ -0,0 +1,16 @@
++// Copyright 2026 The Helium Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++CANVAS_DIMENSIONS, 24,
++CIRCLE, 9, 6, 2,
++NEW_PATH,
++CIRCLE, 15, 6, 2,
++NEW_PATH,
++CIRCLE, 9, 12, 2,
++NEW_PATH,
++CIRCLE, 15, 12, 2,
++NEW_PATH,
++CIRCLE, 9, 18, 2,
++NEW_PATH,
++CIRCLE, 15, 18, 2
+--- a/chrome/app/vector_icons/BUILD.gn
++++ b/chrome/app/vector_icons/BUILD.gn
+@@ -161,6 +161,7 @@
+     "hardware_computer_old.icon",
+     "hardware_computer_small_custom.icon",
+     "hardware_smartphone_old.icon",
++    "helium_drag_indicator.icon",
+     "help_custom.icon",
+     "help_menu_old.icon",
+     "history.icon",
+--- a/chrome/app/generated_resources.grd
++++ b/chrome/app/generated_resources.grd
+@@ -3264,6 +3264,12 @@
+       <message name="IDS_DOWNLOAD_BUBBLE_OPEN_QUICK_ACTION_ACCESSIBILITY" desc="Accessibility label for action to open a download.">
+         Open <ph name="FILE_NAME">$1<ex>bla.exe</ex></ph>
+       </message>
++      <message name="IDS_HELIUM_DOWNLOAD_OVERLAY_DRAG" desc="Tooltip for the handle that drags a finished download into another app.">
++        Drag to another app
++      </message>
++      <message name="IDS_HELIUM_DOWNLOAD_OVERLAY_DRAG_ACCESSIBILITY" desc="Accessibility label for the handle that drags a finished download into another app.">
++        Drag <ph name="FILE_NAME">$1<ex>bla.exe</ex></ph> to another app
++      </message>
+       <if expr="is_macosx">
+             <message name="IDS_DOWNLOAD_BUBBLE_SHOW_IN_FOLDER_QUICK_ACTION" desc="Mac: Tooltip label for showing the file in the Finder">
+               Show in Finder
+--- a/chrome/browser/download/bubble/download_bubble_ui_controller.h
++++ b/chrome/browser/download/bubble/download_bubble_ui_controller.h
+@@ -79,6 +79,10 @@
+   // Virtual for testing.
+   virtual std::vector<DownloadUIModel::DownloadUIModelPtr> GetPartialView();
+ 
++  // Returns the entries GetPartialView() would return, without recording that
++  // the partial view was shown.
++  std::vector<DownloadUIModel::DownloadUIModelPtr> PeekPartialView();
++
+   void SetLastPartialViewShownTimeForTesting(std::optional<base::Time> time);
+ 
+   // Process button press on the bubble.
+--- a/chrome/browser/download/bubble/download_bubble_ui_controller.cc
++++ b/chrome/browser/download/bubble/download_bubble_ui_controller.cc
+@@ -242,21 +242,24 @@
+ }
+ 
+ std::vector<DownloadUIModelPtr> DownloadBubbleUIController::GetPartialView() {
+-  base::Time now = base::Time::Now();
++  std::vector<DownloadUIModelPtr> list = PeekPartialView();
++  if (!list.empty()) {
++    last_primary_view_was_partial_ = true;
++    last_partial_view_shown_time_ = std::make_optional(base::Time::Now());
++  }
++  return list;
++}
++
++std::vector<DownloadUIModelPtr> DownloadBubbleUIController::PeekPartialView() {
+   if (last_partial_view_shown_time_.has_value() &&
+-      now - *last_partial_view_shown_time_ < kShowPartialViewMinInterval) {
++      base::Time::Now() - *last_partial_view_shown_time_ <
++          kShowPartialViewMinInterval) {
+     return {};
+   }
+   if (!download::IsDownloadBubblePartialViewEnabled(profile_)) {
+     return {};
+   }
+-  std::vector<DownloadUIModelPtr> list =
+-      GetDownloadUIModels(/*is_main_view=*/false);
+-  if (!list.empty()) {
+-    last_primary_view_was_partial_ = true;
+-    last_partial_view_shown_time_ = std::make_optional(now);
+-  }
+-  return list;
++  return GetDownloadUIModels(/*is_main_view=*/false);
+ }
+ 
+ void DownloadBubbleUIController::ProcessDownloadButtonPress(
+--- a/chrome/browser/ui/views/download/BUILD.gn
++++ b/chrome/browser/ui/views/download/BUILD.gn
+@@ -66,6 +66,8 @@
+       "bubble/download_dialog_view.h",
+       "bubble/download_toolbar_ui_controller.cc",
+       "bubble/download_toolbar_ui_controller.h",
++      "bubble/helium_download_overlay.cc",
++      "bubble/helium_download_overlay.h",
+       "download_started_animation_views.cc",
+       "download_started_animation_views.h",
+       "download_ui_context_menu_view.cc",
+--- a/chrome/browser/ui/views/download/bubble/download_toolbar_ui_controller.h
++++ b/chrome/browser/ui/views/download/bubble/download_toolbar_ui_controller.h
+@@ -139,6 +139,12 @@
+   views::ImageView* GetImageBadgeForTesting();
+ 
+  private:
++  // Shows finished downloads in an overlay at the bottom right of the window
++  // instead of the partial view, which is anchored in the toolbar. Returns
++  // false when a download needs attention, such as a warning, so the bubble
++  // shows it instead.
++  bool ShowHeliumOverlay();
++
+   // Closes the bubble when it detects an event such as a mouse click, escape
+   // key press, etc., which indicates the user's intent to close the bubble.
+   //
+--- a/chrome/browser/ui/views/download/bubble/download_toolbar_ui_controller.cc
++++ b/chrome/browser/ui/views/download/bubble/download_toolbar_ui_controller.cc
+@@ -35,6 +35,7 @@
+ #include "chrome/browser/ui/views/chrome_layout_provider.h"
+ #include "chrome/browser/ui/views/download/bubble/download_bubble_contents_view.h"
+ #include "chrome/browser/ui/views/download/bubble/download_bubble_started_animation_views.h"
++#include "chrome/browser/ui/views/download/bubble/helium_download_overlay.h"
+ #include "chrome/browser/ui/views/frame/browser_view.h"
+ #include "chrome/browser/ui/views/toolbar/download_button.h"
+ #include "chrome/browser/ui/views/toolbar/pinned_toolbar_actions.h"
+@@ -288,6 +289,9 @@
+   if (bubble_delegate_ || pending_bubble_) {
+     return;
+   }
++  if (ShowHeliumOverlay()) {
++    return;
++  }
+   base::TimeDelta delay = GetAutoCloseDelay();
+   if (use_auto_close_bubble_timer_ && !delay.is_max()) {
+     auto_close_bubble_timer_.Start(
+@@ -298,6 +302,25 @@
+   ShowBubble(DownloadBubbleMode::kPartial);
+ }
+ 
++bool DownloadToolbarUIController::ShowHeliumOverlay() {
++  std::vector<DownloadUIModel::DownloadUIModelPtr> models =
++      bubble_controller_->PeekPartialView();
++  if (models.empty()) {
++    return false;
++  }
++  for (const DownloadUIModel::DownloadUIModelPtr& model : models) {
++    if (model->GetState() != download::DownloadItem::COMPLETE ||
++        model->IsDangerous() || model->IsInsecure() ||
++        !model->GetDownloadItem()) {
++      return false;
++    }
++  }
++  // Count the overlay as the partial view, so it follows the same limits.
++  bubble_controller_->GetPartialView();
++  HeliumDownloadOverlay::Show(browser_view_, models.front()->GetDownloadItem());
++  return true;
++}
++
+ void DownloadToolbarUIController::HideDetails() {
+   if (IsShowingDetails()) {
+     CloseDialog(views::Widget::ClosedReason::kUnspecified);

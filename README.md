@@ -93,14 +93,11 @@ persist after restarting the browser. Automatic exports require enabling again.
 After a reverse image search, find where a picture appears on an image-heavy
 page. Press Command-F and paste a copied image into the empty find field, drag
 an image file or a picture from another page or app onto the find bar, or click
-the image button in the find bar to paste, choose an image file, or reuse an
-image chosen from a page. The find bar counts the matches; Enter, Shift-Enter
+the image button in the find bar to paste or choose an image file. To look for
+a picture from another tab, copy it there and paste it here. The find bar
+counts the matches; Enter, Shift-Enter
 and the arrow buttons scroll to each outlined match. Typing text returns to an
 ordinary text search, and closing the find bar removes the outlines.
-
-Right-click an image and choose **Find this image in other tabs** to search the
-other tabs in the window and switch to the best match. Afterwards, **Find chosen
-image on this page** in a page's context menu looks for it again there.
 
 Matching compares appearance rather than files, so it tolerates resizing,
 recompression, different formats, and crops in either direction, including
@@ -112,22 +109,33 @@ such as `data-src` or `data-srcset`. The page is never scrolled, so infinite
 scroll does not fetch more content.
 Renderers send small grayscale thumbnails to the browser for comparison; images
 are not uploaded anywhere. Pasted and chosen files are decoded in a sandboxed
-process. The chosen image is remembered per profile until the browser restarts.
+process. Only the current tab is searched.
 
 ### Experimental WebKit playback on macOS
 
-On macOS 14 or later, enable
-**`helium://flags/#helium-webkit-streaming-tabs`** and restart to host WebKit
-pages inside Helium tabs. HTTPS pages on Netflix, TV 2 Play (`play.tv2.no`),
-HBO Max, Max, and Disney+ use WebKit automatically. Each tab has its own page;
-WebKit tabs in the same Helium profile share a separate persistent WebKit login
-and cookie store. Private and guest profiles remain on Chromium.
+On macOS 14 or later, Helium can host WebKit pages inside its tabs
+(**`helium://flags/#helium-webkit-streaming-tabs`**, on by default). When you
+type a supported streaming service in the address bar or search overlay, the first suggestion is **Open [service] in WebKit**:
+without WebKit, playback may fail or be lower quality. Supported services are
+Netflix, TV 2 Play (`play.tv2.no`), HBO Max/Max, Disney+, Prime Video
+(`primevideo.com` and the video pages of Amazon's sites), Apple TV+
+(`tv.apple.com`), Viaplay, SkyShowtime, discovery+, Telia Play, NRK TV
+(`tv.nrk.no`), Hulu, Paramount+, Peacock, and Spotify. They use Apple's FairPlay in
+WebKit, while browsers without Google's Widevine signing, such as Helium, often
+get no or low-quality playback. Any other site can still be opened in WebKit
+from the tab menu. The ordinary suggestion
+below it opens the site in Chromium. After you open a service in WebKit, a
+notification over the page offers to **always** open it there; switching such
+a tab back to Chromium from the tab menu ends that choice. Each tab has its own
+page; WebKit tabs in the same Helium profile share a separate persistent WebKit
+login and cookie store. Private and guest profiles remain on Chromium.
 
 With the flag enabled, right-click an ordinary HTTP(S) tab and select
 **Use WebKit renderer (reloads page)** to switch manually. Select it again to
 return the current WebKit URL to Chromium. A manual WebKit tab keeps subsequent
-HTTP(S) address-bar navigation in WebKit; an automatically routed tab returns to
-Chromium for an ordinary URL. Opening an internal or local page returns to
+HTTP(S) address-bar navigation in WebKit; a streaming tab returns to Chromium
+for an ordinary URL. Links, redirects and popups that leave a streaming
+service's site continue in Chromium, where Safe Browsing and extensions apply. Opening an internal or local page returns to
 Chromium. Switching renderers reloads the URL without transferring page state,
 form submissions, cookies, or logins. Renderer choices are not restored across
 sessions.
@@ -135,12 +143,14 @@ sessions.
 Helium's address bar and tab title display the WebKit page, and its normal
 Back, Forward, Reload, and bypass-cache reload commands control that page.
 Chromium has no certificate information for WebKit pages, so the location bar
-does not present Chromium security or certificate state for them.
+shows "Not secure" unless the page is HTTPS without insecure content, and offers
+no certificate details. WebKit tabs cannot use the camera or microphone.
 
-This prototype is disabled by default. Extensions, Chromium history and
+This feature is experimental. Extensions, Chromium history and
 site-data controls, downloads, printing, DevTools, and other browser integrations
 are not fully connected to WebKit. WebKit sessions are not restored; switching
-away suspends media, and returning requires an explicit playback resume.
+away suspends video, and returning requires an explicit playback resume.
+Spotify keeps playing in a background tab.
 Protected playback was confirmed for Netflix and TV 2 Play in the separate
 native-window mode; protected playback in the tab host and on the newly added
 services still needs verification. Split-pane behavior, fullscreen, and
@@ -182,7 +192,12 @@ TikTok, Reddit, YouTube, LinkedIn, Mastodon and Telegram using visible links and
 the post container overlapping your selection. One clear match fills the field;
 multiple matches offer a chooser. Check or edit the link before saving. The
 record preserves candidate links and the chosen link's origin. Suggestions are
-heuristics, not verified attribution. Posting account, publication date and
+heuristics, not verified attribution. They are trusted only on the platform's
+own site (a Mastodon post only on its own server): any page can link to or
+imitate a post elsewhere, so on other sites such links stay selectable as
+references, without account, date or text, and are never filled in
+automatically. The credit line always names the platform of the captured page,
+and a page's own site name is used only when it matches its address. Posting account, publication date and
 post text can also fill from the selected post when the site exposes them. Post
 text comes from the post's own rendered body (quoted posts are excluded) and is
 not expanded, so a collapsed post fills only its visible start, up to 1,500

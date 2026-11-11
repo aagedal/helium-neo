@@ -1,15 +1,24 @@
 # Helium Neo stable releases
 
 The updater uses the public GitHub release asset `helium-neo.xml` as its primary
-feed. Its backup is `https://aagedal.me/apps/appcast/helium-neo.xml`; that feed
-downloads independently mirrored installers from `/apps/helium-neo/`.
+feed. Its backup is `https://aagedal.me/apps/helium-neo/helium-neo.xml`; that
+feed downloads independently mirrored installers from the same directory.
+Releases up to 0.21.1.1 look for the backup at the old
+`https://aagedal.me/apps/appcast/helium-neo.xml`, which is no longer updated; they
+pick up the new location with their next update from GitHub.
 
 Neo retains Helium's service consent and browser-update preference. An enabled
 installation checks on startup and daily, downloads in the background, and uses
-the existing relaunch/update-on-quit integration. A failed primary feed or archive
-download retries once through the mirror. Both hosts failing ends the attempt;
-the next check starts with GitHub. Signature, validation and installation errors
-do not trigger mirror retries. Development component builds keep Sparkle disabled.
+the existing relaunch/update-on-quit integration. Before downloading an update
+from GitHub, it measures GitHub and the mirror by fetching up to 2 MB of the same
+installer from each for at most 8 seconds, then downloads from the mirror only if
+it is at least 1.5 times faster (or GitHub failed the measurement). Sparkle
+verifies the signature whichever host served the file. A download that receives
+nothing for 30 seconds fails. A failed primary feed or archive download retries
+once through the mirror, and a failed mirror download chosen for speed retries
+once from GitHub. Both hosts failing ends the attempt; the next check starts
+with GitHub. Signature, validation and installation errors do not trigger
+retries. Development component builds keep Sparkle disabled.
 
 ## Build and package
 
@@ -57,7 +66,7 @@ From this repository, package into a new release directory:
 ```sh
 python3 devutils/macos/package_release.py \
   --source "$neo_source" --build-output "$neo_source/out/Beta3" \
-  --output "$neo_cache/releases/neo-stable-0.21.1.1" \
+  --output "$neo_cache/releases/neo-stable-0.21.2.1" \
   --identity '<Developer ID identity>' --notary-profile notary \
   --sparkle-tools '<extracted official Sparkle distribution>'
 ```
@@ -78,7 +87,9 @@ installation on quit from a lower signed build. It requires the packaged release
 built chromedriver, source path and Developer ID identity.
 
 For example, run each of `current`, `feed-fallback`, `download-fallback`,
-`both-down`, `bad-signature`, `disabled`, and `no-consent` with:
+`slow-primary`, `both-down`, `bad-signature`, `disabled`, and `no-consent` with
+(`slow-primary` throttles GitHub's installer to about 64 KB/s and expects the
+download to come from the mirror):
 
 ```sh
 python3 devutils/macos/test_updater.py \
@@ -95,16 +106,22 @@ draft and verified. Set it as the latest release so the primary feed URL resolve
 Existing betas need one manual installation to acquire the updater.
 
 The `Publish Neo update mirror` workflow runs when a stable release is published
-and can be rerun manually with a tag. Its `Aagedal Apps` environment needs:
+and can be rerun manually with a tag, from the default branch only. It always
+runs the deploy script from the default branch, not from the release's commit.
+Its `Helium_Neo_App` environment needs:
 
-- `APPCAST_FTP_HOST` (hostname; a pasted FTP URL without credentials or a path is also accepted)
-- `APPCAST_FTP_PORT` (defaults to 21 when empty)
-- `APPCAST_FTP_USERNAME`
-- `APPCAST_FTP_PASSWORD`
+- `HELIUM_NEO_FTP_HOST` (hostname; a pasted FTP URL without credentials or a path is also accepted)
+- `HELIUM_NEO_FTP_PORT` (defaults to 21 when empty)
+- `HELIUM_NEO_FTP_USERNAME`
+- `HELIUM_NEO_PASSWORD`
 
-The FTP login directory is the public `/apps` directory, matching the relative
-paths in the other Aagedal apps' curl deployment. Uploads and cleanup stay relative
-to that directory, even when the server's filesystem root is different.
+Limit the environment's deployment branches and tags to `main` and `v*-neo`.
+
+The FTP account is Neo's own and its login directory is the public
+`/apps/helium-neo` directory; it should not reach other apps' files. Uploads and
+cleanup stay relative to that directory, even when the server's filesystem root
+is different. The installer's public SHA-256 check confirms the directory before
+the feed is replaced.
 Deployment uses explicit FTPS with certificate verification and protected data
 connections. It validates the assets, uploads under a temporary name, renames,
 downloads the public installer to verify SHA-256, then publishes/verifies the
@@ -114,8 +131,9 @@ a newer feed with an older release. Neither source trees nor keys are uploaded.
 The existing-feed check reads the authenticated FTP file directly, so a website's
 HTML fallback for missing URLs does not block first-time deployment.
 
-For manual deployment, the same script accepts the four variables in its
-environment: `python3 devutils/macos/deploy_mirror.py '<release>'`.
+For manual deployment, the same script reads `HELIUM_NEO_FTP_HOST`,
+`HELIUM_NEO_FTP_PORT`, `HELIUM_NEO_FTP_USERNAME` and `HELIUM_NEO_FTP_PASSWORD` from
+its environment: `python3 devutils/macos/deploy_mirror.py '<release>'`.
 
 For isolated updater testing, `--custom-update-server-url` replaces the feed base
 and disables production fallback. An explicit `--custom-update-fallback-url`

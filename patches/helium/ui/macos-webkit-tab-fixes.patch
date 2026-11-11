@@ -1,0 +1,363 @@
+--- a/chrome/browser/helium_webkit_streaming_mac.mm
++++ b/chrome/browser/helium_webkit_streaming_mac.mm
+@@ -12,6 +12,8 @@
+ #include <optional>
+ #include <string>
+ #include <string_view>
++#include <utility>
++#include <vector>
+ 
+ #include "base/command_line.h"
+ #include "base/containers/span.h"
+@@ -36,6 +38,7 @@
+ #include "content/public/browser/browser_context.h"
+ #include "content/public/browser/navigation_controller.h"
+ #include "content/public/browser/navigation_entry.h"
++#include "content/public/browser/favicon_status.h"
+ #include "content/public/browser/navigation_handle.h"
+ #include "content/public/browser/navigation_throttle.h"
+ #include "content/public/browser/navigation_throttle_registry.h"
+@@ -44,9 +47,13 @@
+ #include "content/public/browser/web_contents_delegate.h"
+ #include "content/public/browser/web_contents_observer.h"
+ #include "content/public/common/referrer.h"
++#include "net/base/registry_controlled_domains/registry_controlled_domain.h"
+ #include "net/http/http_request_headers.h"
++#include "third_party/skia/include/core/SkBitmap.h"
+ #include "ui/base/page_transition_types.h"
+ #include "ui/base/window_open_disposition.h"
++#include "ui/gfx/image/image.h"
++#include "ui/gfx/image/image_skia.h"
+ #include "url/gurl.h"
+ 
+ namespace {
+@@ -61,19 +68,58 @@
+          !url.has_username() && !url.has_password();
+ }
+ 
+-// DomainIs checks a hostname boundary, including service subdomains but not
+-// lookalikes such as hbomax.com.example.org. Only automatic routing needs a list.
++// The first label of the site's registrable domain, e.g. "viaplay" for
++// www.viaplay.no, for services that use a domain per country.
++std::string SiteLabel(const GURL& url) {
++  const std::string site =
++      net::registry_controlled_domains::GetDomainAndRegistry(
++          url, net::registry_controlled_domains::EXCLUDE_PRIVATE_REGISTRIES);
++  return site.substr(0, site.find('.'));
++}
++
++// Prime Video on Amazon's own sites, e.g. amazon.de/gp/video or
++// amazon.de/-/en/gp/video, but not the rest of the shop.
++bool IsAmazonVideoPath(const GURL& url) {
++  std::string_view path = url.path();
++  if (path.starts_with("/-/")) {
++    const size_t next = path.find('/', 3);
++    path = next == std::string_view::npos ? std::string_view() : path.substr(next);
++  }
++  return path.starts_with("/gp/video") || path.starts_with("/Amazon-Video") ||
++         path.starts_with("/Prime-Video");
++}
++
++// Services that play in WebKit with FairPlay, while refusing or limiting
++// playback in browsers without Google's Widevine signing. Keep the list in
++// sync with kHeliumStreamingServices in
++// components/omnibox/browser/builtin_provider.cc. DomainIs checks a hostname
++// boundary, including service subdomains but not lookalikes such as
++// hbomax.com.example.org.
+ const char* StreamingService(const GURL& url) {
+   if (!IsWebKitPageURL(url) || !url.SchemeIs("https"))
+     return nullptr;
+-  if (url.DomainIs("netflix.com"))
+-    return "netflix";
+-  if (url.DomainIs("play.tv2.no"))
+-    return "tv2";
+-  if (url.DomainIs("hbomax.com") || url.DomainIs("max.com"))
+-    return "hbomax";
+-  if (url.DomainIs("disneyplus.com"))
+-    return "disneyplus";
++  static constexpr std::pair<const char*, const char*> kDomains[] = {
++      {"netflix.com", "netflix"},         {"play.tv2.no", "tv2"},
++      {"hbomax.com", "hbomax"},           {"max.com", "hbomax"},
++      {"disneyplus.com", "disneyplus"},   {"primevideo.com", "primevideo"},
++      {"tv.apple.com", "appletv"},        {"skyshowtime.com", "skyshowtime"},
++      {"tv.nrk.no", "nrktv"},             {"hulu.com", "hulu"},
++      {"paramountplus.com", "paramountplus"}, {"peacocktv.com", "peacock"},
++      {"spotify.com", "spotify"}};
++  for (const auto& [domain, service] : kDomains) {
++    if (url.DomainIs(domain))
++      return service;
++  }
++  // Services with a domain per country.
++  const std::string label = SiteLabel(url);
++  if (label == "viaplay")
++    return "viaplay";
++  if (label == "discoveryplus")
++    return "discoveryplus";
++  if (label == "teliaplay")
++    return "teliaplay";
++  if (label == "amazon" && IsAmazonVideoPath(url))
++    return "primevideo";
+   return nullptr;
+ }
+ 
+@@ -91,6 +137,28 @@
+     return @"HBO Max";
+   if (id == "disneyplus")
+     return @"Disney+";
++  if (id == "primevideo")
++    return @"Prime Video";
++  if (id == "appletv")
++    return @"Apple TV+";
++  if (id == "viaplay")
++    return @"Viaplay";
++  if (id == "skyshowtime")
++    return @"SkyShowtime";
++  if (id == "discoveryplus")
++    return @"discovery+";
++  if (id == "teliaplay")
++    return @"Telia Play";
++  if (id == "nrktv")
++    return @"NRK TV";
++  if (id == "hulu")
++    return @"Hulu";
++  if (id == "paramountplus")
++    return @"Paramount+";
++  if (id == "peacock")
++    return @"Peacock";
++  if (id == "spotify")
++    return @"Spotify";
+   return @"this service";
+ }
+ 
+@@ -144,8 +212,12 @@
+ bool IsServiceSessionURL(const GURL& url) {
+   if (IsStreamingURL(url))
+     return true;
+-  return IsWebKitPageURL(url) && url.SchemeIs("https") &&
+-         url.DomainIs("tv2.no");
++  if (!IsWebKitPageURL(url) || !url.SchemeIs("https"))
++    return false;
++  // TV 2 accounts, Amazon sign-in for Prime Video, and Apple ID for Apple TV+.
++  return url.DomainIs("tv2.no") ||
++         (SiteLabel(url) == "amazon" && url.path().starts_with("/ap/")) ||
++         url.DomainIs("idmsa.apple.com") || url.DomainIs("appleid.apple.com");
+ }
+ 
+ GURL ToGURL(NSURL* url) {
+@@ -242,6 +314,8 @@
+ // silently continuing media behind another tab. Returning never auto-resumes it.
+ @interface HeliumStreamingRootView : NSView
+ @property(nonatomic, weak) WKWebView* webView;
++// Music keeps playing in a background tab; video pauses.
++@property(nonatomic) BOOL keepsPlayingWhenHidden;
+ - (void)setActivateCallback:(base::RepeatingClosure)callback;
+ @end
+ 
+@@ -271,6 +345,8 @@
+   if (hidden == self.hidden)
+     return;
+   [super setHidden:hidden];
++  if (self.keepsPlayingWhenHidden)
++    return;
+   if (hidden) {
+     [self.webView setAllMediaPlaybackSuspended:YES completionHandler:nil];
+   } else {
+@@ -825,16 +901,76 @@
+       NSString* title = controller_.webView.title;
+       web_contents()->UpdateTitleForEntry(
+           entry, title.length ? base::SysNSStringToUTF16(title) : u"WebKit");
++      UpdateFavicon(*entry);
+     }
++    ((HeliumStreamingRootView*)[controller_ streamingView])
++        .keepsPlayingWhenHidden = PlaysInBackground();
+     web_contents()->NotifyNavigationStateChanged(content::INVALIDATE_TYPE_ALL);
+   }
++
++  // The tab shows the WebKit site's icon. Chromium's blank page underneath
++  // downloads and decodes it in its sandboxed renderer, as it does for its own
++  // favicons, and it is shown on that page's entry.
++  void UpdateFavicon(content::NavigationEntry& entry) {
++    const GURL page = url();
++    if (!IsWebKitPageURL(page))
++      return;
++    const GURL icon = page.GetWithEmptyPath().Resolve("/favicon.ico");
++    if (icon != favicon_url_) {
++      favicon_url_ = icon;
++      favicon_ = gfx::Image();
++      web_contents()->DownloadImage(
++          icon, /*is_favicon=*/true, /*preferred_size=*/gfx::Size(),
++          /*max_bitmap_size=*/64, /*bypass_cache=*/false,
++          base::BindOnce(&StreamingTab::FaviconDownloaded,
++                         activation_factory_.GetWeakPtr()));
++    }
++    if (!favicon_.IsEmpty()) {
++      entry.GetFavicon().valid = true;
++      entry.GetFavicon().url = favicon_url_;
++      entry.GetFavicon().image = favicon_;
++    }
++  }
++  void FaviconDownloaded(int id,
++                         int http_status_code,
++                         const GURL& image_url,
++                         const std::vector<SkBitmap>& bitmaps,
++                         const std::vector<gfx::Size>& sizes) {
++    if (image_url != favicon_url_ || bitmaps.empty())
++      return;
++    // The smallest bitmap that is sharp at 2x, else the largest one.
++    const SkBitmap* best = nullptr;
++    for (const SkBitmap& bitmap : bitmaps) {
++      if (bitmap.width() <= 0 || bitmap.width() != bitmap.height())
++        continue;
++      if (!best ||
++          (best->width() < 32 ? bitmap.width() > best->width()
++                              : bitmap.width() >= 32 &&
++                                    bitmap.width() < best->width())) {
++        best = &bitmap;
++      }
++    }
++    if (!best)
++      return;
++    // Favicons are 16 DIP wide.
++    favicon_ = gfx::Image(gfx::ImageSkia::CreateFromBitmap(
++        *best, best->width() / 16.0f));
++    NavigationChanged();
++  }
+   gfx::NativeView view() const {
+     return gfx::NativeView([controller_ streamingView]);
+   }
+   base::CallbackListSubscription Observe(base::RepeatingClosure callback) {
+     return changed_.Add(std::move(callback));
+   }
+-  void Pause() { [controller_ pauseMedia]; }
++  void Pause() {
++    if (!PlaysInBackground())
++      [controller_ pauseMedia];
++  }
++  bool PlaysInBackground() const {
++    const char* service = StreamingService(url());
++    return service && std::string_view(service) == "spotify";
++  }
+   bool ShouldRoute(const GURL& url, WebKitRequest request) const {
+     if (request == WebKitRequest::kOpen)
+       return IsStreamingURL(url);
+@@ -918,6 +1054,8 @@
+   bool manual_webkit_ = false;
+   bool prefer_chromium_ = false;
+   GURL last_requested_url_;
++  GURL favicon_url_;
++  gfx::Image favicon_;
+   base::RepeatingClosureList changed_;
+   base::WeakPtrFactory<StreamingTab> activation_factory_{this};
+   base::WeakPtrFactory<StreamingTab> weak_factory_{this};
+--- a/chrome/browser/ui/views/helium/BUILD.gn
++++ b/chrome/browser/ui/views/helium/BUILD.gn
+@@ -21,6 +21,9 @@ source_set("command_bar") {
+     "//components/helium_services",
+     "//components/strings",
+   ]
++  if (is_mac) {
++    deps += [ "//chrome/browser:helium_webkit_streaming" ]
++  }
+ }
+ 
+ source_set("frame_corner_radius") {
+--- a/chrome/browser/ui/views/helium/command_bar_view.cc
++++ b/chrome/browser/ui/views/helium/command_bar_view.cc
+@@ -85,6 +85,10 @@
+ #include "ui/views/widget/widget.h"
+ #include "url/url_constants.h"
+ 
++#if BUILDFLAG(IS_MAC)
++#include "chrome/browser/helium_webkit_streaming_mac.h"
++#endif
++
+ namespace {
+ 
+ constexpr int kMaxWidth = 720;
+@@ -112,10 +116,22 @@ bool IsNewTabPageUrl(const GURL& url) {
+            url.host() == chrome::kChromeUINewTabPageHost));
+ }
+ 
++// The address a tab shows. A WebKit tab keeps a blank Chromium page under its
++// own page, which must not count as a new tab page.
++GURL ShownUrl(content::WebContents* contents, bool visible = false) {
++#if BUILDFLAG(IS_MAC)
++  if (GURL webkit = helium::GetWebKitStreamingTabURL(contents);
++      webkit.is_valid()) {
++    return webkit;
++  }
++#endif
++  return visible ? contents->GetVisibleURL() : contents->GetLastCommittedURL();
++}
++
+ bool IsShowingNewTabPage(BrowserWindowInterface* browser) {
+   content::WebContents* contents =
+       browser->GetTabStripModel()->GetActiveWebContents();
+-  return contents && IsNewTabPageUrl(contents->GetVisibleURL());
++  return contents && IsNewTabPageUrl(ShownUrl(contents, /*visible=*/true));
+ }
+ 
+ std::u16string FormatUrlForDisplay(const GURL& url) {
+@@ -520,7 +536,7 @@ CommandBarView::CommandBarView(BrowserWindowInterface* browser, Mode mode)
+   if (mode_ == Mode::kCurrentTab) {
+     content::WebContents* contents =
+         browser_->GetTabStripModel()->GetActiveWebContents();
+-    const GURL url = contents ? contents->GetLastCommittedURL() : GURL();
++    const GURL url = contents ? ShownUrl(contents) : GURL();
+     base::expected<gfx::ImageSkia, qr_code_generator::Error> qr_code =
+         base::unexpected(qr_code_generator::Error::kUnknownError);
+     if (url.SchemeIsHTTPOrHTTPS()) {
+@@ -615,7 +631,7 @@ CommandBarView::CommandBarView(BrowserWindowInterface* browser, Mode mode)
+   if (mode_ == Mode::kCurrentTab) {
+     if (content::WebContents* contents =
+             browser_->GetTabStripModel()->GetActiveWebContents()) {
+-      const GURL& url = contents->GetLastCommittedURL();
++      const GURL url = ShownUrl(contents);
+       if (!IsNewTabPageUrl(url)) {
+         textfield_->SetText(base::UTF8ToUTF16(url.spec()));
+         textfield_->SelectAll(/*reversed=*/false);
+@@ -747,7 +763,7 @@ void CommandBarView::StartQuery() {
+   GURL current_url;
+   if (content::WebContents* contents =
+           browser_->GetTabStripModel()->GetActiveWebContents()) {
+-    current_url = contents->GetLastCommittedURL();
++    current_url = ShownUrl(contents);
+   }
+   const auto page_classification =
+       mode_ == Mode::kNewTab
+@@ -865,7 +881,7 @@ void CommandBarView::RebuildEntries() {
+       }
+       open_urls.emplace_back(
+           AutocompleteMatch::GURLToStrippedGURL(
+-              tab->GetContents()->GetLastCommittedURL(), input_,
++              ShownUrl(tab->GetContents()), input_,
+               template_url_service, std::u16string(),
+               /*keep_search_intent_params=*/true),
+           tab->GetHandle());
+@@ -1299,7 +1315,7 @@ std::vector<CommandBarView::ScoredTab> CommandBarView::GetTabs(
+         continue;
+       }
+       content::WebContents* contents = tab->GetContents();
+-      const GURL& url = contents->GetLastCommittedURL();
++      const GURL url = ShownUrl(contents);
+       int score = 1;
+       if (!terms.empty()) {
+         score = ScoreTab(terms, contents->GetTitle(), url);
+@@ -1325,7 +1341,7 @@ CommandBarView::Entry CommandBarView::CreateTabEntry(
+   Entry entry;
+   entry.tab = tab->GetHandle();
+   content::WebContents* contents = tab->GetContents();
+-  const GURL& url = contents->GetLastCommittedURL();
++  const GURL url = ShownUrl(contents);
+   entry.title = contents->GetTitle();
+   if (entry.title.empty()) {
+     entry.title = FormatUrlForDisplay(url);
+@@ -1411,7 +1427,7 @@ CommandBarView::Entry CommandBarView::CreateReopenTabEntry(
+   content::WebContents* contents = tab->GetContents();
+   AutocompleteMatch match(nullptr, 0, false,
+                           omnibox::AutocompleteMatchType::kHistoryUrl);
+-  match.destination_url = contents->GetLastCommittedURL();
++  match.destination_url = ShownUrl(contents);
+   match.transition = ui::PAGE_TRANSITION_TYPED;
+   match.contents = FormatUrlForDisplay(match.destination_url);
+   match.description = contents->GetTitle();
