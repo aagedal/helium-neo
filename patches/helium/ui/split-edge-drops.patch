@@ -1,0 +1,330 @@
+--- a/chrome/browser/ui/tabs/tab_strip_model.cc
++++ b/chrome/browser/ui/tabs/tab_strip_model.cc
+@@ -3587,7 +3587,7 @@ bool TabStripModel::SetSplitPanes(split_tabs::SplitTabId split_id,
+ 
+ bool TabStripModel::InsertTabIntoSplit(split_tabs::SplitTabId split_id,
+                                        int index,
+-                                       size_t pane,
++                                       std::optional<size_t> pane,
+                                        split_tabs::SplitEdge edge) {
+   if (!ContainsSplit(split_id) || !ContainsIndex(index) ||
+       GetTabAtIndex(index)->IsSplit()) {
+@@ -3599,12 +3599,17 @@ bool TabStripModel::InsertTabIntoSplit(split_tabs::SplitTabId split_id,
+     return false;
+   }
+   split_tabs::SplitLayoutTree tree = data->visual_data()->GetTree(tabs.size());
+-  // A pane added to a row or column gets an equal share of it, like the other
+-  // panes there; one placed across it splits the pane it's placed on.
+-  const bool extends_container = edge == tree.EdgeBesidePane(pane);
+-  const size_t position = tree.InsertPane(pane, edge);
+-  if (extends_container) {
+-    tree.EqualizeSiblings(position);
++  size_t position;
++  if (pane) {
++    // A pane added to a row or column gets an equal share of it, like the
++    // other panes there; one placed across it splits the pane it's placed on.
++    const bool extends_container = edge == tree.EdgeBesidePane(*pane);
++    position = tree.InsertPane(*pane, edge);
++    if (extends_container) {
++      tree.EqualizeSiblings(position);
++    }
++  } else {
++    position = tree.InsertPaneAtEdge(edge);
+   }
+   tabs.insert(tabs.begin() + position, GetTabAtIndex(index));
+   return SetSplitPanes(split_id, tabs, std::move(tree));
+--- a/chrome/browser/ui/tabs/tab_strip_model.h
++++ b/chrome/browser/ui/tabs/tab_strip_model.h
+@@ -745,12 +745,12 @@ class TabStripModel {
+                      split_tabs::SplitLayoutTree tree);
+ 
+   // Adds the tab at `index`, which must not be in a split, to `split_id` on
+-  // the `edge` of the pane at position `pane`. When that adds it to the pane's
+-  // row or column, all panes there get equal sizes. Returns false if the split
+-  // is full.
++  // the `edge` of the pane at position `pane`, or of the whole split if `pane`
++  // is nullopt. When that adds it to the pane's row or column, all panes there
++  // get equal sizes. Returns false if the split is full.
+   bool InsertTabIntoSplit(split_tabs::SplitTabId split_id,
+                           int index,
+-                          size_t pane,
++                          std::optional<size_t> pane,
+                           split_tabs::SplitEdge edge);
+ 
+   TabGroupModel* group_model() const { return group_model_.get(); }
+--- a/chrome/browser/ui/views/frame/browser_view.cc
++++ b/chrome/browser/ui/views/frame/browser_view.cc
+@@ -3196,6 +3196,14 @@ void BrowserView::TabDraggingStatusChanged(bool is_dragging) {
+ #endif
+ }
+ 
++bool BrowserView::IsActiveSplitFull() const {
++  const TabStripModel* model = browser_->GetTabStripModel();
++  const std::optional<split_tabs::SplitTabId> split =
++      model->GetActiveTab()->GetSplit();
++  return split && model->GetSplitData(*split)->ListTabs().size() >=
++                      split_tabs::kMaxSplitPanes;
++}
++
+ TabDragTarget* BrowserView::GetTabDragTarget(
+     const gfx::Point& point_in_screen) {
+   if (ShouldDrawVerticalTabStrip()) {
+@@ -3212,8 +3220,8 @@ TabDragTarget* BrowserView::GetTabDragTarget(
+       return target;
+     }
+   }
+-  if (multi_contents_view_->IsInSplitView() ||
+-      !multi_contents_view_->IsDragAndDropEnabled()) {
++  // A tab can be dropped to start a split, or to add a pane to one.
++  if (IsActiveSplitFull() || !multi_contents_view_->IsDragAndDropEnabled()) {
+     return nullptr;
+   }
+   if (!multi_contents_view_->GetBoundsInScreen().Contains(point_in_screen)) {
+@@ -4017,12 +4025,18 @@ void BrowserView::PreHandleDragUpdate(const content::DropData& drop_data,
+     // is in a split.
+     const bool is_in_split_view =
+         browser_->GetTabStripModel()->GetActiveTab()->IsSplit();
++    // `point` is relative to the page under the pointer, which in a split
++    // isn't necessarily the active one, so use the pointer instead.
+     const gfx::Point point_in_multi_contents_view =
+-        views::View::ConvertPointToTarget(GetActiveContentsContainerView(),
+-                                          multi_contents_view_,
+-                                          gfx::ToRoundedPoint(point));
++        is_in_split_view
++            ? views::View::ConvertPointFromScreen(
++                  multi_contents_view_,
++                  display::Screen::Get()->GetCursorScreenPoint())
++            : views::View::ConvertPointToTarget(GetActiveContentsContainerView(),
++                                                multi_contents_view_,
++                                                gfx::ToRoundedPoint(point));
+     multi_contents_view_->drop_target_controller().OnWebContentsDragUpdate(
+-        drop_data, point_in_multi_contents_view, is_in_split_view);
++        drop_data, point_in_multi_contents_view, IsActiveSplitFull());
+   }
+ }
+ 
+--- a/chrome/browser/ui/views/frame/browser_view.h
++++ b/chrome/browser/ui/views/frame/browser_view.h
+@@ -872,6 +872,8 @@ class BrowserView : public BrowserWindow,
+ 
+   // Returns a `TabDragHandler`, if any available, to handle a tab drag.
+   TabDragTarget* GetTabDragTarget(const gfx::Point& point_in_screen);
++  // Whether the active tab is in a split that can't take another pane.
++  bool IsActiveSplitFull() const;
+ 
+ #if BUILDFLAG(IS_CHROMEOS)
+   // This is used only for SWA/PWA scenario.
+--- a/chrome/browser/ui/views/frame/multi_contents_view_delegate.cc
++++ b/chrome/browser/ui/views/frame/multi_contents_view_delegate.cc
+@@ -5,6 +5,7 @@
+ #include "chrome/browser/ui/views/frame/multi_contents_view_delegate.h"
+ 
+ #include "base/functional/bind.h"
++#include "base/notreached.h"
+ #include "base/task/sequenced_task_runner.h"
+ #include "chrome/browser/sessions/session_service.h"
+ #include "chrome/browser/sessions/session_service_factory.h"
+@@ -137,13 +138,32 @@ void MultiContentsViewDelegateImpl::ResizeSplitLayout(
+   }
+ }
+ 
++namespace {
++
++// The edge of a split that a drop side adds a pane to. Like the panes, the
++// start side follows the text direction.
++split_tabs::SplitEdge SplitEdgeForDropSide(
++    MultiContentsDropTargetView::DropSide side) {
++  switch (side) {
++    case MultiContentsDropTargetView::DropSide::START:
++      return split_tabs::SplitEdge::kLeft;
++    case MultiContentsDropTargetView::DropSide::END:
++      return split_tabs::SplitEdge::kRight;
++    case MultiContentsDropTargetView::DropSide::BOTTOM:
++      return split_tabs::SplitEdge::kBottom;
++  }
++  NOTREACHED();
++}
++
++}  // namespace
++
+ void MultiContentsViewDelegateImpl::HandleLinkDrop(
+     MultiContentsDropTargetView::DropSide side,
+     const ui::DropTargetEvent& event) {
+   auto urls = event.data().GetURLs(ui::FilenameToURLPolicy::CONVERT_FILENAMES);
+   CHECK(!urls.empty());
+   tabs::TabInterface* active_tab = tab_strip_model_->GetActiveTab();
+-  CHECK(!active_tab->IsSplit());
++  const std::optional<split_tabs::SplitTabId> split = active_tab->GetSplit();
+ 
+   // Disallow javascript: URLs to prevent self-XSS.
+   std::vector<GURL> filtered_urls;
+@@ -156,9 +176,12 @@ void MultiContentsViewDelegateImpl::HandleLinkDrop(
+   }
+ 
+   // Insert the tab before or after the active tab, according to the drop side.
++  // A tab for a split goes after it, and moves into place when it joins.
+   const int new_tab_idx =
+-      tab_strip_model_->active_index() +
+-      (side == MultiContentsDropTargetView::DropSide::START ? 0 : 1);
++      split ? tab_strip_model_->GetSplitData(*split)->GetIndexRange().end()
++            : tab_strip_model_->active_index() +
++                  (side == MultiContentsDropTargetView::DropSide::START ? 0
++                                                                        : 1);
+ 
+   const split_tabs::SplitTabVisualData split_data(
+       side == MultiContentsDropTargetView::DropSide::BOTTOM
+@@ -184,6 +207,23 @@ void MultiContentsViewDelegateImpl::HandleLinkDrop(
+     return;
+   }
+ 
++  // Add a pane along the drop side of the existing split.
++  if (split) {
++    tabs::TabInterface* const new_tab =
++        params.navigated_or_inserted_contents
++            ? tabs::TabInterface::MaybeGetFromContents(
++                  params.navigated_or_inserted_contents)
++            : nullptr;
++    const int index =
++        new_tab ? tab_strip_model_->GetIndexOfTab(new_tab) : TabStripModel::kNoTab;
++    if (index != TabStripModel::kNoTab &&
++        tab_strip_model_->InsertTabIntoSplit(*split, index, std::nullopt,
++                                             SplitEdgeForDropSide(side))) {
++      tab_strip_model_->ActivateTabAt(tab_strip_model_->GetIndexOfTab(new_tab));
++    }
++    return;
++  }
++
+   // Create a split with the previously active tab, which should be before or
+   // after the newly created tab.
+   tab_strip_model_->AddToNewSplit(
+@@ -195,7 +235,8 @@ void MultiContentsViewDelegateImpl::HandleLinkDrop(
+ void MultiContentsViewDelegateImpl::HandleTabDrop(
+     MultiContentsDropTargetView::DropSide side,
+     TabDragTarget::DragController& drag_controller) {
+-  CHECK(!tab_strip_model_->GetActiveTab()->IsSplit());
++  const std::optional<split_tabs::SplitTabId> split =
++      tab_strip_model_->GetActiveTab()->GetSplit();
+ 
+   const split_tabs::SplitTabVisualData split_data(
+       side == MultiContentsDropTargetView::DropSide::BOTTOM
+@@ -207,16 +248,30 @@ void MultiContentsViewDelegateImpl::HandleTabDrop(
+           drag_controller.GetSessionData().source_view_index_);
+ 
+   // Insert the tab next to the currently active tab, add it to a split,
+-  // then activate it.
++  // then activate it. A tab for an existing split goes after it, and moves
++  // into place when it joins.
+   const int new_tab_idx =
+-      tab_strip_model_->active_index() +
+-      (side == MultiContentsDropTargetView::DropSide::START ? 0 : 1);
++      split ? tab_strip_model_->GetSplitData(*split)->GetIndexRange().end()
++            : tab_strip_model_->active_index() +
++                  (side == MultiContentsDropTargetView::DropSide::START ? 0
++                                                                        : 1);
+ 
+   tabs::TabInterface* active_tab = tab_strip_model_->GetActiveTab();
+   const int inserted_tab_idx = tab_strip_model_->InsertDetachedTabAt(
+       new_tab_idx, std::move(detached_tab),
+       active_tab->IsPinned() ? AddTabTypes::ADD_PINNED : AddTabTypes::ADD_NONE,
+       active_tab->GetGroup());
++  if (split) {
++    tabs::TabInterface* const inserted_tab =
++        tab_strip_model_->GetTabAtIndex(inserted_tab_idx);
++    if (tab_strip_model_->InsertTabIntoSplit(*split, inserted_tab_idx,
++                                             std::nullopt,
++                                             SplitEdgeForDropSide(side))) {
++      tab_strip_model_->ActivateTabAt(
++          tab_strip_model_->GetIndexOfTab(inserted_tab));
++    }
++    return;
++  }
+   tab_strip_model_->AddToNewSplit(
+       {inserted_tab_idx}, split_data,
+       split_tabs::SplitTabCreatedSource::kDragAndDropTab);
+--- a/chrome/browser/ui/views/frame/multi_contents_view_drop_target_controller.cc
++++ b/chrome/browser/ui/views/frame/multi_contents_view_drop_target_controller.cc
+@@ -282,7 +282,7 @@ MultiContentsViewDropTargetController::RegisterWillDestroyCallback(
+ void MultiContentsViewDropTargetController::OnWebContentsDragUpdate(
+     const content::DropData& data,
+     const gfx::Point& point,
+-    bool is_in_split_view) {
++    bool split_is_full) {
+   hide_drop_target_timer_.Stop();
+   // "Drag update" events can still be delivered even if the point is out of the
+   // contents area, particularly while the drop target is animating in and
+@@ -292,7 +292,7 @@ void MultiContentsViewDropTargetController::OnWebContentsDragUpdate(
+     return;
+   }
+   if (data.url_infos.empty() || !data.url_infos.front().url.IsStandard() ||
+-      is_in_split_view) {
++      split_is_full) {
+     ResetDropTargetTimers();
+     return;
+   }
+--- a/chrome/browser/ui/views/frame/multi_contents_view_drop_target_controller.h
++++ b/chrome/browser/ui/views/frame/multi_contents_view_drop_target_controller.h
+@@ -85,10 +85,11 @@ class MultiContentsViewDropTargetController final
+       base::OnceClosure callback) override;
+ 
+   // Handles a drag within the web contents area.
+-  // `point` should be relative to the multi contents view.
++  // `point` should be relative to the multi contents view. Links can't be
++  // dropped when the active tab's split already has the most panes.
+   void OnWebContentsDragUpdate(const content::DropData& data,
+                                const gfx::Point& point,
+-                               bool is_in_split_view);
++                               bool split_is_full);
+   void OnWebContentsDragExit();
+   void OnWebContentsDragEnded();
+ 
+--- a/components/split_tabs/split_layout_tree.cc
++++ b/components/split_tabs/split_layout_tree.cc
+@@ -425,6 +425,34 @@ size_t SplitLayoutTree::InsertPane(size_t pane, SplitEdge edge) {
+   return before ? pane : pane + 1;
+ }
+ 
++size_t SplitLayoutTree::InsertPaneAtEdge(SplitEdge edge) {
++  const SplitAxis axis = edge == SplitEdge::kLeft || edge == SplitEdge::kRight
++                             ? SplitAxis::kRow
++                             : SplitAxis::kColumn;
++  const bool before = edge == SplitEdge::kLeft || edge == SplitEdge::kTop;
++  const size_t count = pane_count();
++  SplitLayoutNode added;
++  if (!root_.is_pane() && root_.axis == axis) {
++    added.weight = TotalWeight(root_) / root_.children.size();
++    root_.children.insert(before ? root_.children.begin() : root_.children.end(),
++                          std::move(added));
++  } else {
++    SplitLayoutNode rest = std::move(root_);
++    rest.weight = count;
++    SplitLayoutNode root{.axis = axis};
++    if (before) {
++      root.children.push_back(std::move(added));
++      root.children.push_back(std::move(rest));
++    } else {
++      root.children.push_back(std::move(rest));
++      root.children.push_back(std::move(added));
++    }
++    root_ = std::move(root);
++  }
++  Normalize();
++  return before ? 0 : count;
++}
++
+ SplitEdge SplitLayoutTree::EdgeBesidePane(size_t pane) const {
+   // Copy, since FindPane() needs a mutable tree.
+   SplitLayoutNode root = root_;
+--- a/components/split_tabs/split_layout_tree.h
++++ b/components/split_tabs/split_layout_tree.h
+@@ -124,6 +124,11 @@ class SplitLayoutTree {
+   // pane's index. The panes after it shift by one.
+   size_t InsertPane(size_t pane, SplitEdge edge);
+ 
++  // Places a new pane along `edge` of the whole layout, and returns its index:
++  // the first or the last. It gets an equal share of the outermost row or
++  // column, or, across it, the space of one pane.
++  size_t InsertPaneAtEdge(SplitEdge edge);
++
+   // The edge of pane `pane` on which InsertPane() adds a sibling in the pane's
+   // container, rather than nesting a new container.
+   SplitEdge EdgeBesidePane(size_t pane) const;
