@@ -415,3 +415,4 @@ helium/ui/multi-pane-split-menus.patch
 helium/ui/split-layout-tree.patch
 helium/ui/frameless-progress-bar.patch
 helium/ui/split-edge-drops.patch
+helium/ui/split-pane-mover.patch
