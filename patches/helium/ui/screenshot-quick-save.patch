@@ -1,0 +1,1191 @@
+--- /dev/null
++++ b/chrome/browser/ui/views/sharing_hub/screenshot/screenshot_quick_save.h
+@@ -0,0 +1,27 @@
++// Copyright 2026 The Helium Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_VIEWS_SHARING_HUB_SCREENSHOT_SCREENSHOT_QUICK_SAVE_H_
++#define CHROME_BROWSER_UI_VIEWS_SHARING_HUB_SCREENSHOT_SCREENSHOT_QUICK_SAVE_H_
++
++namespace content {
++class WebContents;
++}  // namespace content
++
++namespace image_editor {
++struct ScreenshotCaptureResult;
++}  // namespace image_editor
++
++namespace sharing_hub {
++
++// Saves `capture` with the source documentation recorded automatically, in the
++// screenshot folder or else the Downloads folder, as a regular download. Once
++// saved, the download overlay offers to open, reveal or drag the file, and to
++// edit its metadata, which updates the file.
++void QuickSaveScreenshot(content::WebContents* web_contents,
++                         const image_editor::ScreenshotCaptureResult& capture);
++
++}  // namespace sharing_hub
++
++#endif  // CHROME_BROWSER_UI_VIEWS_SHARING_HUB_SCREENSHOT_SCREENSHOT_QUICK_SAVE_H_
+--- /dev/null
++++ b/chrome/browser/ui/views/sharing_hub/screenshot/screenshot_quick_save.cc
+@@ -0,0 +1,291 @@
++// Copyright 2026 The Helium Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#include "chrome/browser/ui/views/sharing_hub/screenshot/screenshot_quick_save.h"
++
++#include <algorithm>
++#include <memory>
++#include <string>
++#include <utility>
++
++#include "base/containers/span.h"
++#include "base/files/file_path.h"
++#include "base/files/file_util.h"
++#include "base/functional/bind.h"
++#include "base/memory/raw_ptr.h"
++#include "base/memory/weak_ptr.h"
++#include "base/task/thread_pool.h"
++#include "base/uuid.h"
++#include "base/values.h"
++#include "chrome/app/vector_icons/vector_icons.h"
++#include "chrome/browser/download/download_prefs.h"
++#include "chrome/browser/download/download_target_determiner.h"
++#include "chrome/browser/image_editor/screenshot_color.h"
++#include "chrome/browser/image_editor/screenshot_flow.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/sharing_hub/sharing_hub_features.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
++#include "chrome/browser/ui/browser_window/public/global_browser_collection.h"
++#include "chrome/browser/ui/sharing_hub/sharing_hub_window_controller.h"
++#include "chrome/browser/ui/simple_message_box.h"
++#include "chrome/browser/ui/views/download/bubble/helium_download_overlay.h"
++#include "chrome/browser/ui/views/frame/browser_view.h"
++#include "chrome/browser/ui/views/sharing_hub/screenshot/screenshot_captured_bubble.h"
++#include "chrome/browser/ui/views/sharing_hub/screenshot/screenshot_documentation.h"
++#include "chrome/grit/generated_resources.h"
++#include "components/download/public/common/download_item.h"
++#include "components/download/public/common/download_url_parameters.h"
++#include "components/prefs/pref_service.h"
++#include "content/public/browser/blob_handle.h"
++#include "content/public/browser/browser_context.h"
++#include "content/public/browser/download_manager.h"
++#include "content/public/browser/download_request_utils.h"
++#include "content/public/browser/web_contents.h"
++#include "net/traffic_annotation/network_traffic_annotation.h"
++#include "services/network/public/cpp/wrapper_shared_url_loader_factory.h"
++#include "storage/browser/blob/blob_url_loader_factory.h"
++#include "third_party/skia/include/core/SkBitmap.h"
++#include "ui/base/l10n/l10n_util.h"
++#include "url/origin.h"
++
++namespace sharing_hub {
++namespace {
++
++struct SavedExport {
++  ScreenshotExport file;
++  // A free path for the file, or empty when it could not be exported.
++  base::FilePath path;
++};
++
++SavedExport ExportForFolder(const SkBitmap& bitmap,
++                            base::DictValue automatic,
++                            base::DictValue user,
++                            ScreenshotFormat format,
++                            bool bundle,
++                            bool preserve_hdr,
++                            ScreenshotTextLanguage language,
++                            const base::FilePath& directory,
++                            const std::string& stem) {
++  // Keep HDR content, as the metadata editor does when it finds some.
++  if (preserve_hdr && image_editor::AnalyzeScreenshotColor(bitmap).hdr) {
++    format = ScreenshotFormat::kJpegXL;
++  }
++  SavedExport result;
++  result.file = CreateScreenshotExport(bitmap, std::move(automatic),
++                                       std::move(user), format, bundle,
++                                       preserve_hdr, language);
++  if (!result.file.bytes.empty() && base::CreateDirectory(directory)) {
++    result.path = base::GetUniquePath(directory.Append(
++        base::FilePath::FromUTF8Unsafe(stem + "." + result.file.extension)));
++  }
++  return result;
++}
++
++void ShowFailure(content::WebContents* web_contents) {
++  chrome::ShowWarningMessageBoxAsync(
++      web_contents->GetTopLevelNativeWindow(),
++      l10n_util::GetStringUTF16(IDS_NEO_CAPTURE_TITLE),
++      l10n_util::GetStringUTF16(IDS_NEO_CAPTURE_FAILED));
++}
++
++BrowserView* GetBrowserView(content::WebContents* web_contents) {
++  BrowserWindowInterface* browser =
++      GlobalBrowserCollection::GetInstance()->FindBrowserWithTab(web_contents);
++  return browser ? BrowserView::GetBrowserViewForBrowser(browser) : nullptr;
++}
++
++void EditMetadata(base::WeakPtr<content::WebContents> web_contents,
++                  const image_editor::ScreenshotCaptureResult& capture,
++                  const std::string& download_guid) {
++  if (!web_contents) {
++    return;
++  }
++  if (BrowserWindowInterface* browser =
++          GlobalBrowserCollection::GetInstance()->FindBrowserWithTab(
++              web_contents.get())) {
++    SharingHubWindowController::From(browser)->ShowScreenshotCapturedBubble(
++        web_contents.get(), capture, download_guid);
++  }
++}
++
++// Shows the download overlay once the screenshot is saved, then deletes
++// itself.
++class SavedScreenshotWatcher : public download::DownloadItem::Observer {
++ public:
++  static void Watch(download::DownloadItem* item,
++                    base::WeakPtr<content::WebContents> web_contents) {
++    auto* watcher = new SavedScreenshotWatcher(item, std::move(web_contents));
++    watcher->OnDownloadUpdated(item);
++  }
++
++  SavedScreenshotWatcher(const SavedScreenshotWatcher&) = delete;
++  SavedScreenshotWatcher& operator=(const SavedScreenshotWatcher&) = delete;
++
++  // download::DownloadItem::Observer:
++  void OnDownloadUpdated(download::DownloadItem* item) override {
++    switch (item->GetState()) {
++      case download::DownloadItem::IN_PROGRESS:
++        return;
++      case download::DownloadItem::COMPLETE:
++        if (web_contents_) {
++          if (BrowserView* browser_view = GetBrowserView(web_contents_.get())) {
++            HeliumDownloadOverlay::Show(browser_view, item);
++          }
++        }
++        break;
++      case download::DownloadItem::INTERRUPTED:
++        if (web_contents_) {
++          ShowFailure(web_contents_.get());
++        }
++        break;
++      default:
++        break;
++    }
++    Stop();
++  }
++
++  void OnDownloadDestroyed(download::DownloadItem* item) override { Stop(); }
++
++ private:
++  SavedScreenshotWatcher(download::DownloadItem* item,
++                         base::WeakPtr<content::WebContents> web_contents)
++      : item_(item), web_contents_(std::move(web_contents)) {
++    item_->AddObserver(this);
++  }
++  ~SavedScreenshotWatcher() override = default;
++
++  void Stop() {
++    item_->RemoveObserver(this);
++    delete this;
++  }
++
++  const raw_ptr<download::DownloadItem> item_;
++  const base::WeakPtr<content::WebContents> web_contents_;
++};
++
++void DownloadStarted(base::WeakPtr<content::WebContents> web_contents,
++                     const image_editor::ScreenshotCaptureResult& capture,
++                     const std::string& guid,
++                     download::DownloadItem* item,
++                     download::DownloadInterruptReason reason) {
++  if (!item || reason != download::DOWNLOAD_INTERRUPT_REASON_NONE) {
++    helium::ClearDownloadTargetPath(guid);
++    if (web_contents) {
++      ShowFailure(web_contents.get());
++    }
++    return;
++  }
++  HeliumDownloadOverlay::SetExtraAction(
++      item, kEditIcon,
++      l10n_util::GetStringUTF16(IDS_NEO_CAPTURE_EDIT_METADATA),
++      base::BindRepeating(&EditMetadata, web_contents, capture, guid));
++  SavedScreenshotWatcher::Watch(item, std::move(web_contents));
++}
++
++void BlobReady(base::WeakPtr<content::WebContents> web_contents,
++               const image_editor::ScreenshotCaptureResult& capture,
++               const base::FilePath& path,
++               std::unique_ptr<std::string> bytes,
++               std::unique_ptr<content::BlobHandle> blob) {
++  if (!web_contents) {
++    return;
++  }
++  if (!blob) {
++    ShowFailure(web_contents.get());
++    return;
++  }
++  const GURL url("blob:" + url::Origin::Create(capture.page_url).Serialize() +
++                 "/" + blob->GetUUID());
++  mojo::PendingRemote<network::mojom::URLLoaderFactory> remote;
++  storage::BlobURLLoaderFactory::Create(
++      blob->PassBlob(), url, remote.InitWithNewPipeAndPassReceiver());
++  auto factory = base::MakeRefCounted<network::WrapperSharedURLLoaderFactory>(
++      std::move(remote));
++  constexpr auto kTrafficAnnotation =
++      net::DefineNetworkTrafficAnnotation("desktop_screenshot_save", R"(
++      semantics {
++        sender: "Screenshot source documentation"
++        description: "Saves a user-selected screenshot and source documentation "
++                     "as a local image or ZIP archive via a browser-created blob."
++        trigger: "User selects an area to capture as a screenshot."
++        data: "Screenshot, page URL and title, times and user-entered source notes."
++        destination: LOCAL
++      }
++      policy {
++        cookies_allowed: NO
++        setting: "Only runs when explicitly requested by the user."
++        chrome_policy {
++          DisableScreenshots { DisableScreenshots: true }
++        }
++      })");
++  auto params =
++      content::DownloadRequestUtils::CreateDownloadForWebContentsMainFrame(
++          web_contents.get(), url, kTrafficAnnotation);
++  // A path set on the parameters would make the download temporary, which
++  // keeps it out of the downloads bubble and the overlay.
++  const std::string guid = base::Uuid::GenerateRandomV4().AsLowercaseString();
++  helium::SetDownloadTargetPath(guid, path);
++  params->set_guid(guid);
++  params->set_prompt(false);
++  params->set_callback(
++      base::BindOnce(&DownloadStarted, web_contents, capture, guid));
++  Profile::FromBrowserContext(web_contents->GetBrowserContext())
++      ->GetDownloadManager()
++      ->DownloadUrl(std::move(params), std::move(factory));
++}
++
++void ExportReady(base::WeakPtr<content::WebContents> web_contents,
++                 const image_editor::ScreenshotCaptureResult& capture,
++                 SavedExport result) {
++  if (!web_contents) {
++    return;
++  }
++  if (result.path.empty()) {
++    ShowFailure(web_contents.get());
++    return;
++  }
++  // A blob avoids URL/IPC length limits and the extra base64 copy for large
++  // images. BrowserContext posts the span to IO without owning its bytes, so
++  // keep them in the callback until blob creation finishes.
++  auto bytes = std::make_unique<std::string>(std::move(result.file.bytes));
++  const auto data = base::as_byte_span(*bytes);
++  web_contents->GetBrowserContext()->CreateMemoryBackedBlob(
++      data, result.file.mime_type,
++      base::BindOnce(&BlobReady, web_contents, capture, result.path,
++                     std::move(bytes)));
++}
++
++}  // namespace
++
++void QuickSaveScreenshot(content::WebContents* web_contents,
++                         const image_editor::ScreenshotCaptureResult& capture) {
++  Profile* profile =
++      Profile::FromBrowserContext(web_contents->GetBrowserContext());
++  PrefService* prefs = profile->GetPrefs();
++  base::FilePath directory = prefs->GetFilePath(kScreenshotDirectoryPref);
++  if (directory.empty()) {
++    directory = DownloadPrefs::FromBrowserContext(profile)->DownloadPath();
++  }
++  base::ThreadPool::PostTaskAndReplyWithResult(
++      FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
++      base::BindOnce(
++          &ExportForFolder,
++          capture.high_precision_available ? capture.high_precision_bitmap
++                                           : *capture.image.ToSkBitmap(),
++          ScreenshotAutomaticFields(capture),
++          ScreenshotUnreviewedUserFields(
++              prefs->GetString(kScreenshotCapturedByPref)),
++          static_cast<ScreenshotFormat>(
++              std::clamp(prefs->GetInteger(kScreenshotFormatPref), 0, 2)),
++          prefs->GetBoolean(kScreenshotBundlePref),
++          prefs->GetBoolean(kScreenshotPreserveHDRPref),
++          static_cast<ScreenshotTextLanguage>(
++              GetScreenshotTextLanguage(prefs)),
++          directory,
++          ScreenshotFilenameStem(capture.page_url, capture.page_title,
++                                 capture.capture_started_at)),
++      base::BindOnce(&ExportReady, web_contents->GetWeakPtr(), capture));
++}
++
++}  // namespace sharing_hub
+--- a/chrome/browser/ui/views/sharing_hub/BUILD.gn
++++ b/chrome/browser/ui/views/sharing_hub/BUILD.gn
+@@ -11,6 +11,7 @@
+   public = [
+     "preview_view.h",
+     "screenshot/screenshot_captured_bubble.h",
++    "screenshot/screenshot_quick_save.h",
+     "sharing_hub_bubble_util.h",
+   ]
+   public_deps = [
+@@ -37,11 +38,15 @@
+   sources = [
+     "preview_view.cc",
+     "screenshot/screenshot_captured_bubble.cc",
++    "screenshot/screenshot_quick_save.cc",
+     "sharing_hub_bubble_util.cc",
+   ]
+   deps = [
+     ":screenshot_documentation",
+     ":sharing_hub",
++    "//chrome/app/vector_icons",
++    "//chrome/browser/download",
++    "//chrome/browser/ui/views/download",
+     "//chrome/browser/image_editor",
+     "//chrome/browser/image_editor:image_editor_component_util",
+     "//chrome/browser/image_editor:screenshot_color",
+--- a/chrome/browser/ui/views/sharing_hub/screenshot/screenshot_captured_bubble.h
++++ b/chrome/browser/ui/views/sharing_hub/screenshot/screenshot_captured_bubble.h
+@@ -12,6 +12,7 @@
+ #include "base/memory/weak_ptr.h"
+ #include "base/scoped_multi_source_observation.h"
+ #include "base/values.h"
++#include "components/download/public/common/download_item.h"
+ #include "chrome/browser/image_editor/screenshot_color.h"
+ #include "chrome/browser/image_editor/screenshot_flow.h"
+ #include "chrome/browser/ui/views/location_bar/location_bar_bubble_delegate_view.h"
+@@ -23,7 +24,6 @@
+ 
+ namespace content {
+ class WebContents;
+-class BlobHandle;
+ }  // namespace content
+ 
+ namespace views {
+@@ -40,6 +40,16 @@
+ 
+ struct ScreenshotExport;
+ 
++// The source documentation recorded automatically for `capture`.
++base::DictValue ScreenshotAutomaticFields(
++    const image_editor::ScreenshotCaptureResult& capture);
++
++// User-provided fields before the user reviews anything: only the remembered
++// name of who captured screenshots.
++base::DictValue ScreenshotUnreviewedUserFields(const std::string& captured_by);
++
++// Edits the source documentation of a screenshot that was already saved as
++// the download with `download_guid`, and updates the file with it.
+ class ScreenshotCapturedBubble : public LocationBarBubbleDelegateView,
+                                  public views::TextfieldController,
+                                  public views::ViewObserver,
+@@ -50,7 +60,8 @@
+   ScreenshotCapturedBubble(views::BubbleAnchor anchor,
+                            content::WebContents* web_contents,
+                            const image_editor::ScreenshotCaptureResult& capture,
+-                           Profile* profile);
++                           Profile* profile,
++                           std::string download_guid);
+   ~ScreenshotCapturedBubble() override;
+ 
+   // Shows the bubble over the top right of the anchor, the browser window in
+@@ -68,9 +79,8 @@
+   void AutofillPostDetails(const std::string& permalink);
+   void ContentsChanged(views::Textfield* sender,
+                        const std::u16string& new_contents) override;
+-  void SaveCapture();
++  void UpdateFile();
+   void ChooseScreenshotFolder();
+-  void QuickSaveChanged();
+   void UpdateFolderLabel();
+   void FileSelected(const ui::SelectedFileInfo& file, int index) override;
+   void FileSelectionCanceled() override;
+@@ -83,10 +93,14 @@
+   void OnViewBlurred(views::View* view) override;
+   void CopyrightLanguageChanged();
+   void PreserveHDRChanged();
++  // Returns the saved download, or null after it was removed.
++  download::DownloadItem* GetDownload();
+   void ExportReady(ScreenshotExport result);
+-  void BlobReady(std::unique_ptr<std::string> archive,
+-                 std::string extension,
+-                 std::unique_ptr<content::BlobHandle> blob);
++  void Renamed(std::string bytes,
++               download::DownloadItem::DownloadRenameResult result);
++  void WriteFile(std::string bytes);
++  void FileWritten(bool success);
++  void ShowStatus(int message_id);
+ 
+   // Source details are frozen with the snapshot, never read from a later page.
+   const image_editor::ScreenshotCaptureResult capture_;
+@@ -117,11 +131,9 @@
+   // Source, credit, description, alt text, and source record headings.
+   std::vector<raw_ptr<views::Label>> metadata_headings_;
+   raw_ptr<views::Checkbox> bundle_ = nullptr;
+-  raw_ptr<views::Checkbox> quick_save_ = nullptr;
+   raw_ptr<views::Label> folder_label_ = nullptr;
+   scoped_refptr<ui::SelectFileDialog> folder_dialog_;
+-  bool save_after_folder_selection_ = false;
+-  base::FilePath save_directory_;
++  const std::string download_guid_;
+   raw_ptr<views::Checkbox> preserve_hdr_ = nullptr;
+   raw_ptr<views::Label> color_status_ = nullptr;
+   bool hdr_detected_ = false;
+--- a/chrome/browser/ui/views/sharing_hub/screenshot/screenshot_captured_bubble.cc
++++ b/chrome/browser/ui/views/sharing_hub/screenshot/screenshot_captured_bubble.cc
+@@ -9,8 +9,8 @@
+ 
+ #include "base/containers/span.h"
+ #include "base/functional/bind.h"
++#include "base/files/file_util.h"
+ #include "base/i18n/time_formatting.h"
+-#include "base/uuid.h"
+ #include "chrome/browser/ui/select_file_policy/chrome_select_file_policy.h"
+ #include "ui/shell_dialogs/selected_file_info.h"
+ #include "base/json/json_reader.h"
+@@ -19,19 +19,17 @@
+ #include "base/values.h"
+ #include "chrome/browser/profiles/profile.h"
+ #include "chrome/browser/sharing_hub/sharing_hub_features.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
++#include "chrome/browser/ui/browser_window/public/global_browser_collection.h"
++#include "chrome/browser/ui/views/download/bubble/helium_download_overlay.h"
++#include "chrome/browser/ui/views/frame/browser_view.h"
+ #include "chrome/browser/ui/views/sharing_hub/screenshot/screenshot_documentation.h"
+ #include "chrome/grit/generated_resources.h"
+-#include "components/download/public/common/download_url_parameters.h"
+ #include "components/prefs/pref_service.h"
+ #include "components/version_info/version_info.h"
+-#include "content/public/browser/blob_handle.h"
+ #include "content/public/browser/browser_context.h"
+ #include "content/public/browser/download_manager.h"
+-#include "content/public/browser/download_request_utils.h"
+ #include "content/public/browser/web_contents.h"
+-#include "net/traffic_annotation/network_traffic_annotation.h"
+-#include "services/network/public/cpp/wrapper_shared_url_loader_factory.h"
+-#include "storage/browser/blob/blob_url_loader_factory.h"
+ #include "ui/base/clipboard/scoped_clipboard_writer.h"
+ #include "ui/base/l10n/l10n_util.h"
+ #include "ui/base/metadata/metadata_impl_macros.h"
+@@ -50,7 +48,6 @@
+ #include "ui/views/controls/textfield/textfield.h"
+ #include "ui/views/layout/box_layout.h"
+ #include "ui/views/style/typography.h"
+-#include "url/origin.h"
+ 
+ namespace sharing_hub {
+ namespace {
+@@ -90,19 +87,57 @@
+ 
+ }  // namespace
+ 
++base::DictValue ScreenshotAutomaticFields(
++    const image_editor::ScreenshotCaptureResult& capture) {
++  base::DictValue automatic;
++  automatic.Set("page_url", capture.page_url.spec());
++  automatic.Set("page_title", base::UTF16ToUTF8(capture.page_title));
++  automatic.Set("capture_started_at_utc",
++                base::TimeFormatAsIso8601(capture.capture_started_at));
++  automatic.Set("capture_completed_at_utc",
++                base::TimeFormatAsIso8601(capture.capture_completed_at));
++  automatic.Set("browser", "Helium Neo / Chromium " +
++                               std::string(version_info::GetVersionNumber()));
++  automatic.Set("selection_in_view_dip", RectValue(capture.selected_region));
++  automatic.Set("viewport_bounds_on_screen_dip",
++                RectValue(capture.screen_bounds));
++  auto sources = base::JSONReader::ReadDict(capture.source_suggestions_json,
++                                            base::JSON_PARSE_RFC);
++  if (sources)
++    automatic.Set("permalink_suggestions", std::move(*sources));
++  return automatic;
++}
++
++base::DictValue ScreenshotUnreviewedUserFields(const std::string& captured_by) {
++  base::DictValue user;
++  user.Set("post_permalink", "");
++  user.Set("post_permalink_origin", "not_supplied");
++  user.Set("captured_by", captured_by);
++  user.Set("captured_by_origin",
++           captured_by.empty() ? "not_supplied" : "user_entered");
++  for (const char* field : {"posting_account", "publication_date_text",
++                            "post_text", "alt_text", "notes"}) {
++    user.Set(field, "");
++    user.Set(std::string(field) + "_origin", "not_supplied");
++  }
++  return user;
++}
++
+ ScreenshotCapturedBubble::ScreenshotCapturedBubble(
+     views::BubbleAnchor anchor,
+     content::WebContents* web_contents,
+     const image_editor::ScreenshotCaptureResult& capture,
+-    Profile* profile)
++    Profile* profile,
++    std::string download_guid)
+     : LocationBarBubbleDelegateView(anchor, nullptr),
+       capture_(capture),
+       color_info_(image_editor::AnalyzeScreenshotColor(
+           capture.high_precision_available ? capture.high_precision_bitmap
+                                            : *capture.image.ToSkBitmap())),
+-      web_contents_(web_contents->GetWeakPtr()) {
++      web_contents_(web_contents->GetWeakPtr()),
++      download_guid_(std::move(download_guid)) {
+   SetButtons(static_cast<int>(ui::mojom::DialogButton::kNone));
+-  SetTitle(IDS_NEO_CAPTURE_TITLE);
++  SetTitle(IDS_NEO_CAPTURE_EDIT_TITLE);
+   set_close_on_deactivate(false);
+   set_fixed_width(std::clamp(capture_.screen_bounds.width() - 32, 320, 940));
+ }
+@@ -288,11 +323,6 @@
+   bundle_ = options->AddChildView(std::make_unique<views::Checkbox>(
+       l10n_util::GetStringUTF16(IDS_NEO_CAPTURE_BUNDLE)));
+   bundle_->SetChecked(prefs->GetBoolean(kScreenshotBundlePref));
+-  quick_save_ = options->AddChildView(std::make_unique<views::Checkbox>(
+-      l10n_util::GetStringUTF16(IDS_NEO_CAPTURE_QUICK_SAVE),
+-      base::BindRepeating(&ScreenshotCapturedBubble::QuickSaveChanged,
+-                          weak_factory_.GetWeakPtr())));
+-  quick_save_->SetChecked(prefs->GetBoolean(kScreenshotQuickSavePref));
+   folder_label_ = AddLabel(options, std::u16string(), column_width_);
+   folder_label_->SetSelectable(true);
+   UpdateFolderLabel();
+@@ -403,9 +433,9 @@
+                           weak_factory_.GetWeakPtr()),
+       l10n_util::GetStringUTF16(IDS_NEO_CAPTURE_COPY)));
+   save_ = row->AddChildView(std::make_unique<views::MdTextButton>(
+-      base::BindRepeating(&ScreenshotCapturedBubble::SaveCapture,
++      base::BindRepeating(&ScreenshotCapturedBubble::UpdateFile,
+                           weak_factory_.GetWeakPtr()),
+-      l10n_util::GetStringUTF16(IDS_NEO_CAPTURE_SAVE)));
++      l10n_util::GetStringUTF16(IDS_NEO_CAPTURE_UPDATE)));
+   save_->SetStyle(ui::ButtonStyle::kProminent);
+ }
+ 
+@@ -616,23 +646,7 @@
+ }
+ 
+ base::DictValue ScreenshotCapturedBubble::AutomaticFields() const {
+-  base::DictValue automatic;
+-  automatic.Set("page_url", capture_.page_url.spec());
+-  automatic.Set("page_title", base::UTF16ToUTF8(capture_.page_title));
+-  automatic.Set("capture_started_at_utc",
+-                base::TimeFormatAsIso8601(capture_.capture_started_at));
+-  automatic.Set("capture_completed_at_utc",
+-                base::TimeFormatAsIso8601(capture_.capture_completed_at));
+-  automatic.Set("browser", "Helium Neo / Chromium " +
+-                               std::string(version_info::GetVersionNumber()));
+-  automatic.Set("selection_in_view_dip", RectValue(capture_.selected_region));
+-  automatic.Set("viewport_bounds_on_screen_dip",
+-                RectValue(capture_.screen_bounds));
+-  auto sources = base::JSONReader::ReadDict(capture_.source_suggestions_json,
+-                                            base::JSON_PARSE_RFC);
+-  if (sources)
+-    automatic.Set("permalink_suggestions", std::move(*sources));
+-  return automatic;
++  return ScreenshotAutomaticFields(capture_);
+ }
+ 
+ base::DictValue ScreenshotCapturedBubble::UserFields() const {
+@@ -678,14 +692,6 @@
+   return user;
+ }
+ 
+-void ScreenshotCapturedBubble::QuickSaveChanged() {
+-  if (web_contents_) {
+-    Profile::FromBrowserContext(web_contents_->GetBrowserContext())
+-        ->GetPrefs()->SetBoolean(kScreenshotQuickSavePref,
+-                                 quick_save_->GetChecked());
+-  }
+-}
+-
+ void ScreenshotCapturedBubble::UpdateFolderLabel() {
+   if (!web_contents_)
+     return;
+@@ -718,31 +724,46 @@
+       ->GetPrefs()->SetFilePath(kScreenshotDirectoryPref, file.path());
+   UpdateFolderLabel();
+   SizeToContents();
+-  const bool resume = save_after_folder_selection_;
+-  save_after_folder_selection_ = false;
+-  if (resume)
+-    SaveCapture();
+ }
+ 
+ void ScreenshotCapturedBubble::FileSelectionCanceled() {
+   folder_dialog_ = nullptr;
+-  save_after_folder_selection_ = false;
+ }
+ 
+-void ScreenshotCapturedBubble::SaveCapture() {
++void ScreenshotCapturedBubble::ShowStatus(int message_id) {
++  status_->SetVisible(true);
++  status_->SetText(l10n_util::GetStringUTF16(message_id));
++  SizeToContents();
++}
++
++download::DownloadItem* ScreenshotCapturedBubble::GetDownload() {
++  if (!web_contents_)
++    return nullptr;
++  download::DownloadItem* item =
++      Profile::FromBrowserContext(web_contents_->GetBrowserContext())
++          ->GetDownloadManager()
++          ->GetDownloadByGuid(download_guid_);
++  if (!item || item->GetState() != download::DownloadItem::COMPLETE ||
++      item->GetFileExternallyRemoved()) {
++    return nullptr;
++  }
++  return item;
++}
++
++void ScreenshotCapturedBubble::UpdateFile() {
+   const std::string permalink = base::UTF16ToUTF8(permalink_->GetText());
+   if (!permalink.empty() &&
+       (!GURL(permalink).is_valid() || !GURL(permalink).SchemeIsHTTPOrHTTPS())) {
+-    status_->SetVisible(true);
+-    status_->SetText(l10n_util::GetStringUTF16(IDS_NEO_CAPTURE_URL_ERROR));
++    ShowStatus(IDS_NEO_CAPTURE_URL_ERROR);
+     permalink_->RequestFocus();
+-    SizeToContents();
+     return;
+   }
+   if (!web_contents_) {
+-    status_->SetVisible(true);
+-    status_->SetText(l10n_util::GetStringUTF16(IDS_NEO_CAPTURE_SOURCE_GONE));
+-    SizeToContents();
++    ShowStatus(IDS_NEO_CAPTURE_SOURCE_GONE);
++    return;
++  }
++  if (!GetDownload()) {
++    ShowStatus(IDS_NEO_CAPTURE_FILE_GONE);
+     return;
+   }
+   auto automatic = AutomaticFields();
+@@ -756,25 +777,13 @@
+                    base::UTF16ToUTF8(captured_by_->GetText()));
+   prefs->SetInteger(kScreenshotFormatPref, static_cast<int>(format));
+   prefs->SetBoolean(kScreenshotBundlePref, bundle);
+-  prefs->SetBoolean(kScreenshotQuickSavePref, quick_save_->GetChecked());
+-  if (quick_save_->GetChecked() &&
+-      prefs->GetFilePath(kScreenshotDirectoryPref).empty()) {
+-    save_after_folder_selection_ = true;
+-    ChooseScreenshotFolder();
+-    return;
+-  }
+   const bool preserve_hdr = preserve_hdr_->GetChecked();
+   prefs->SetBoolean(kScreenshotPreserveHDRPref, preserve_hdr);
+   const auto language = static_cast<ScreenshotTextLanguage>(
+       copyright_language_->GetSelectedIndex().value_or(0));
+   SetScreenshotTextLanguage(static_cast<int>(language));
+-  save_directory_ = quick_save_->GetChecked()
+-                        ? prefs->GetFilePath(kScreenshotDirectoryPref)
+-                        : base::FilePath();
+   save_->SetEnabled(false);
+-  status_->SetVisible(true);
+-  status_->SetText(l10n_util::GetStringUTF16(IDS_NEO_CAPTURE_WORKING));
+-  SizeToContents();
++  ShowStatus(IDS_NEO_CAPTURE_WORKING);
+   base::ThreadPool::PostTaskAndReplyWithResult(
+       FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
+       base::BindOnce(&CreateScreenshotExport,
+@@ -788,86 +797,78 @@
+ }
+ 
+ void ScreenshotCapturedBubble::ExportReady(ScreenshotExport result) {
+-  if (result.bytes.empty() || !web_contents_) {
++  download::DownloadItem* item = GetDownload();
++  if (result.bytes.empty() || !item) {
+     save_->SetEnabled(true);
+-    status_->SetVisible(true);
+-    status_->SetText(l10n_util::GetStringUTF16(
+-        result.bytes.empty() ? IDS_NEO_CAPTURE_FAILED
+-                             : IDS_NEO_CAPTURE_SOURCE_GONE));
+-    SizeToContents();
++    ShowStatus(result.bytes.empty() ? IDS_NEO_CAPTURE_FAILED
++                                    : IDS_NEO_CAPTURE_FILE_GONE);
++    return;
++  }
++  // A new format or a bundle changes the extension, so rename the file first.
++  // The download then keeps pointing at it.
++  const base::FilePath name = item->GetTargetFilePath().BaseName();
++  const base::FilePath new_name =
++      name.ReplaceExtension(base::FilePath::FromUTF8Unsafe(result.extension)
++                                .value());
++  if (new_name == name) {
++    WriteFile(std::move(result.bytes));
+     return;
+   }
+-  // A blob avoids URL/IPC length limits and the extra base64 copy for large
+-  // images.
+-  // BrowserContext posts the span to IO without owning its bytes. Keep them
+-  // in the callback until blob creation finishes, even if this bubble closes.
+-  auto owned_archive = std::make_unique<std::string>(std::move(result.bytes));
+-  const auto data = base::as_byte_span(*owned_archive);
+-  web_contents_->GetBrowserContext()->CreateMemoryBackedBlob(
+-      data, result.mime_type,
+-      base::BindOnce(&ScreenshotCapturedBubble::BlobReady,
+-                     weak_factory_.GetWeakPtr(), std::move(owned_archive),
+-                     std::move(result.extension)));
+-}
+-
+-void ScreenshotCapturedBubble::BlobReady(
+-    std::unique_ptr<std::string> archive,
+-    std::string extension,
+-    std::unique_ptr<content::BlobHandle> blob) {
++  item->Rename(new_name,
++               base::BindOnce(&ScreenshotCapturedBubble::Renamed,
++                              weak_factory_.GetWeakPtr(),
++                              std::move(result.bytes)));
++}
++
++void ScreenshotCapturedBubble::Renamed(
++    std::string bytes,
++    download::DownloadItem::DownloadRenameResult result) {
++  if (result != download::DownloadItem::SUCCESS) {
++    save_->SetEnabled(true);
++    ShowStatus(IDS_NEO_CAPTURE_UPDATE_FAILED);
++    return;
++  }
++  WriteFile(std::move(bytes));
++}
++
++void ScreenshotCapturedBubble::WriteFile(std::string bytes) {
++  download::DownloadItem* item = GetDownload();
++  if (!item) {
++    save_->SetEnabled(true);
++    ShowStatus(IDS_NEO_CAPTURE_FILE_GONE);
++    return;
++  }
++  // Rewrite the file in place, which keeps its extended attributes, such as
++  // where it was downloaded from.
++  base::ThreadPool::PostTaskAndReplyWithResult(
++      FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
++      base::BindOnce(
++          [](const base::FilePath& path, const std::string& bytes) {
++            return base::WriteFile(path, bytes);
++          },
++          item->GetTargetFilePath(), std::move(bytes)),
++      base::BindOnce(&ScreenshotCapturedBubble::FileWritten,
++                     weak_factory_.GetWeakPtr()));
++}
++
++void ScreenshotCapturedBubble::FileWritten(bool success) {
+   save_->SetEnabled(true);
+-  if (!blob || !web_contents_) {
+-    status_->SetVisible(true);
+-    status_->SetText(l10n_util::GetStringUTF16(
+-        blob ? IDS_NEO_CAPTURE_SOURCE_GONE : IDS_NEO_CAPTURE_FAILED));
+-    SizeToContents();
++  download::DownloadItem* item = GetDownload();
++  if (!success || !item) {
++    ShowStatus(success ? IDS_NEO_CAPTURE_FILE_GONE
++                       : IDS_NEO_CAPTURE_UPDATE_FAILED);
+     return;
+   }
+-  const GURL url("blob:" + url::Origin::Create(capture_.page_url).Serialize() +
+-                 "/" + blob->GetUUID());
+-  mojo::PendingRemote<network::mojom::URLLoaderFactory> remote;
+-  storage::BlobURLLoaderFactory::Create(
+-      blob->PassBlob(), url, remote.InitWithNewPipeAndPassReceiver());
+-  auto factory = base::MakeRefCounted<network::WrapperSharedURLLoaderFactory>(
+-      std::move(remote));
+-  constexpr auto traffic_annotation =
+-      net::DefineNetworkTrafficAnnotation("desktop_screenshot_save", R"(
+-      semantics {
+-        sender: "Screenshot source documentation"
+-        description: "Saves a user-selected screenshot and source documentation "
+-                     "as a local image or ZIP archive via a browser-created blob."
+-        trigger: "User clicks Save capture in the screenshot review dialog."
+-        data: "Screenshot, page URL and title, times and user-entered source notes."
+-        destination: LOCAL
+-      }
+-      policy {
+-        cookies_allowed: NO
+-        setting: "Only runs when explicitly requested by the user."
+-        chrome_policy {
+-          DisableScreenshots { DisableScreenshots: true }
+-        }
+-      })");
+-  auto params =
+-      content::DownloadRequestUtils::CreateDownloadForWebContentsMainFrame(
+-          web_contents_.get(), url, traffic_annotation);
+-  const std::string filename = ScreenshotFilenameStem(
+-      capture_.page_url, capture_.page_title, capture_.capture_started_at);
+-  params->set_suggested_name(base::UTF8ToUTF16(filename + "." + extension));
+-  if (!save_directory_.empty()) {
+-    // Forced download paths bypass Save As. Give every save a fresh name,
+-    // including repeated saves of the same capture, to avoid overwrites.
+-    params->set_file_path(save_directory_.Append(base::FilePath::FromUTF8Unsafe(
+-        filename + "-" + base::Uuid::GenerateRandomV4().AsLowercaseString() +
+-        "." + extension)));
+-    params->set_prompt(false);
+-  } else {
+-    params->set_prompt(true);
++  // Offer the updated file again, from the overlay the capture first showed.
++  if (BrowserWindowInterface* browser =
++          GlobalBrowserCollection::GetInstance()->FindBrowserWithTab(
++              web_contents_.get())) {
++    if (BrowserView* browser_view =
++            BrowserView::GetBrowserViewForBrowser(browser)) {
++      HeliumDownloadOverlay::Show(browser_view, item);
++    }
+   }
+-  Profile::FromBrowserContext(web_contents_->GetBrowserContext())
+-      ->GetDownloadManager()
+-      ->DownloadUrl(std::move(params), std::move(factory));
+-  status_->SetVisible(true);
+-  status_->SetText(l10n_util::GetStringUTF16(IDS_NEO_CAPTURE_READY));
+-  SizeToContents();
++  GetWidget()->Close();
+ }
+ 
+ BEGIN_METADATA(ScreenshotCapturedBubble)
+--- a/chrome/browser/ui/sharing_hub/sharing_hub_window_controller.h
++++ b/chrome/browser/ui/sharing_hub/sharing_hub_window_controller.h
+@@ -5,6 +5,8 @@
+ #ifndef CHROME_BROWSER_UI_SHARING_HUB_SHARING_HUB_WINDOW_CONTROLLER_H_
+ #define CHROME_BROWSER_UI_SHARING_HUB_SHARING_HUB_WINDOW_CONTROLLER_H_
+ 
++#include <string>
++
+ #include "base/memory/raw_ref.h"
+ #include "build/build_config.h"
+ #include "ui/base/unowned_user_data/scoped_unowned_user_data.h"
+@@ -49,10 +51,12 @@
+   SharingHubBubbleView* ShowSharingHubBubble(share::ShareAttempt attempt);
+ #endif
+ 
+-  // Shows the Screenshot bubble.
++  // Shows the Screenshot bubble, which edits the metadata of the capture saved
++  // as the download with `download_guid`.
+   ScreenshotCapturedBubble* ShowScreenshotCapturedBubble(
+       content::WebContents* contents,
+-      const image_editor::ScreenshotCaptureResult& capture);
++      const image_editor::ScreenshotCaptureResult& capture,
++      const std::string& download_guid);
+ 
+  private:
+   friend class ui::ScopedUnownedUserData<SharingHubWindowController>;
+--- a/chrome/browser/ui/sharing_hub/sharing_hub_window_controller.cc
++++ b/chrome/browser/ui/sharing_hub/sharing_hub_window_controller.cc
+@@ -62,7 +62,8 @@
+ ScreenshotCapturedBubble*
+ SharingHubWindowController::ShowScreenshotCapturedBubble(
+     content::WebContents* contents,
+-    const image_editor::ScreenshotCaptureResult& capture) {
++    const image_editor::ScreenshotCaptureResult& capture,
++    const std::string& download_guid) {
+   // In frameless mode, a bubble anchored in the toolbar would reveal it.
+   BrowserView* browser_view = BrowserView::GetBrowserViewForBrowser(&*browser_);
+   const bool overlay =
+@@ -72,7 +73,8 @@
+                                              ->GetBubbleAnchor(std::nullopt);
+   auto bubble = std::make_unique<ScreenshotCapturedBubble>(
+       anchor, contents, capture,
+-      Profile::FromBrowserContext(contents->GetBrowserContext()));
++      Profile::FromBrowserContext(contents->GetBrowserContext()),
++      download_guid);
+   auto* bubble_ptr = bubble.get();
+   if (overlay) {
+     bubble->set_overlay(true);
+--- a/chrome/browser/ui/sharing_hub/screenshot/screenshot_captured_bubble_controller.cc
++++ b/chrome/browser/ui/sharing_hub/screenshot/screenshot_captured_bubble_controller.cc
+@@ -6,10 +6,8 @@
+ 
+ #include "chrome/browser/image_editor/screenshot_flow.h"
+ #include "chrome/browser/sharing_hub/sharing_hub_features.h"
+-#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
+-#include "chrome/browser/ui/browser_window/public/global_browser_collection.h"
+-#include "chrome/browser/ui/sharing_hub/sharing_hub_window_controller.h"
+ #include "chrome/browser/ui/simple_message_box.h"
++#include "chrome/browser/ui/views/sharing_hub/screenshot/screenshot_quick_save.h"
+ #include "chrome/grit/generated_resources.h"
+ #include "content/public/browser/web_contents.h"
+ #include "ui/base/l10n/l10n_util.h"
+@@ -31,13 +29,9 @@
+ 
+ void ScreenshotCapturedBubbleController::ShowBubble(
+     const image_editor::ScreenshotCaptureResult& image) {
+-  BrowserWindowInterface* browser =
+-      GlobalBrowserCollection::GetInstance()->FindBrowserWithTab(
+-          &GetWebContents());
+-  if (browser) {
+-    sharing_hub::SharingHubWindowController::From(browser)
+-        ->ShowScreenshotCapturedBubble(&GetWebContents(), image);
+-  }
++  // Save right away. The download overlay then offers to edit the source
++  // documentation, which opens the screenshot bubble.
++  QuickSaveScreenshot(&GetWebContents(), image);
+ }
+ 
+ void ScreenshotCapturedBubbleController::HideBubble() {
+--- a/chrome/browser/sharing_hub/sharing_hub_features.h
++++ b/chrome/browser/sharing_hub/sharing_hub_features.h
+@@ -46,7 +46,6 @@
+ inline constexpr char kScreenshotFormatPref[] = "helium.screenshot_format";
+ inline constexpr char kScreenshotBundlePref[] = "helium.screenshot_bundle";
+ inline constexpr char kScreenshotCapturedByPref[] = "helium.screenshot_captured_by";
+-inline constexpr char kScreenshotQuickSavePref[] = "helium.screenshot_quick_save";
+ inline constexpr char kScreenshotDirectoryPref[] = "helium.screenshot_directory";
+ inline constexpr char kScreenshotPreserveHDRPref[] =
+     "helium.screenshot_preserve_hdr";
+--- a/chrome/browser/sharing_hub/sharing_hub_features.cc
++++ b/chrome/browser/sharing_hub/sharing_hub_features.cc
+@@ -77,7 +77,6 @@
+   registry->RegisterBooleanPref(prefs::kDesktopSharingHubEnabled, true);
+   registry->RegisterIntegerPref(kScreenshotFormatPref, 0);
+   registry->RegisterBooleanPref(kScreenshotBundlePref, false);
+-  registry->RegisterBooleanPref(kScreenshotQuickSavePref, true);
+   registry->RegisterStringPref(kScreenshotCapturedByPref, "");
+   registry->RegisterFilePathPref(kScreenshotDirectoryPref, base::FilePath());
+   registry->RegisterBooleanPref(kScreenshotPreserveHDRPref, true);
+--- a/chrome/browser/ui/views/download/bubble/helium_download_overlay.h
++++ b/chrome/browser/ui/views/download/bubble/helium_download_overlay.h
+@@ -6,6 +6,7 @@
+ #define CHROME_BROWSER_UI_VIEWS_DOWNLOAD_BUBBLE_HELIUM_DOWNLOAD_OVERLAY_H_
+ 
+ #include <memory>
++#include <string>
+ 
+ #include "base/memory/raw_ptr.h"
+ #include "base/memory/weak_ptr.h"
+@@ -18,6 +19,10 @@
+ 
+ class BrowserView;
+ 
++namespace gfx {
++struct VectorIcon;
++}  // namespace gfx
++
+ namespace views {
+ class ImageView;
+ }  // namespace views
+@@ -31,9 +36,17 @@
+                               public download::DownloadItem::Observer {
+  public:
+   // Shows the overlay for `item`, which must be complete, in place of the one
+-  // already shown in the window.
++  // already shown in the window. Does nothing if it already shows `item`.
+   static void Show(BrowserView* browser_view, download::DownloadItem* item);
+ 
++  // Adds a button with `icon` after the overlay's own buttons, behind a
++  // separator, whenever it shows `item`. Pressing it closes the overlay and
++  // runs `callback`.
++  static void SetExtraAction(download::DownloadItem* item,
++                             const gfx::VectorIcon& icon,
++                             std::u16string tooltip,
++                             base::RepeatingClosure callback);
++
+   HeliumDownloadOverlay(const HeliumDownloadOverlay&) = delete;
+   HeliumDownloadOverlay& operator=(const HeliumDownloadOverlay&) = delete;
+   ~HeliumDownloadOverlay() override;
+@@ -52,6 +65,7 @@
+   void Open();
+   void ShowInFolder();
+   void StartDrag();
++  void RunExtraAction();
+   void SetHovered(bool hovered);
+   void OnFileIconLoaded(gfx::Image icon);
+   void Close();
+@@ -64,6 +78,7 @@
+   base::OneShotTimer close_timer_;
+   base::CancelableTaskTracker icon_tracker_;
+   std::unique_ptr<views::Widget> widget_;
++  bool closing_ = false;
+   base::WeakPtrFactory<HeliumDownloadOverlay> weak_factory_{this};
+ };
+ 
+--- a/chrome/browser/ui/views/download/bubble/helium_download_overlay.cc
++++ b/chrome/browser/ui/views/download/bubble/helium_download_overlay.cc
+@@ -4,12 +4,15 @@
+ 
+ #include "chrome/browser/ui/views/download/bubble/helium_download_overlay.h"
+ 
++#include <string>
+ #include <utility>
+ 
+ #include "base/containers/flat_map.h"
+ #include "base/functional/bind.h"
+ #include "base/functional/callback.h"
++#include "base/memory/raw_ref.h"
+ #include "base/no_destructor.h"
++#include "base/supports_user_data.h"
+ #include "base/task/single_thread_task_runner.h"
+ #include "chrome/app/vector_icons/vector_icons.h"
+ #include "chrome/browser/browser_process.h"
+@@ -25,11 +28,13 @@
+ #include "ui/base/mojom/dialog_button.mojom.h"
+ #include "ui/display/screen.h"
+ #include "ui/gfx/text_elider.h"
++#include "ui/gfx/vector_icon_types.h"
+ #include "ui/views/accessibility/view_accessibility.h"
+ #include "ui/views/controls/button/image_button.h"
+ #include "ui/views/controls/button/image_button_factory.h"
+ #include "ui/views/controls/image_view.h"
+ #include "ui/views/controls/label.h"
++#include "ui/views/controls/separator.h"
+ #include "ui/views/layout/box_layout.h"
+ #include "ui/views/view_class_properties.h"
+ 
+@@ -41,6 +46,19 @@
+ constexpr int kButtonIconSize = 18;
+ constexpr int kMaxNameWidth = 220;
+ constexpr base::TimeDelta kCloseDelay = base::Seconds(6);
++constexpr char kExtraActionKey[] = "helium_download_overlay_extra_action";
++
++// The button SetExtraAction() adds for a download.
++struct ExtraAction : public base::SupportsUserData::Data {
++  ExtraAction(const gfx::VectorIcon& icon,
++              std::u16string tooltip,
++              base::RepeatingClosure callback)
++      : icon(icon), tooltip(std::move(tooltip)), callback(std::move(callback)) {}
++
++  const raw_ref<const gfx::VectorIcon> icon;
++  const std::u16string tooltip;
++  const base::RepeatingClosure callback;
++};
+ 
+ ui::ImageModel DefaultIcon() {
+   return ui::ImageModel::FromVectorIcon(vector_icons::kDraftIcon,
+@@ -123,6 +141,9 @@
+                                  download::DownloadItem* item) {
+   CHECK_EQ(item->GetState(), download::DownloadItem::COMPLETE);
+   if (auto it = Overlays().find(browser_view); it != Overlays().end()) {
++    if (it->second->item_ == item && !it->second->closing_) {
++      return;
++    }
+     it->second->Close();
+   }
+   auto* overlay = new HeliumDownloadOverlay(browser_view, item);
+@@ -137,6 +158,16 @@
+                      overlay->weak_factory_.GetWeakPtr()));
+ }
+ 
++// static
++void HeliumDownloadOverlay::SetExtraAction(download::DownloadItem* item,
++                                           const gfx::VectorIcon& icon,
++                                           std::u16string tooltip,
++                                           base::RepeatingClosure callback) {
++  item->SetUserData(kExtraActionKey,
++                    std::make_unique<ExtraAction>(icon, std::move(tooltip),
++                                                  std::move(callback)));
++}
++
+ HeliumDownloadOverlay::HeliumDownloadOverlay(BrowserView* browser_view,
+                                              download::DownloadItem* item)
+     : views::BubbleDialogDelegate(browser_view, views::BubbleBorder::FLOAT),
+@@ -202,6 +233,22 @@
+   drag->GetViewAccessibility().SetName(l10n_util::GetStringFUTF16(
+       IDS_HELIUM_DOWNLOAD_OVERLAY_DRAG_ACCESSIBILITY, file_name));
+ 
++  if (const auto* action =
++          static_cast<ExtraAction*>(item_->GetUserData(kExtraActionKey))) {
++    auto* separator =
++        contents->AddChildView(std::make_unique<views::Separator>());
++    separator->SetOrientation(views::Separator::Orientation::kVertical);
++    separator->SetPreferredLength(kButtonIconSize);
++    separator->SetProperty(views::kMarginsKey, gfx::Insets::VH(0, 4));
++    auto* button =
++        contents->AddChildView(views::CreateVectorImageButtonWithNativeTheme(
++            base::BindRepeating(&HeliumDownloadOverlay::RunExtraAction,
++                                weak_factory_.GetWeakPtr()),
++            *action->icon, kButtonIconSize));
++    button->SetTooltipText(action->tooltip);
++    button->GetViewAccessibility().SetName(action->tooltip);
++  }
++
+   SetContentsView(std::move(contents));
+ 
+   IconManager* icon_manager = g_browser_process->icon_manager();
+@@ -291,6 +338,20 @@
+   }
+ }
+ 
++void HeliumDownloadOverlay::RunExtraAction() {
++  base::RepeatingClosure callback;
++  if (item_) {
++    if (const auto* action =
++            static_cast<ExtraAction*>(item_->GetUserData(kExtraActionKey))) {
++      callback = action->callback;
++    }
++  }
++  Close();
++  if (callback) {
++    callback.Run();
++  }
++}
++
+ void HeliumDownloadOverlay::SetHovered(bool hovered) {
+   if (hovered) {
+     close_timer_.Stop();
+@@ -311,6 +372,7 @@
+ }
+ 
+ void HeliumDownloadOverlay::Close() {
++  closing_ = true;
+   close_timer_.Stop();
+   if (widget_) {
+     widget_->Close();
+--- a/chrome/app/generated_resources.grd
++++ b/chrome/app/generated_resources.grd
+@@ -14350,7 +14350,7 @@
+           Not supplied
+         </message>
+         <message name="IDS_NEO_CAPTURE_COPY_HELP" desc="Explains the difference between saving and copying a screenshot.">
+-          Save preserves source metadata. Copy image copies pixels only.
++          Update file embeds the source metadata. Copy image copies pixels only.
+         </message>
+         <message name="IDS_NEO_CAPTURE_SELECTION_HINT" desc="Instructions displayed over the screenshot region selector.">
+           Drag to select · Enter for visible page · Esc to cancel
+@@ -14418,33 +14418,39 @@
+         <message name="IDS_NEO_CAPTURE_CAPTURED_BY" desc="Editable username of the person taking the screenshot, remembered for later captures.">
+           Captured by (username)
+         </message>
+-        <message name="IDS_NEO_CAPTURE_QUICK_SAVE" desc="Checkbox to save screenshots directly in the remembered screenshot folder.">
+-          Save directly to screenshot folder
+-        </message>
+         <message name="IDS_NEO_CAPTURE_CHOOSE_FOLDER" desc="Button to choose or change the remembered screenshot folder.">
+           Choose screenshot folder…
+         </message>
+         <message name="IDS_NEO_CAPTURE_NO_FOLDER" desc="Shown before a screenshot folder has been selected.">
+-          No folder selected. Save capture will ask once.
++          Screenshots are saved in your Downloads folder.
+         </message>
+         <message name="IDS_NEO_CAPTURE_BUNDLE" desc="Checkbox to include source report and image checksum in a ZIP instead of a standalone image.">
+           Include source report and checksum (ZIP)
+         </message>
+-        <message name="IDS_NEO_CAPTURE_SAVE" desc="Button to save screenshot and source documentation together.">
+-          Save capture
++        <message name="IDS_NEO_CAPTURE_EDIT_TITLE" desc="Title of the dialog that edits the source documentation of a saved screenshot.">
++          Edit screenshot metadata
++        </message>
++        <message name="IDS_NEO_CAPTURE_EDIT_METADATA" desc="Tooltip and accessible name of the button in the saved download overlay that edits a screenshot's source documentation.">
++          Edit metadata
++        </message>
++        <message name="IDS_NEO_CAPTURE_UPDATE" desc="Button that saves the edited source documentation into the saved screenshot file.">
++          Update file
++        </message>
++        <message name="IDS_NEO_CAPTURE_FILE_GONE" desc="Error when the saved screenshot file can no longer be found.">
++          The saved screenshot was moved or deleted.
++        </message>
++        <message name="IDS_NEO_CAPTURE_UPDATE_FAILED" desc="Error when the saved screenshot file could not be updated.">
++          Could not update the saved screenshot. Try again.
+         </message>
+         <message name="IDS_NEO_CAPTURE_COPY" desc="Button to copy screenshot without source documentation.">
+           Copy image
+         </message>
+         <message name="IDS_NEO_CAPTURE_COPIED" desc="Status after copying screenshot.">
+-          Image copied. Use Save capture to preserve source documentation.
++          Image copied. The saved file keeps the source documentation.
+         </message>
+         <message name="IDS_NEO_CAPTURE_WORKING" desc="Status while generating screenshot archive.">
+           Preparing capture…
+         </message>
+-        <message name="IDS_NEO_CAPTURE_READY" desc="Status after handing off screenshot archive to downloads.">
+-          Capture sent to Downloads. Quick save uses your screenshot folder; otherwise choose a destination in the save dialog.
+-        </message>
+         <message name="IDS_NEO_CAPTURE_FAILED" desc="Error while creating screenshot archive.">
+           Could not prepare the capture. Try saving again.
+         </message>
