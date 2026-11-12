@@ -1,0 +1,50 @@
+--- a/chrome/browser/ui/tabs/split_tab_mute_menu_model.cc
++++ b/chrome/browser/ui/tabs/split_tab_mute_menu_model.cc
+@@ -161,7 +161,11 @@ std::optional<int> SplitTabMuteMenuModel::GetTabIndexForCommand(
+   }
+   const std::vector<tabs::TabInterface*> tabs_in_split =
+       tab_strip_model_->GetSplitData(split_id_)->ListTabs();
+-  CHECK_EQ(tabs_in_split.size(), 2U);
++  // Helium splits can hold more than two views; this menu only targets the
++  // two views of a two-pane split.
++  if (tabs_in_split.size() != 2) {
++    return std::nullopt;
++  }
+   return tab_strip_model_->GetIndexOfTab(
+       tabs_in_split[id == CommandId::kToggleStartSiteMuted ? 0 : 1]);
+ }
+--- a/chrome/browser/ui/tabs/split_tab_swap_menu_model.cc
++++ b/chrome/browser/ui/tabs/split_tab_swap_menu_model.cc
+@@ -102,7 +102,10 @@ void SplitTabSwapMenuModel::ExecuteCommand(int command_id, int event_flags) {
+   split_tabs::SplitTabData* const split_tab_data =
+       tab_strip_model_->GetSplitData(*split_id);
+   std::vector<tabs::TabInterface*> tabs_in_split = split_tab_data->ListTabs();
+-  CHECK_EQ(tabs_in_split.size(), 2U);
++  // Helium splits can grow past two views while the menu is open.
++  if (tabs_in_split.size() != 2) {
++    return;
++  }
+ 
+   if (id == CommandId::kSwapStartTab) {
+     tab_strip_model_->UpdateTabInSplit(tabs_in_split[0], tab_index_,
+--- a/chrome/browser/ui/tabs/tab_menu_model.cc
++++ b/chrome/browser/ui/tabs/tab_menu_model.cc
+@@ -685,7 +685,8 @@ void TabMenuModel::Build(int index) {
+               num_tabs));
+ 
+   // When the menu targets a single split, "Mute sites" opens a submenu that can
+-  // also mute the site in just one of the views.
++  // also mute the site in just one of the views. The submenu only knows the two
++  // views of a two-pane split, so larger splits get the plain item.
+   const std::optional<split_tabs::SplitTabId> split =
+       tab_strip_->GetSplitForTab(index);
+   const bool is_single_split =
+@@ -702,7 +703,7 @@ void TabMenuModel::Build(int index) {
+       will_mute ? IDS_TAB_CXMENU_SOUND_MUTE_SITE
+                 : IDS_TAB_CXMENU_SOUND_UNMUTE_SITE,
+       num_mute_tabs);
+-  if (is_single_split) {
++  if (is_single_split && num_mute_tabs == 2) {
+     split_mute_submenu_ =
+         std::make_unique<SplitTabMuteMenuModel>(tab_strip_, index, *split);
+     AddSubMenu(TabStripModel::CommandToggleSiteMuted, mute_label,
