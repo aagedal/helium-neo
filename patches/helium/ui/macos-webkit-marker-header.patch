@@ -1,0 +1,57 @@
+--- a/chrome/browser/helium_webkit_streaming_mac.mm
++++ b/chrome/browser/helium_webkit_streaming_mac.mm
+@@ -1123,17 +1123,49 @@
+   explicit WebKitStreamingThrottle(
+       content::NavigationThrottleRegistry& registry)
+       : NavigationThrottle(registry) {}
+-  ThrottleCheckResult WillStartRequest() override { return MaybeOpen(); }
+-  ThrottleCheckResult WillRedirectRequest() override { return MaybeOpen(); }
++  ThrottleCheckResult WillStartRequest() override {
++    return WithoutMarker(MaybeOpen(), /*redirect=*/false);
++  }
++  ThrottleCheckResult WillRedirectRequest() override {
++    return WithoutMarker(MaybeOpen(), /*redirect=*/true);
++  }
+   const char* GetNameForLogging() override { return "HeliumWebKitStreaming"; }
+ 
+  private:
++  // The omnibox's marker is for Helium only; never send it to the site.
++  // Chromium can only remove a request header on a redirect, so a marked
++  // navigation that continues in Chromium starts over without it.
++  ThrottleCheckResult WithoutMarker(ThrottleCheckResult result,
++                                    bool redirect) {
++    auto* handle = navigation_handle();
++    if (result.action() != PROCEED ||
++        !handle->GetRequestHeaders().HasHeader(kWebKitRequestHeader)) {
++      return result;
++    }
++    if (redirect) {
++      handle->RemoveRequestHeader(kWebKitRequestHeader);
++      return result;
++    }
++    // Never start another navigation inside a NavigationThrottle callback.
++    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
++        FROM_HERE,
++        base::BindOnce(
++            [](base::WeakPtr<content::WebContents> contents, const GURL& url,
++               ui::PageTransition transition) {
++              if (!contents)
++                return;
++              content::NavigationController::LoadURLParams params(url);
++              params.transition_type = transition;
++              contents->GetController().LoadURLWithParams(params);
++            },
++            handle->GetWebContents()->GetWeakPtr(), handle->GetURL(),
++            handle->GetPageTransition()));
++    return CANCEL_AND_IGNORE;
++  }
++
+   ThrottleCheckResult MaybeOpen() {
+     auto* handle = navigation_handle();
+-    // The omnibox's marker is for Helium only; never send it to the site.
+     const WebKitRequest request = GetWebKitRequest(handle);
+-    if (handle->GetRequestHeaders().HasHeader(kWebKitRequestHeader))
+-      handle->RemoveRequestHeader(kWebKitRequestHeader);
+     if (!handle->IsInPrimaryMainFrame() || handle->IsPost() ||
+         (handle->IsRendererInitiated() && !handle->HasUserGesture())) {
+       return PROCEED;
