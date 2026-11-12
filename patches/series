@@ -407,3 +407,4 @@ helium/ui/download-overlay.patch
 helium/ui/screenshot-frameless-overlay.patch
 helium/ui/tab-switcher.patch
 helium/ui/screenshot-quick-save.patch
+helium/ui/macos-webkit-marker-header.patch
