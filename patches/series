@@ -417,3 +417,4 @@ helium/ui/frameless-progress-bar.patch
 helium/ui/split-edge-drops.patch
 helium/ui/split-pane-mover.patch
 helium/ui/split-scale-sides.patch
+helium/ui/split-active-pane-outline.patch

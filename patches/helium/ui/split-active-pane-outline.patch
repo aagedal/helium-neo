@@ -1,0 +1,70 @@
+--- a/chrome/browser/ui/color/material_chrome_color_mixer.cc
++++ b/chrome/browser/ui/color/material_chrome_color_mixer.cc
+@@ -466,9 +466,10 @@ void AddMaterialChromeColorMixer(ui::ColorProvider* provider,
+ 
+   mixer[kColorMultiContentsViewMiniToolbarForeground] = {
+       ui::kColorSysOnSurfaceSubtle};
+-  mixer[kColorMultiContentsViewActiveContentOutline] = {ui::kColorSysOutline};
+-  mixer[kColorMultiContentsViewInactiveContentOutline] = {
+-      ui::kColorSysNeutralOutline};
++  // The active pane of a split takes the accent color; the others fade back.
++  mixer[kColorMultiContentsViewActiveContentOutline] = {ui::kColorSysPrimary};
++  mixer[kColorMultiContentsViewInactiveContentOutline] =
++      ui::SetAlpha(ui::kColorSysNeutralOutline, 0x66);
+ 
+   mixer[kColorNewTabButtonFocusRing] = ui::PickGoogleColorTwoBackgrounds(
+       ui::kColorSysStateFocusRing,
+--- a/chrome/browser/ui/views/frame/contents_container_outline.cc
++++ b/chrome/browser/ui/views/frame/contents_container_outline.cc
+@@ -100,10 +100,12 @@ void ContentsContainerOutline::SetCornerRadii(
+ void ContentsContainerOutline::UpdateState(bool is_active,
+                                            bool is_highlighted) {
+   UpdateState(is_highlighted, GetColor(is_active, is_highlighted));
++  is_active_ = is_active;
+ }
+ 
+ void ContentsContainerOutline::UpdateState(bool is_highlighted,
+                                            ui::ColorId stroke_color) {
++  is_active_ = false;
+   is_highlighted_ = is_highlighted;
+   stroke_color_ = stroke_color;
+   SetVisible(true);
+@@ -112,14 +114,17 @@ void ContentsContainerOutline::UpdateState(bool is_highlighted,
+ 
+ void ContentsContainerOutline::OnPaint(gfx::Canvas* canvas) {
+   // Draw the bordering stroke.
++  const int thickness = is_highlighted_ ? kHighlightThickness
++                        : is_active_    ? kActiveThickness
++                                        : kThickness;
+   cc::PaintFlags flags;
+-  flags.setStrokeWidth(GetThickness(is_highlighted_));
++  flags.setStrokeWidth(thickness);
+   flags.setColor(GetColorProvider()->GetColor(stroke_color_));
+   flags.setStyle(cc::PaintFlags::kStroke_Style);
+   flags.setAntiAlias(true);
+ 
+   gfx::RectF local_bounds(GetLocalBounds());
+-  const float half_thickness = GetThickness(is_highlighted_) / 2.0f;
++  const float half_thickness = thickness / 2.0f;
+   local_bounds.Inset(half_thickness);
+ 
+   const gfx::RoundedCornersF corner_radii(
+--- a/chrome/browser/ui/views/frame/contents_container_outline.h
++++ b/chrome/browser/ui/views/frame/contents_container_outline.h
+@@ -23,6 +23,8 @@ class ContentsContainerOutline : public views::View,
+  public:
+   static constexpr int kCornerRadius = 8;
+   static constexpr int kThickness = 1;
++  // The active pane of a split stands out with a thicker outline.
++  static constexpr int kActiveThickness = 2;
+   static constexpr int kHighlightThickness = 3;
+ 
+   explicit ContentsContainerOutline(views::View* /*mini_toolbar*/);
+@@ -49,6 +51,7 @@ class ContentsContainerOutline : public views::View,
+   void OnViewBoundsChanged(views::View* observed_view) override;
+   void OnViewIsDeleting(views::View* observed_view) override;
+ 
++  bool is_active_ = false;
+   bool is_highlighted_ = false;
+   ui::ColorId stroke_color_ = kColorMultiContentsViewInactiveContentOutline;
+   gfx::RoundedCornersF corner_radii_{kCornerRadius};
