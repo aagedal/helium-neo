@@ -1,0 +1,247 @@
+--- a/chrome/browser/ui/views/frame/multi_contents_resize_area.cc
++++ b/chrome/browser/ui/views/frame/multi_contents_resize_area.cc
+@@ -109,12 +109,19 @@ MultiContentsResizeArea::~MultiContentsResizeArea() {
+ }
+ 
+ void MultiContentsResizeArea::OnResize(int resize_amount, bool done_resizing) {
+-  if (pane_boundary_) {
+-    multi_contents_view_->OnPaneResize(*pane_boundary_, resize_amount,
+-                                       done_resizing);
+-  } else {
+-    multi_contents_view_->OnResize(resize_amount, done_resizing);
+-  }
++  multi_contents_view_->OnDividerResize(
++      pane_boundary_ ? *pane_boundary_ + 1 : 0, resize_amount, done_resizing,
++      scale_sides_);
++}
++
++bool MultiContentsResizeArea::OnMousePressed(const ui::MouseEvent& event) {
++  scale_sides_ = event.IsAltDown();
++  return ResizeArea::OnMousePressed(event);
++}
++
++bool MultiContentsResizeArea::OnMouseDragged(const ui::MouseEvent& event) {
++  scale_sides_ = event.IsAltDown();
++  return ResizeArea::OnMouseDragged(event);
+ }
+ 
+ void MultiContentsResizeArea::OnTabStripModelChanged(
+@@ -150,6 +157,7 @@ void MultiContentsResizeArea::OnGestureEvent(ui::GestureEvent* event) {
+ }
+ 
+ void MultiContentsResizeArea::OnMouseReleased(const ui::MouseEvent& event) {
++  scale_sides_ = event.IsAltDown();
+   // If the mouse event was a left double click and was not part of a resizing
+   // event, swap the contents views.
+   if (!is_resizing() && event.IsOnlyLeftMouseButton() &&
+@@ -160,6 +168,7 @@ void MultiContentsResizeArea::OnMouseReleased(const ui::MouseEvent& event) {
+ }
+ 
+ bool MultiContentsResizeArea::OnKeyPressed(const ui::KeyEvent& event) {
++  scale_sides_ = false;
+   int resize_amount = 0;
+   if (event.key_code() == DecreaseContentsSizeKeyCode()) {
+     resize_amount = -kResizeIncrement;
+--- a/chrome/browser/ui/views/frame/multi_contents_resize_area.h
++++ b/chrome/browser/ui/views/frame/multi_contents_resize_area.h
+@@ -86,6 +86,8 @@ class MultiContentsResizeArea : public views::ResizeArea,
+ 
+   // views::ResizeArea:
+   void OnGestureEvent(ui::GestureEvent* event) override;
++  bool OnMousePressed(const ui::MouseEvent& event) override;
++  bool OnMouseDragged(const ui::MouseEvent& event) override;
+   void OnMouseReleased(const ui::MouseEvent& event) override;
+   bool OnKeyPressed(const ui::KeyEvent& event) override;
+   void OnMouseMoved(const ui::MouseEvent& event) override;
+@@ -113,6 +115,9 @@ class MultiContentsResizeArea : public views::ResizeArea,
+   const std::optional<size_t> pane_boundary_;
+   raw_ptr<MultiContentsView> multi_contents_view_;
+   raw_ptr<MultiContentsResizeHandle> resize_handle_;
++  // Whether Option is held while dragging, which resizes all panes on each
++  // side of the divider together.
++  bool scale_sides_ = false;
+ 
+   raw_ptr<views::FlexLayout> flex_layout_manager_;
+ 
+--- a/chrome/browser/ui/views/frame/multi_contents_view.cc
++++ b/chrome/browser/ui/views/frame/multi_contents_view.cc
+@@ -526,17 +526,28 @@ double MultiContentsView::GetPaneResizeRatio(size_t divider) const {
+ void MultiContentsView::OnPaneResize(size_t boundary,
+                                     int resize_amount,
+                                     bool done_resizing) {
+-  ResizeDivider(boundary + 1, resize_amount, done_resizing, /*snap=*/false);
++  ResizeDivider(boundary + 1, resize_amount, done_resizing, /*snap=*/false,
++                /*scale_sides=*/false);
+ }
+ 
+ void MultiContentsView::OnResize(int resize_amount, bool done_resizing) {
+-  ResizeDivider(0, resize_amount, done_resizing, /*snap=*/true);
++  ResizeDivider(0, resize_amount, done_resizing, /*snap=*/true,
++                /*scale_sides=*/false);
++}
++
++void MultiContentsView::OnDividerResize(size_t divider,
++                                        int resize_amount,
++                                        bool done_resizing,
++                                        bool scale_sides) {
++  ResizeDivider(divider, resize_amount, done_resizing, /*snap=*/divider == 0,
++                scale_sides);
+ }
+ 
+ void MultiContentsView::ResizeDivider(size_t divider,
+                                       int resize_amount,
+                                       bool done_resizing,
+-                                      bool snap) {
++                                      bool snap,
++                                      bool scale_sides) {
+   if (!IsInSplitView()) {
+     return;
+   }
+@@ -554,11 +565,19 @@ void MultiContentsView::ResizeDivider(size_t divider,
+         start.index,
+         start.first_size,
+         start.first_size + start.second_size,
++        start.before_size,
++        start.before_size + start.after_size,
+         divider == 0 ? GetMinViewSize(GetSplitArea())
+                      : split_tabs::SplitLayoutTree::kDefaultMinimumSize};
+   }
+   const DividerResizeState& state = *divider_resize_state_;
+-  if (state.total_size > 0) {
++  if (scale_sides && state.container_size > 0) {
++    split_tabs::SplitLayoutTree tree = state.tree;
++    tree.ResizeDividerScalingSides(
++        state.node, state.index, state.initial_before_size + resize_amount,
++        state.container_size, state.minimum_size);
++    delegate_->ResizeSplitLayout(tree, done_resizing);
++  } else if (state.total_size > 0) {
+     int first_size = state.initial_size + resize_amount;
+     if (snap) {
+       first_size = std::round(
+--- a/chrome/browser/ui/views/frame/multi_contents_view.h
++++ b/chrome/browser/ui/views/frame/multi_contents_view.h
+@@ -174,6 +174,13 @@ class MultiContentsView
+   // views::ResizeAreaDelegate:
+   void OnResize(int resize_amount, bool done_resizing) override;
+   void OnPaneResize(size_t boundary, int resize_amount, bool done_resizing);
++  // Resizes at divider `divider`, where 0 is the main handle. With
++  // `scale_sides`, all panes on each side of it in its row or column resize
++  // together instead of only its two neighbours.
++  void OnDividerResize(size_t divider,
++                       int resize_amount,
++                       bool done_resizing,
++                       bool scale_sides);
+   // Share of the first side of divider `divider`; 0 is the main handle.
+   double GetPaneResizeRatio(size_t divider) const;
+ 
+@@ -342,6 +349,9 @@ class MultiContentsView
+     size_t index;
+     int initial_size;
+     int total_size;
++    // Sizes of all panes before and after the divider in its container.
++    int initial_before_size;
++    int container_size;
+     int minimum_size;
+   };
+   std::optional<DividerResizeState> divider_resize_state_;
+@@ -354,7 +364,8 @@ class MultiContentsView
+   void ResizeDivider(size_t divider,
+                      int resize_amount,
+                      bool done_resizing,
+-                     bool snap);
++                     bool snap,
++                     bool scale_sides);
+ 
+   // The views that are shown for entering split view. E.g., this is shown when
+   // the user drags a link to the edge of the contents view.
+--- a/components/split_tabs/split_layout_tree.cc
++++ b/components/split_tabs/split_layout_tree.cc
+@@ -182,6 +182,10 @@ void LayoutNode(const SplitLayoutNode& node,
+     SplitDivider divider{.node = id,
+                          .index = static_cast<size_t>(i),
+                          .axis = node.axis};
++    for (int j = 0; j < count; ++j) {
++      const int size = row ? rects[j].width : rects[j].height;
++      (j <= i ? divider.before_size : divider.after_size) += size;
++    }
+     if (row) {
+       divider.bounds = {a.x + a.width, rect.y, b.x - a.x - a.width,
+                         rect.height};
+@@ -534,6 +538,48 @@ void SplitLayoutTree::ResizeDivider(size_t node,
+   second.weight = pair * (1 - ratio);
+ }
+ 
++void SplitLayoutTree::ResizeDividerScalingSides(size_t node,
++                                                size_t index,
++                                                int before_size,
++                                                int total_size,
++                                                int minimum_size) {
++  size_t remaining = node;
++  SplitLayoutNode* container = FindNode(root_, remaining);
++  if (!container || index + 1 >= container->children.size() ||
++      total_size <= 0) {
++    return;
++  }
++  const int count = static_cast<int>(container->children.size());
++  const int before_count = static_cast<int>(index) + 1;
++  const int minimum = std::clamp(minimum_size, 0, total_size / count);
++  const int before =
++      std::clamp(before_size, minimum * before_count,
++                 total_size - minimum * (count - before_count));
++  if (std::abs(before - total_size * before_count / count) <= kSnapDistance) {
++    for (auto& child : container->children) {
++      child.weight = 1;
++    }
++    return;
++  }
++  double before_weight = 0;
++  double total_weight = 0;
++  for (int i = 0; i < count; ++i) {
++    total_weight += container->children[i].weight;
++    if (i < before_count) {
++      before_weight += container->children[i].weight;
++    }
++  }
++  // Keep positive weights even when the window has almost no room left.
++  const double ratio =
++      std::clamp(static_cast<double>(before) / total_size, 0.01, 0.99);
++  for (int i = 0; i < count; ++i) {
++    container->children[i].weight *=
++        i < before_count ? total_weight * ratio / before_weight
++                         : total_weight * (1 - ratio) /
++                               (total_weight - before_weight);
++  }
++}
++
+ void SplitLayoutTree::Normalize() {
+   NormalizeNode(root_);
+   root_.weight = 1;
+--- a/components/split_tabs/split_layout_tree.h
++++ b/components/split_tabs/split_layout_tree.h
+@@ -64,6 +64,9 @@ struct SplitDivider {
+   // Sizes of the two children along `axis`, for resizing.
+   int first_size = 0;
+   int second_size = 0;
++  // Sizes of all children before and after the divider, without the gaps.
++  int before_size = 0;
++  int after_size = 0;
+ };
+ 
+ // Number of panes in and below `node`.
+@@ -147,6 +150,16 @@ class SplitLayoutTree {
+   // the next child.
+   double DividerFraction(size_t node, size_t index) const;
+ 
++  // Moves divider `index` of container `node` so the children before it share
++  // `before_size` of the `total_size` of all its children, scaling the
++  // children on each side together. Snaps to giving every child the same size,
++  // and keeps each at least `minimum_size`.
++  void ResizeDividerScalingSides(size_t node,
++                                 size_t index,
++                                 int before_size,
++                                 int total_size,
++                                 int minimum_size = kDefaultMinimumSize);
++
+   // Moves divider `index` of container `node` so the first of its two children
+   // gets `first_size` of the `total_size` they share. Snaps to the middle and
+   // keeps both children at least `minimum_size`, or half of `total_size` if
