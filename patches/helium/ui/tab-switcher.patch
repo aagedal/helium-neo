@@ -1,0 +1,660 @@
+--- /dev/null
++++ b/chrome/browser/ui/views/helium/tab_switcher.h
+@@ -0,0 +1,51 @@
++// Copyright 2026 The Helium Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_VIEWS_HELIUM_TAB_SWITCHER_H_
++#define CHROME_BROWSER_UI_VIEWS_HELIUM_TAB_SWITCHER_H_
++
++#include "base/memory/raw_ptr.h"
++#include "base/memory/weak_ptr.h"
++#include "base/timer/timer.h"
++#include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
++
++class BrowserView;
++
++// An overlay in the middle of the browser window that lists the tabs Ctrl+Tab
++// cycles through while its modifier is held, like the macOS app switcher. The
++// active tab is highlighted, with the previous tabs in the cycle to its left
++// and the next ones to its right. Tabs still switch on every press; the
++// overlay only shows where the cycle is. BrowserView owns it and deletes it
++// when the modifier is released.
++class TabSwitcher : public TabStripModelObserver {
++ public:
++  explicit TabSwitcher(BrowserView* browser_view);
++  TabSwitcher(const TabSwitcher&) = delete;
++  TabSwitcher& operator=(const TabSwitcher&) = delete;
++  ~TabSwitcher() override;
++
++  // Shows the active tab. The overlay appears after a short delay, so tapping
++  // the shortcut once switches tabs without flashing it.
++  void Update();
++
++  // TabStripModelObserver:
++  void OnTabStripModelChanged(TabStripModel* tab_strip_model,
++                              const TabStripModelChange& change,
++                              const TabStripSelectionChange& selection) override;
++  void OnTabChangedAt(tabs::TabInterface* tab,
++                      TabChangeType change_type) override;
++
++ private:
++  class Bubble;
++
++  void Show();
++  void Refresh();
++
++  const raw_ptr<BrowserView> browser_view_;
++  base::OneShotTimer show_timer_;
++  // Deletes itself after its widget closes.
++  base::WeakPtr<Bubble> bubble_;
++};
++
++#endif  // CHROME_BROWSER_UI_VIEWS_HELIUM_TAB_SWITCHER_H_
+--- /dev/null
++++ b/chrome/browser/ui/views/helium/tab_switcher.cc
+@@ -0,0 +1,261 @@
++// Copyright 2026 The Helium Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#include "chrome/browser/ui/views/helium/tab_switcher.h"
++
++#include <algorithm>
++#include <memory>
++#include <string>
++#include <utility>
++#include <vector>
++
++#include "base/functional/bind.h"
++#include "base/strings/string_number_conversions.h"
++#include "base/task/single_thread_task_runner.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
++#include "chrome/browser/ui/color/chrome_color_id.h"
++#include "chrome/browser/ui/tab_ui_helper.h"
++#include "chrome/browser/ui/tabs/tab_strip_model.h"
++#include "chrome/browser/ui/views/frame/browser_view.h"
++#include "chrome/grit/generated_resources.h"
++#include "components/tabs/public/tab_interface.h"
++#include "components/url_formatter/elide_url.h"
++#include "ui/base/l10n/l10n_util.h"
++#include "ui/base/models/image_model.h"
++#include "ui/base/mojom/dialog_button.mojom.h"
++#include "ui/views/background.h"
++#include "ui/views/bubble/bubble_dialog_delegate_view.h"
++#include "ui/views/controls/image_view.h"
++#include "ui/views/controls/label.h"
++#include "ui/views/layout/box_layout.h"
++#include "ui/views/widget/widget.h"
++
++namespace {
++
++constexpr base::TimeDelta kShowDelay = base::Milliseconds(120);
++constexpr size_t kMaxVisibleTabs = 7;
++constexpr int kWindowMargin = 32;
++constexpr int kCornerRadius = 16;
++constexpr int kPadding = 10;
++constexpr int kCardWidth = 112;
++constexpr int kCardSpacing = 4;
++constexpr int kCardCornerRadius = 10;
++constexpr int kFaviconSize = 24;
++constexpr int kTileSize = 44;
++constexpr int kTileCornerRadius = 10;
++
++// A tab in the switcher: its favicon on a tile, with the title below.
++std::unique_ptr<views::View> CreateCard(tabs::TabInterface* tab,
++                                        bool selected) {
++  TabUIHelper* helper = TabUIHelper::From(tab);
++
++  auto card = std::make_unique<views::View>();
++  auto* layout = card->SetLayoutManager(std::make_unique<views::BoxLayout>(
++      views::BoxLayout::Orientation::kVertical, gfx::Insets::VH(10, 6), 8));
++  layout->set_cross_axis_alignment(
++      views::BoxLayout::CrossAxisAlignment::kCenter);
++  if (selected) {
++    card->SetBackground(views::CreateRoundedRectBackground(
++        kColorOmniboxResultsBackgroundSelected, kCardCornerRadius));
++  }
++
++  auto* tile = card->AddChildView(std::make_unique<views::ImageView>());
++  tile->SetImage(helper->GetFavicon());
++  tile->SetImageSize({kFaviconSize, kFaviconSize});
++  tile->SetPreferredSize(gfx::Size(kTileSize, kTileSize));
++  tile->SetBackground(views::CreateRoundedRectBackground(
++      kColorOmniboxResultsBackgroundHovered, kTileCornerRadius));
++
++  auto* title =
++      card->AddChildView(std::make_unique<views::Label>(helper->GetTitle()));
++  title->SetMultiLine(true);
++  title->SetMaxLines(2);
++  title->SetMaximumWidth(kCardWidth - 12);
++  title->SetHorizontalAlignment(gfx::ALIGN_CENTER);
++  title->SetEnabledColor(selected ? kColorOmniboxResultsTextSelected
++                                  : kColorOmniboxResultsTextDimmed);
++
++  card->SetPreferredSize(
++      gfx::Size(kCardWidth, card->GetHeightForWidth(kCardWidth)));
++  return card;
++}
++
++}  // namespace
++
++// Hosts the cards in a bubble centered over the browser window.
++class TabSwitcher::Bubble : public views::BubbleDialogDelegate {
++ public:
++  explicit Bubble(BrowserView* browser_view)
++      : views::BubbleDialogDelegate(browser_view, views::BubbleBorder::FLOAT) {
++    SetButtons(static_cast<int>(ui::mojom::DialogButton::kNone));
++    SetShowCloseButton(false);
++    SetShowTitle(false);
++    SetTitle(l10n_util::GetStringUTF16(IDS_HELIUM_TAB_SWITCHER_TITLE));
++    set_margins(gfx::Insets(kPadding));
++    set_corner_radius(kCornerRadius);
++    set_adjust_if_offscreen(false);
++    set_close_on_deactivate(false);
++    set_accept_events(false);
++    SetCanActivate(false);
++    SetBackgroundColor(kColorOmniboxResultsBackground);
++
++    auto contents = std::make_unique<views::View>();
++    contents->SetLayoutManager(std::make_unique<views::BoxLayout>(
++        views::BoxLayout::Orientation::kVertical, gfx::Insets(), 8));
++    cards_ = contents->AddChildView(std::make_unique<views::View>());
++    cards_->SetLayoutManager(std::make_unique<views::BoxLayout>(
++        views::BoxLayout::Orientation::kHorizontal, gfx::Insets(),
++        kCardSpacing));
++    footer_ = contents->AddChildView(std::make_unique<views::Label>());
++    footer_->SetEnabledColor(kColorOmniboxResultsTextDimmed);
++    footer_->SetHorizontalAlignment(gfx::ALIGN_CENTER);
++    SetContentsView(std::move(contents));
++  }
++  Bubble(const Bubble&) = delete;
++  Bubble& operator=(const Bubble&) = delete;
++  ~Bubble() override = default;
++
++  void Show() {
++    widget_ = views::BubbleDialogDelegate::CreateBubble(
++        this, base::BindOnce(&Bubble::OnClosed, base::Unretained(this)));
++    widget_->ShowInactive();
++  }
++
++  void Close() {
++    if (widget_) {
++      widget_->Close();
++    }
++  }
++
++  // Shows the tabs in the cycle around the active one.
++  void SetTabs(TabStripModel* model) {
++    size_t position = 0;
++    const std::vector<int> order = model->GetTabCycleOrder(position);
++    if (position >= order.size() ||
++        std::ranges::any_of(order, [model](int index) {
++          return !model->ContainsIndex(index);
++        })) {
++      return;
++    }
++    cards_->RemoveAllChildViews();
++
++    const int fitting_tabs = std::max(
++        1, (GetAnchorView()->width() - 2 * (kWindowMargin + kPadding)) /
++               (kCardWidth + kCardSpacing));
++    const size_t visible = std::min(
++        {order.size(), kMaxVisibleTabs, static_cast<size_t>(fitting_tabs)});
++    // Keep the active tab in the middle until the window reaches an end of the
++    // cycle.
++    const size_t first =
++        std::min(position - std::min(position, visible / 2),
++                 order.size() - visible);
++    for (size_t i = first; i < first + visible; ++i) {
++      cards_->AddChildView(
++          CreateCard(model->GetTabAtIndex(order[i]), i == position));
++    }
++
++    tabs::TabInterface* active = model->GetTabAtIndex(order[position]);
++    const std::u16string host =
++        url_formatter::FormatUrlForDisplayOmitSchemePathAndTrivialSubdomains(
++            TabUIHelper::From(active)->GetVisibleURL());
++    std::u16string footer = l10n_util::GetStringFUTF16(
++        IDS_HELIUM_TAB_SWITCHER_POSITION, base::NumberToString16(position + 1),
++        base::NumberToString16(order.size()));
++    if (!host.empty()) {
++      footer = host + u"  ·  " + footer;
++    }
++    footer_->SetText(footer);
++
++    if (widget_) {
++      SizeToContents();
++    }
++  }
++
++  base::WeakPtr<Bubble> GetWeakPtr() { return weak_factory_.GetWeakPtr(); }
++
++  // views::BubbleDialogDelegate:
++  gfx::Rect GetBubbleBounds() override {
++    gfx::Rect bounds = views::BubbleDialogDelegate::GetBubbleBounds();
++    if (views::View* anchor = GetAnchorView()) {
++      bounds.set_origin(anchor->GetBoundsInScreen().CenterPoint() -
++                        gfx::Vector2d(bounds.width() / 2, bounds.height() / 2));
++    }
++    return bounds;
++  }
++
++ private:
++  void OnClosed(views::Widget::ClosedReason reason) {
++    // The delegate must outlive the widget, so delete both after the close
++    // finishes.
++    base::SingleThreadTaskRunner::GetCurrentDefault()->DeleteSoon(FROM_HERE,
++                                                                  this);
++  }
++
++  raw_ptr<views::View> cards_ = nullptr;
++  raw_ptr<views::Label> footer_ = nullptr;
++  std::unique_ptr<views::Widget> widget_;
++  base::WeakPtrFactory<Bubble> weak_factory_{this};
++};
++
++TabSwitcher::TabSwitcher(BrowserView* browser_view)
++    : browser_view_(browser_view) {
++  browser_view_->browser()->GetTabStripModel()->AddObserver(this);
++}
++
++TabSwitcher::~TabSwitcher() {
++  if (bubble_) {
++    bubble_->Close();
++  }
++}
++
++void TabSwitcher::Update() {
++  if (bubble_) {
++    Refresh();
++  } else if (!show_timer_.IsRunning()) {
++    show_timer_.Start(FROM_HERE, kShowDelay,
++                      base::BindOnce(&TabSwitcher::Show,
++                                     base::Unretained(this)));
++  }
++}
++
++void TabSwitcher::OnTabStripModelChanged(
++    TabStripModel* tab_strip_model,
++    const TabStripModelChange& change,
++    const TabStripSelectionChange& selection) {
++  if (change.type() == TabStripModelChange::kSelectionOnly) {
++    return;
++  }
++  if (change.type() == TabStripModelChange::kReplaced) {
++    Refresh();
++    return;
++  }
++  // Tabs were added, closed or moved, so the cycle starts over. Deletes
++  // `this`.
++  browser_view_->StopTabCycling();
++}
++
++void TabSwitcher::OnTabChangedAt(tabs::TabInterface* tab,
++                                 TabChangeType change_type) {
++  if (change_type == TabChangeType::kAll) {
++    Refresh();
++  }
++}
++
++void TabSwitcher::Show() {
++  TabStripModel* model = browser_view_->browser()->GetTabStripModel();
++  if (model->count() < 2 || !browser_view_->GetWidget() ||
++      !browser_view_->GetWidget()->IsVisible()) {
++    return;
++  }
++  auto* bubble = new Bubble(browser_view_);
++  bubble_ = bubble->GetWeakPtr();
++  bubble->SetTabs(model);
++  bubble->Show();
++}
++
++void TabSwitcher::Refresh() {
++  if (bubble_) {
++    bubble_->SetTabs(browser_view_->browser()->GetTabStripModel());
++  }
++}
+--- a/chrome/browser/ui/views/helium/BUILD.gn
++++ b/chrome/browser/ui/views/helium/BUILD.gn
+@@ -26,6 +26,20 @@
+   }
+ }
+ 
++source_set("tab_switcher") {
++  sources = [
++    "tab_switcher.cc",
++    "tab_switcher.h",
++  ]
++
++  public_deps = [ "//chrome/browser:browser_public_dependencies" ]
++
++  deps = [
++    "//chrome/app:generated_resources",
++    "//components/url_formatter",
++  ]
++}
++
+ source_set("frame_corner_radius") {
+   sources = [
+     "frame_corner_radius.cc",
+--- a/chrome/browser/BUILD.gn
++++ b/chrome/browser/BUILD.gn
+@@ -4732,6 +4732,7 @@
+     deps += [
+       ":resources",
+       "//chrome/browser/ui/views/helium:command_bar",
++      "//chrome/browser/ui/views/helium:tab_switcher",
+       "//base",
+       "//chrome/browser/collaboration",
+       "//chrome/browser/collaboration/messaging",
+--- a/chrome/common/pref_names.h
++++ b/chrome/common/pref_names.h
+@@ -608,6 +608,10 @@
+ // when cycling through tabs with Ctrl+Tab.
+ inline constexpr char kTabCyclingMRU[] = "helium.browser.mru_tab_cycling";
+ 
++// A boolean pref set to true if an overlay should show the tabs Ctrl+Tab
++// cycles through while the shortcut is held.
++inline constexpr char kShowTabSwitcher[] = "helium.browser.show_tab_switcher";
++
+ // A boolean pref set to true if Shift+right-click should bypass page context
+ // menu handlers and show the browser context menu.
+ inline constexpr char kShiftRightClickContextMenu[] =
+--- a/chrome/browser/ui/browser_ui_prefs.cc
++++ b/chrome/browser/ui/browser_ui_prefs.cc
+@@ -136,6 +136,8 @@
+ 
+   registry->RegisterBooleanPref(prefs::kTabCyclingMRU, false);
+ 
++  registry->RegisterBooleanPref(prefs::kShowTabSwitcher, true);
++
+   registry->RegisterBooleanPref(prefs::kShiftRightClickContextMenu, true);
+ 
+   registry->RegisterBooleanPref(prefs::kShowZoomIndicator, true);
+--- a/chrome/browser/extensions/api/settings_private/prefs_util.cc
++++ b/chrome/browser/extensions/api/settings_private/prefs_util.cc
+@@ -325,6 +325,8 @@
+       settings_api::PrefType::kBoolean;
+   (*s_allowlist)[::prefs::kTabCyclingMRU] =
+       settings_api::PrefType::kBoolean;
++  (*s_allowlist)[::prefs::kShowTabSwitcher] =
++      settings_api::PrefType::kBoolean;
+   (*s_allowlist)[::prefs::kShiftRightClickContextMenu] =
+       settings_api::PrefType::kBoolean;
+   (*s_allowlist)[::prefs::kShowZoomIndicator] =
+--- a/chrome/app/settings_strings.grdp
++++ b/chrome/app/settings_strings.grdp
+@@ -270,6 +270,9 @@
+     <message name="IDS_SETTINGS_CYCLE_TABS_IN_MRU_ORDER" desc="Label for the checkbox which enables or disables cycling through tabs in MRU order when using Ctrl+Tab.">
+       Cycle through tabs in most recently used order with Ctrl+Tab
+     </message>
++    <message name="IDS_SETTINGS_SHOW_TAB_SWITCHER" desc="Label for the checkbox which shows or hides the overlay listing the tabs Ctrl+Tab cycles through.">
++      Show tab switcher when cycling through tabs with Ctrl+Tab
++    </message>
+     <message name="IDS_SETTINGS_SHIFT_RIGHT_CLICK_CONTEXT_MENU" desc="Label for the checkbox which makes Shift+right click show the browser context menu even when a page blocks it.">
+       Force context menu with Shift+Right Click
+     </message>
+--- a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
++++ b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
+@@ -605,6 +605,7 @@
+       {"systemMode", IDS_NTP_CUSTOMIZE_CHROME_COLOR_SCHEME_MODE_SYSTEM_LABEL},
+       {"openNewTabNextToActive", IDS_SETTINGS_NEW_TAB_NEXT_TO_ACTIVE_BUTTON},
+       {"cycleTabsInMRUOrder", IDS_SETTINGS_CYCLE_TABS_IN_MRU_ORDER},
++      {"showTabSwitcher", IDS_SETTINGS_SHOW_TAB_SWITCHER},
+       {"roundedFrame", IDS_SETTINGS_ROUNDED_FRAME},
+       {"nativeFrameMaterials", IDS_SETTINGS_NATIVE_FRAME_MATERIALS},
+       {"nativeFrameMaterialsDescription",
+--- a/chrome/browser/resources/settings/appearance_page/appearance_behavior_page.html
++++ b/chrome/browser/resources/settings/appearance_page/appearance_behavior_page.html
+@@ -11,6 +11,11 @@
+       label="$i18n{cycleTabsInMRUOrder}">
+   </settings-toggle-button>
+ 
++  <settings-toggle-button class="hr" id="showTabSwitcher"
++      pref-key="helium.browser.show_tab_switcher"
++      label="$i18n{showTabSwitcher}">
++  </settings-toggle-button>
++
+   <settings-toggle-button class="hr" id="shiftRightClickContextMenu"
+       pref-key="helium.browser.shift_right_click_context_menu"
+       label="$i18n{shiftRightClickContextMenu}">
+--- a/chrome/app/generated_resources.grd
++++ b/chrome/app/generated_resources.grd
+@@ -288,6 +288,8 @@
+       <message name="IDS_HELIUM_CREATE_FOUR_PANE_SPLIT" desc="Tab context menu action creating a grid with this tab and three new tabs.">Create Four-Way Split</message>
+       <message name="IDS_HELIUM_EXPAND_FOUR_PANE_SPLIT" desc="Tab context menu action adding new tabs to fill an existing split to four panes.">Expand to Four-Way Split</message>
+       <message name="IDS_HELIUM_TAB_VIEW" desc="Tab menu submenu for individual tab preview and refresh settings.">Tab view</message>
++      <message name="IDS_HELIUM_TAB_SWITCHER_TITLE" desc="Accessible title of the overlay listing the tabs Ctrl+Tab cycles through.">Tab switcher</message>
++      <message name="IDS_HELIUM_TAB_SWITCHER_POSITION" desc="Shown in the tab switcher overlay below the tabs: the position of the selected tab in the cycle, and the number of tabs in it."><ph name="POSITION">$1<ex>3</ex></ph> of <ph name="COUNT">$2<ex>12</ex></ph></message>
+       <message name="IDS_HELIUM_MOBILE_PREVIEW_FULL_HEIGHT" desc="Toggle mobile emulation with the full pane height.">Mobile preview (402 wide, full height)</message>
+       <message name="IDS_HELIUM_MOBILE_PREVIEW" desc="Toggle clean mobile device emulation for this tab.">Mobile preview (402 × 874)</message>
+       <message name="IDS_HELIUM_CREATE_PREVIEW_WORKSPACE" desc="Create a pinned tab group containing desktop and mobile copies of this page.">Create desktop/mobile workspace</message>
+--- a/chrome/browser/ui/tabs/tab_strip_model.h
++++ b/chrome/browser/ui/tabs/tab_strip_model.h
+@@ -630,6 +630,11 @@
+   // Used in BrowserView::StopTabCycling().
+   void StopMRUCycling();
+ 
++  // Returns the indices of the tabs Ctrl+Tab cycles through, in cycle order,
++  // and sets `active_position` to the position of the active tab in it. While
++  // cycling in MRU order, the order stays as it was when cycling began.
++  std::vector<int> GetTabCycleOrder(size_t& active_position) const;
++
+   // Moves the active in the specified direction. Respects group boundaries.
+   void MoveTabNext();
+   void MoveTabPrevious();
+@@ -1557,6 +1562,9 @@
+   // List of tabs for MRU cycling
+   std::vector<int> mru_cycle_list_;
+ 
++  // Position of the active tab in `mru_cycle_list_`.
++  size_t mru_cycle_position_ = 0;
++
+   base::WeakPtrFactory<TabStripModel> weak_factory_{this};
+ };
+ 
+--- a/chrome/browser/ui/tabs/tab_strip_model.cc
++++ b/chrome/browser/ui/tabs/tab_strip_model.cc
+@@ -4635,6 +4635,11 @@
+ 
+ void TabStripModel::SelectMRUTab(TabRelativeDirection direction,
+                                  TabStripUserGestureDetails detail) {
++  // Tabs opened or closed while cycling leave stale indices, so start over.
++  if (mru_cycle_list_.size() != static_cast<size_t>(count())) {
++    StopMRUCycling();
++  }
++
+   if (mru_cycle_list_.empty()) {
+     BrowserWindowInterface* browser =
+         GlobalBrowserCollection::GetInstance()->FindBrowserWithTab(
+@@ -4659,19 +4664,51 @@
+     }
+   }
+ 
++  if (mru_cycle_list_.empty()) {
++    return;
++  }
++
++  // Step through the list instead of rotating it, so the tab switcher can
++  // show it in the order it had when cycling began.
++  const size_t size = mru_cycle_list_.size();
+   if (direction == TabRelativeDirection::kNext) {
+-    std::rotate(mru_cycle_list_.begin(), mru_cycle_list_.begin() + 1,
+-                mru_cycle_list_.end());
++    mru_cycle_position_ = (mru_cycle_position_ + 1) % size;
+   } else {
+-    std::rotate(mru_cycle_list_.rbegin(), mru_cycle_list_.rbegin() + 1,
+-                mru_cycle_list_.rend());
++    mru_cycle_position_ = (mru_cycle_position_ + size - 1) % size;
+   }
+ 
+-  ActivateTabAt(mru_cycle_list_[0], detail);
++  ActivateTabAt(mru_cycle_list_[mru_cycle_position_], detail);
+ }
+ 
+ void TabStripModel::StopMRUCycling() {
+   mru_cycle_list_.clear();
++  mru_cycle_position_ = 0;
++}
++
++std::vector<int> TabStripModel::GetTabCycleOrder(
++    size_t& active_position) const {
++  if (!mru_cycle_list_.empty()) {
++    active_position = mru_cycle_position_;
++    return mru_cycle_list_;
++  }
++
++  // Skip the tabs SelectRelativeTab() skips.
++  const std::optional<tab_groups::TabGroupId> focused_group =
++      GetFocusedGroup();
++  std::vector<int> order;
++  active_position = 0;
++  for (int i = 0; i < count(); ++i) {
++    if (i == active_index()) {
++      active_position = order.size();
++    } else if (IsTabCollapsed(i) ||
++               (focused_group.has_value() &&
++                !tabs::TabStripModelSelectionState::IsTabValidInFocusedGroup(
++                    GetTabAtIndex(i), focused_group))) {
++      continue;
++    }
++    order.push_back(i);
++  }
++  return order;
+ }
+ 
+ void TabStripModel::SelectRelativeTab(TabRelativeDirection direction,
+--- a/chrome/browser/ui/views/frame/browser_view.h
++++ b/chrome/browser/ui/views/frame/browser_view.h
+@@ -102,6 +102,7 @@
+ class TabCyclingEventHandler;
+ class TabDragTarget;
+ class TabSearchBubbleHost;
++class TabSwitcher;
+ class TabStrip;
+ class TabStripRegionView;
+ class ToolbarButtonProvider;
+@@ -613,6 +614,9 @@
+   void ShowUpdateChromeDialog() override;
+   void StartTabCycling();
+   void StopTabCycling();
++  // Shows the tab switcher, unless the user turned it off, until the Ctrl+Tab
++  // modifier is released.
++  void UpdateTabSwitcher();
+   void ShowIntentPickerBubble(
+       std::vector<apps::IntentPickerAppInfo> app_info,
+       bool show_stay_in_chrome,
+@@ -1489,6 +1493,7 @@
+       tab_strip_web_apps_reparented_state_;
+ 
+   std::unique_ptr<TabCyclingEventHandler> tab_cycling_event_handler_;
++  std::unique_ptr<TabSwitcher> tab_switcher_;
+ 
+   // Zen mode state.
+   std::unique_ptr<views::EventMonitor> zen_mode_event_monitor_;
+--- a/chrome/browser/ui/views/frame/browser_view.cc
++++ b/chrome/browser/ui/views/frame/browser_view.cc
+@@ -187,6 +187,7 @@
+ #include "chrome/browser/ui/views/frame/tab_strip_region_view.h"
+ #include "chrome/browser/ui/views/frame/top_container_view.h"
+ #include "chrome/browser/ui/views/helium/command_bar_view.h"
++#include "chrome/browser/ui/views/helium/tab_switcher.h"
+ #include "chrome/browser/ui/views/frame/top_controls_slide_controller.h"
+ #include "chrome/browser/ui/views/frame/vertical_tab_strip_background_blur_backdrop.h"
+ #include "chrome/browser/ui/views/frame/vertical_tab_strip_region_view.h"
+@@ -932,10 +933,34 @@
+  private:
+   // ui::EventObserver overrides:
+   void OnEvent(const ui::Event& event) override {
+-    if (event.type() == ui::EventType::kKeyReleased &&
+-        event.AsKeyEvent()->key_code() == ui::VKEY_CONTROL) {
+-      // Ctrl key was released, stop the tab cycling.
+-      Stop();
++    if (event.type() == ui::EventType::kKeyReleased) {
++      // Stop once no modifier that can hold the cycle shortcut is down, so a
++      // remapped shortcut ends with its own modifier. The flags may still
++      // include the key that was just released.
++      constexpr int kCycleModifiers =
++          ui::EF_CONTROL_DOWN | ui::EF_ALT_DOWN | ui::EF_COMMAND_DOWN;
++      int released = 0;
++      switch (event.AsKeyEvent()->key_code()) {
++        case ui::VKEY_CONTROL:
++        case ui::VKEY_LCONTROL:
++        case ui::VKEY_RCONTROL:
++          released = ui::EF_CONTROL_DOWN;
++          break;
++        case ui::VKEY_MENU:
++        case ui::VKEY_LMENU:
++        case ui::VKEY_RMENU:
++          released = ui::EF_ALT_DOWN;
++          break;
++        case ui::VKEY_LWIN:
++        case ui::VKEY_RWIN:
++          released = ui::EF_COMMAND_DOWN;
++          break;
++        default:
++          break;
++      }
++      if (!(event.flags() & kCycleModifiers & ~released)) {
++        Stop();
++      }
+       return;
+     }
+ 
+@@ -984,14 +1009,29 @@
+ };
+ 
+ void BrowserView::StartTabCycling() {
+-  tab_cycling_event_handler_ = std::make_unique<TabCyclingEventHandler>(this);
++  if (!tab_cycling_event_handler_) {
++    tab_cycling_event_handler_ =
++        std::make_unique<TabCyclingEventHandler>(this);
++  }
+ }
+ 
+ void BrowserView::StopTabCycling() {
+   tab_cycling_event_handler_.reset();
++  tab_switcher_.reset();
+   browser()->tab_strip_model()->StopMRUCycling();
+ }
+ 
++void BrowserView::UpdateTabSwitcher() {
++  if (!GetProfile()->GetPrefs()->GetBoolean(prefs::kShowTabSwitcher)) {
++    return;
++  }
++  StartTabCycling();
++  if (!tab_switcher_) {
++    tab_switcher_ = std::make_unique<TabSwitcher>(this);
++  }
++  tab_switcher_->Update();
++}
++
+ ///////////////////////////////////////////////////////////////////////////////
+ // BrowserView, public:
+ 
+--- a/chrome/browser/ui/browser_command_controller.cc
++++ b/chrome/browser/ui/browser_command_controller.cc
+@@ -826,6 +826,10 @@
+                       TabStripUserGestureDetails(
+                           TabStripUserGestureDetails::GestureType::kKeyboard,
+                           time_stamp));
++        if (BrowserView* browser_view =
++                BrowserView::GetBrowserViewForBrowser(browser_)) {
++          browser_view->UpdateTabSwitcher();
++        }
+       }
+       break;
+     case IDC_CYCLE_TO_PREV_TAB:
+@@ -841,6 +845,10 @@
+             browser_, TabStripUserGestureDetails(
+                           TabStripUserGestureDetails::GestureType::kKeyboard,
+                           time_stamp));
++        if (BrowserView* browser_view =
++                BrowserView::GetBrowserViewForBrowser(browser_)) {
++          browser_view->UpdateTabSwitcher();
++        }
+       }
+       break;
+     case IDC_MOVE_TAB_NEXT:
