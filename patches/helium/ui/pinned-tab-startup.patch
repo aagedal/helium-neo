@@ -1,0 +1,424 @@
+--- a/chrome/browser/prefs/session_startup_pref.h
++++ b/chrome/browser/prefs/session_startup_pref.h
+@@ -39,6 +39,10 @@
+     // Indicates the user wants to restore the last session and open a specific
+     // set of URLs. The URLs are contained in urls.
+     LAST_AND_URLS = 4,
++
++    // Indicates the user wants to open the pinned tabs with the first one
++    // selected, or the New Tab page when no tabs are pinned. Helium's default.
++    PINNED = 5,
+   };
+ 
+   // For historical reasons the enum and value registered in the prefs don't
+@@ -53,7 +57,8 @@
+     kPrefValueURLs = 4,
+     kPrefValueNewTab = 5,
+     kPrefValueLastAndURLs = 6,
+-    kPrefValueMax = 7,
++    kPrefValuePinned = 7,
++    kPrefValueMax = 8,
+   };
+ 
+   static void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry);
+--- a/chrome/browser/prefs/session_startup_pref.cc
++++ b/chrome/browser/prefs/session_startup_pref.cc
+@@ -36,6 +36,8 @@
+       return SessionStartupPref::kPrefValueURLs;
+     case SessionStartupPref::LAST_AND_URLS:
+       return SessionStartupPref::kPrefValueLastAndURLs;
++    case SessionStartupPref::PINNED:
++      return SessionStartupPref::kPrefValuePinned;
+     default:
+       return SessionStartupPref::kPrefValueNewTab;
+   }
+@@ -73,6 +75,7 @@
+   if (features::kSetDefaultToContinueSession.Get()) {
+     return SessionStartupPref::LAST;
+   }
++  return SessionStartupPref::PINNED;
+ #elif BUILDFLAG(IS_ANDROID)
+   // On Android desktop, restoring the last session is the default startup
+   // behavior when the restore-on-startup pref is synced.
+@@ -185,6 +188,8 @@
+       return SessionStartupPref::URLS;
+     case kPrefValueLastAndURLs:
+       return SessionStartupPref::LAST_AND_URLS;
++    case kPrefValuePinned:
++      return SessionStartupPref::PINNED;
+     default:
+       return SessionStartupPref::DEFAULT;
+   }
+--- a/chrome/browser/ui/tabs/pinned_tab_codec.h
++++ b/chrome/browser/ui/tabs/pinned_tab_codec.h
+@@ -9,6 +9,10 @@
+ 
+ class Profile;
+ 
++namespace content {
++class WebContents;
++}
++
+ namespace user_prefs {
+ class PrefRegistrySyncable;
+ }
+@@ -37,6 +41,11 @@
+   // Reads and returns the set of pinned tabs to restore from preferences.
+   static StartupTabs ReadPinnedTabs(Profile* profile);
+ 
++  // Marks a pinned tab that startup opened from the saved pinned tabs.
++  // Restoring a crashed session replaces these tabs with the session's own.
++  static void MarkOpenedAtStartup(content::WebContents* contents);
++  static bool WasOpenedAtStartup(content::WebContents* contents);
++
+  private:
+   PinnedTabCodec();
+   ~PinnedTabCodec();
+--- a/chrome/browser/ui/tabs/pinned_tab_codec.cc
++++ b/chrome/browser/ui/tabs/pinned_tab_codec.cc
+@@ -9,6 +9,7 @@
+ #include <cmath>
+ #include <utility>
+ 
++#include "base/supports_user_data.h"
+ #include "base/values.h"
+ #include "chrome/browser/profiles/profile.h"
+ #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
+@@ -31,6 +32,9 @@
+ // Key used in dictionaries for the url.
+ const char kURL[] = "url";
+ 
++// Marks pinned tabs that startup opened from the saved pinned tabs.
++const char kOpenedAtStartupKey[] = "helium_pinned_opened_at_startup";
++
+ // Returns a base::DictValue representing the supplied StartupTab.
+ base::DictValue EncodeTab(const StartupTab& tab) {
+   base::DictValue dict;
+@@ -174,6 +178,17 @@
+ }
+ 
+ // static
++void PinnedTabCodec::MarkOpenedAtStartup(content::WebContents* contents) {
++  contents->SetUserData(kOpenedAtStartupKey,
++                        std::make_unique<base::SupportsUserData::Data>());
++}
++
++// static
++bool PinnedTabCodec::WasOpenedAtStartup(content::WebContents* contents) {
++  return contents->GetUserData(kOpenedAtStartupKey);
++}
++
++// static
+ StartupTabs PinnedTabCodec::ReadPinnedTabs(Profile* profile) {
+   PrefService* prefs = profile->GetPrefs();
+   if (!prefs) {
+--- a/chrome/browser/ui/tabs/pinned_tab_service.h
++++ b/chrome/browser/ui/tabs/pinned_tab_service.h
+@@ -8,6 +8,7 @@
+ #include "base/callback_list.h"
+ #include "base/memory/raw_ptr.h"
+ #include "base/scoped_observation.h"
++#include "base/timer/timer.h"
+ #include "chrome/browser/ui/browser_window/public/browser_collection_observer.h"
+ #include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
+ #include "components/keyed_service/core/keyed_service.h"
+@@ -42,8 +43,15 @@
+       const TabStripModelChange& change,
+       const TabStripSelectionChange& selection) override;
+   void OnTabPinnedStateChanged(tabs::TabInterface* tab, int index) override;
++  void OnTabChangedAt(tabs::TabInterface* tab,
++                      TabChangeType change_type) override;
+   void WillCloseAllTabs(TabStripModel* tab_strip_model) override;
+ 
++  // Saves the pinned tabs shortly after they change, so they survive a crash.
++  // Closing all windows saves them right away instead.
++  void ScheduleWrite();
++  void WriteScheduled();
++
+   // Writes the pinned tabs for `profile_`, but only if a new tab or browser
+   // window has been added since the last time the method was called.
+   void WritePinnedTabsIfNecessary();
+@@ -55,6 +63,12 @@
+   // and set back to true when new tabs or windows are added.
+   bool need_to_write_pinned_tabs_ = true;
+ 
++  // True while all browsers are closing, when windows closing one by one must
++  // not overwrite the pinned tabs saved as closing began.
++  bool closing_all_ = false;
++
++  base::OneShotTimer write_timer_;
++
+   base::ScopedObservation<GlobalBrowserCollection, BrowserCollectionObserver>
+       browser_collection_observation_{this};
+ 
+--- a/chrome/browser/ui/tabs/pinned_tab_service.cc
++++ b/chrome/browser/ui/tabs/pinned_tab_service.cc
+@@ -11,7 +11,15 @@
+ #include "chrome/browser/ui/browser_window/public/browser_window_interface_iterator.h"
+ #include "chrome/browser/ui/browser_window/public/global_browser_collection.h"
+ #include "chrome/browser/ui/tabs/pinned_tab_codec.h"
++#include "chrome/browser/ui/tabs/tab_change_type.h"
+ #include "chrome/browser/ui/tabs/tab_strip_model.h"
++#include "components/tabs/public/tab_interface.h"
++
++namespace {
++
++constexpr base::TimeDelta kWriteDelay = base::Seconds(2);
++
++}  // namespace
+ 
+ PinnedTabService::PinnedTabService(Profile* profile) : profile_(profile) {
+   closing_all_browsers_subscription_ = chrome::AddClosingAllBrowsersCallback(
+@@ -46,6 +54,10 @@
+   //   * pinned tabs are saved, without the window with the pinned tabs,
+   //     over-writing the correct state.
+   // Saving is re-enabled if a new tab or window is opened.
++  closing_all_ = closing;
++  if (closing) {
++    write_timer_.Stop();
++  }
+   if (closing && TabStripModelObserver::IsObservingAny(this)) {
+     WritePinnedTabsIfNecessary();
+   }
+@@ -86,11 +98,25 @@
+   if (change.type() == TabStripModelChange::kInserted) {
+     need_to_write_pinned_tabs_ = true;
+   }
++  // Tabs closing with their window are saved when the last window closes.
++  if (change.type() != TabStripModelChange::kSelectionOnly &&
++      !tab_strip_model->closing_all()) {
++    ScheduleWrite();
++  }
+ }
+ 
+ void PinnedTabService::OnTabPinnedStateChanged(tabs::TabInterface* tab,
+                                                int index) {
+   need_to_write_pinned_tabs_ = true;
++  ScheduleWrite();
++}
++
++void PinnedTabService::OnTabChangedAt(tabs::TabInterface* tab,
++                                      TabChangeType change_type) {
++  // Navigating a pinned tab changes the address it reopens with.
++  if (change_type == TabChangeType::kAll && tab->IsPinned()) {
++    ScheduleWrite();
++  }
+ }
+ 
+ void PinnedTabService::WillCloseAllTabs(TabStripModel* tab_strip_model) {
+@@ -100,6 +126,22 @@
+   }
+ }
+ 
++void PinnedTabService::ScheduleWrite() {
++  if (closing_all_) {
++    return;
++  }
++  write_timer_.Start(FROM_HERE, kWriteDelay, this,
++                     &PinnedTabService::WriteScheduled);
++}
++
++void PinnedTabService::WriteScheduled() {
++  // Without windows, the last one to close already saved the pinned tabs.
++  if (closing_all_ || !TabStripModelObserver::IsObservingAny(this)) {
++    return;
++  }
++  PinnedTabCodec::WritePinnedTabs(profile_);
++}
++
+ void PinnedTabService::WritePinnedTabsIfNecessary() {
+   if (need_to_write_pinned_tabs_) {
+     PinnedTabCodec::WritePinnedTabs(profile_);
+--- a/chrome/browser/ui/startup/startup_browser_creator.cc
++++ b/chrome/browser/ui/startup/startup_browser_creator.cc
+@@ -1476,7 +1476,8 @@
+     SessionStartupPref startup_pref =
+         GetSessionStartupPref(command_line, profile);
+     if (profile != last_used_profile &&
+-        startup_pref.type == SessionStartupPref::DEFAULT &&
++        (startup_pref.type == SessionStartupPref::DEFAULT ||
++         startup_pref.type == SessionStartupPref::PINNED) &&
+         !HasPendingUncleanExit(profile)) {
+       continue;
+     }
+--- a/chrome/browser/ui/startup/startup_browser_creator_impl.cc
++++ b/chrome/browser/ui/startup/startup_browser_creator_impl.cc
+@@ -53,6 +53,7 @@
+ #include "chrome/browser/ui/startup/startup_tab_provider.h"
+ #include "chrome/browser/ui/startup/startup_types.h"
+ #include "chrome/browser/ui/tabs/pane_settings.h"
++#include "chrome/browser/ui/tabs/pinned_tab_codec.h"
+ #include "chrome/browser/ui/tabs/shared_tab_group_version_upgrade_modal.h"
+ #include "chrome/browser/ui/tabs/tab_enums.h"
+ #include "chrome/browser/ui/tabs/tab_strip_model.h"
+@@ -221,6 +222,18 @@
+   return workspace_browser;
+ }
+ 
++bool HasTabbedBrowserForProfile(Profile* profile) {
++  bool found = false;
++  ForEachCurrentBrowserWindowInterfaceOrderedByActivation(
++      [profile, &found](BrowserWindowInterface* browser) {
++        found = browser->GetProfile() == profile &&
++                browser->GetType() == BrowserWindowInterface::TYPE_NORMAL &&
++                !browser->GetTabStripModel()->empty();
++        return !found;
++      });
++  return found;
++}
++
+ content::WebContents* AddDeferredPinnedStartupTab(
+     BrowserWindowInterface* browser,
+     const GURL& url) {
+@@ -403,6 +416,7 @@
+     if (!contents || tab.type != StartupTab::Type::kPinned) {
+       return;
+     }
++    PinnedTabCodec::MarkOpenedAtStartup(contents);
+     tabs::PaneSettings::RestoreFromExtraData(contents, tab.pane_extra_data);
+     if (!tab.pinned_split_id.empty() && tab.pinned_split_visual_data) {
+       pinned_splits[tab.pinned_split_id].push_back(contents);
+@@ -720,12 +734,17 @@
+   // A similar policy exists for crash recovery launches, to prevent getting the
+   // user stuck in a crash loop.
+   if (is_incognito_or_guest || is_post_crash_launch) {
+-    if (!tabs.empty()) {
+-      return {std::move(tabs), launch_result};
++    if (tabs.empty()) {
++      tabs.emplace_back(chrome::ChromeUINewTabURLAsGURL());
+     }
+-
+-    return {StartupTabs({StartupTab(chrome::ChromeUINewTabURLAsGURL())}),
+-            launch_result};
++    // Pinned tabs come back after a crash too. They open behind the New Tab
++    // Page and load only when selected, so a page that crashed the browser
++    // doesn't crash it again on launch. Restoring the crashed session replaces
++    // them with its own.
++    if (!is_incognito_or_guest && !HasTabbedBrowserForProfile(profile_)) {
++      AppendTabs(PinnedTabCodec::ReadPinnedTabs(profile_), &tabs);
++    }
++    return {std::move(tabs), launch_result};
+   }
+ 
+   // A trigger on a profile may indicate that we should show a tab which
+@@ -791,8 +810,12 @@
+ 
+     // Potentially add the New Tab Page.
+     // Note that URLs from preferences are explicitly meant to override showing
+-    // the NTP.
+-    if (prefs_tabs_originally_empty) {
++    // the NTP. Opening the first pinned tab replaces it when tabs are pinned.
++    const bool open_first_pinned =
++        StartupBrowserCreator::GetSessionStartupPref(*command_line_, profile_)
++                .type == SessionStartupPref::PINNED &&
++        !pinned_tabs.empty();
++    if (prefs_tabs_originally_empty && !open_first_pinned) {
+       AppendTabs(provider.GetNewTabPageTabs(*command_line_, profile_), &tabs);
+     }
+   }
+--- a/chrome/browser/sessions/session_restore.cc
++++ b/chrome/browser/sessions/session_restore.cc
+@@ -74,6 +74,7 @@
+ #include "chrome/browser/ui/startup/startup_browser_creator.h"
+ #include "chrome/browser/ui/startup/startup_tab.h"
+ #include "chrome/browser/ui/startup/startup_types.h"
++#include "chrome/browser/ui/tabs/pinned_tab_codec.h"
+ #include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_utils.h"
+ #include "chrome/browser/ui/tabs/tab_enums.h"
+ #include "chrome/browser/ui/tabs/tab_group_model.h"
+@@ -1663,6 +1664,18 @@
+   browser = nullptr;
+ #endif
+ 
++  // The launch after the crash opened the saved pinned tabs. The crashed
++  // session has them too, with their history, so restore those instead.
++  if (browser) {
++    TabStripModel* tab_strip = browser->GetTabStripModel();
++    for (int i = tab_strip->count() - 1; i >= 0; --i) {
++      if (tab_strip->IsTabPinned(i) &&
++          PinnedTabCodec::WasOpenedAtStartup(tab_strip->GetWebContentsAt(i))) {
++        tab_strip->CloseWebContentsAt(i, TabCloseTypes::CLOSE_NONE);
++      }
++    }
++  }
++
+   SessionRestore::BehaviorBitmask behavior =
+       SessionRestore::RESTORE_BROWSER |
+       (browser && HasSingleNewTabPage(browser)
+--- a/chrome/browser/profile_resetter/resettable_settings_snapshot.cc
++++ b/chrome/browser/profile_resetter/resettable_settings_snapshot.cc
+@@ -179,6 +179,7 @@
+     }
+     switch (snapshot.startup_type()) {
+       case SessionStartupPref::DEFAULT:
++      case SessionStartupPref::PINNED:
+         report->set_startup_type(
+             reset_report::ChromeResetReport_SessionStartupType_DEFAULT);
+         break;
+@@ -270,6 +271,10 @@
+       startup_type =
+           l10n_util::GetStringUTF16(IDS_SETTINGS_ON_STARTUP_OPEN_NEW_TAB);
+       break;
++    case SessionStartupPref::PINNED:
++      startup_type =
++          l10n_util::GetStringUTF16(IDS_SETTINGS_ON_STARTUP_OPEN_PINNED);
++      break;
+     case SessionStartupPref::LAST:
+       startup_type =
+           l10n_util::GetStringUTF16(IDS_SETTINGS_ON_STARTUP_CONTINUE);
+--- a/chrome/browser/ui/webui/settings/settings_startup_pages_handler.cc
++++ b/chrome/browser/ui/webui/settings/settings_startup_pages_handler.cc
+@@ -196,7 +196,7 @@
+   SessionStartupPref pref = SessionStartupPref::GetStartupPref(prefs);
+   pref.urls = startup_custom_pages_table_model_.GetURLs();
+ 
+-  if (pref.urls.empty()) {
++  if (pref.urls.empty() && pref.type != SessionStartupPref::PINNED) {
+     pref.type = SessionStartupPref::DEFAULT;
+   }
+ 
+--- a/chrome/app/settings_strings.grdp
++++ b/chrome/app/settings_strings.grdp
+@@ -1130,6 +1130,9 @@
+     <message name="IDS_SETTINGS_ON_STARTUP_OPEN_NEW_TAB" desc="Radio button option to open the new tab page.">
+       Open the New Tab page
+     </message>
++    <message name="IDS_SETTINGS_ON_STARTUP_OPEN_PINNED" desc="Radio button option to open the pinned tabs with the first one selected, or the new tab page when no tabs are pinned.">
++      Open the first pinned tab, or the New Tab page if no tabs are pinned
++    </message>
+     <message name="IDS_SETTINGS_ON_STARTUP_CONTINUE" desc="Radio button option to continue where you left off.">
+       Continue where you left off
+     </message>
+--- a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
++++ b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
+@@ -1579,6 +1579,7 @@
+   static constexpr webui::LocalizedString kLocalizedStrings[] = {
+       {"onStartup", IDS_SETTINGS_ON_STARTUP},
+       {"onStartupOpenNewTab", IDS_SETTINGS_ON_STARTUP_OPEN_NEW_TAB},
++      {"onStartupOpenPinned", IDS_SETTINGS_ON_STARTUP_OPEN_PINNED},
+       {"onStartupContinue", IDS_SETTINGS_ON_STARTUP_CONTINUE},
+       {"onStartupOpenSpecific", IDS_SETTINGS_ON_STARTUP_OPEN_SPECIFIC},
+       {"onStartupContinueAndOpenSpecific",
+--- a/chrome/browser/resources/settings/on_startup_page/on_startup_page.ts
++++ b/chrome/browser/resources/settings/on_startup_page/on_startup_page.ts
+@@ -40,6 +40,7 @@
+   OPEN_NEW_TAB = 5,
+   OPEN_SPECIFIC = 4,
+   CONTINUE_AND_OPEN_SPECIFIC = 6,
++  OPEN_PINNED = 7,
+ }
+ 
+ const SettingsOnStartupPageElementBase =
+--- a/chrome/browser/resources/settings/on_startup_page/on_startup_page.html.ts
++++ b/chrome/browser/resources/settings/on_startup_page/on_startup_page.html.ts
+@@ -16,6 +16,10 @@
+         class="flex"
+         pref-key="session.restore_on_startup"
+         group-aria-label="$i18n{onStartup}">
++      <controlled-radio-button name="${PrefValues.OPEN_PINNED}"
++          pref-key="session.restore_on_startup"
++          label="$i18n{onStartupOpenPinned}">
++      </controlled-radio-button>
+       <controlled-radio-button name="${PrefValues.OPEN_NEW_TAB}"
+           pref-key="session.restore_on_startup"
+           label="$i18n{onStartupOpenNewTab}"
