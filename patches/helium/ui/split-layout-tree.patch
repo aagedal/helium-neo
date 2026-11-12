@@ -664,10 +664,14 @@
  
    // Updates the split tab at index `split_index` with the tab at
    // `update_index`. The split that includes `split_index` must include the
-@@ -730,6 +731,24 @@ class TabStripModel {
+@@ -730,6 +731,28 @@ class TabStripModel {
                                 size_t pane_count,
                                 split_tabs::SplitTabVisualData visual_data);
  
++  // Whether the model is in the middle of an update, during which observers
++  // must not change it.
++  bool IsUpdating() const { return reentrancy_guard_; }
++
 +  // Makes `tabs`, in this order, the panes of the split `split_id` laid out
 +  // as `tree`, creating the split or replacing its panes. The tabs must not be
 +  // in another split; they are moved next to each other and take the group and
@@ -689,7 +693,7 @@
    TabGroupModel* group_model() const { return group_model_.get(); }
  
    bool SupportsTabGroups() const { return group_model_.get() != nullptr; }
-@@ -1197,6 +1216,16 @@ class TabStripModel {
+@@ -1197,6 +1220,16 @@ class TabStripModel {
            get_tabs_to_close,
        uint32_t close_types);
  
@@ -1152,7 +1156,45 @@
    gfx::Insets split_view_insets_;
 --- a/chrome/browser/ui/views/frame/multi_contents_view_delegate.cc
 +++ b/chrome/browser/ui/views/frame/multi_contents_view_delegate.cc
-@@ -88,14 +88,15 @@ void MultiContentsViewDelegateImpl::ResizeWebContents(double start_ratio,
+@@ -4,6 +4,8 @@
+ 
+ #include "chrome/browser/ui/views/frame/multi_contents_view_delegate.h"
+ 
++#include "base/functional/bind.h"
++#include "base/task/sequenced_task_runner.h"
+ #include "chrome/browser/sessions/session_service.h"
+ #include "chrome/browser/sessions/session_service_factory.h"
+ #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
+@@ -31,8 +33,27 @@ MultiContentsViewDelegateImpl::MultiContentsViewDelegateImpl(
+ 
+ void MultiContentsViewDelegateImpl::WebContentsFocused(
+     content::WebContents* web_contents) {
++  // Rearranging the panes of a split can move focus while the tab strip
++  // model is still updating, and the model can't change from inside its own
++  // update. Activate the pane once it's done.
++  if (tab_strip_model_->IsUpdating()) {
++    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
++        FROM_HERE,
++        base::BindOnce(&MultiContentsViewDelegateImpl::ActivateFocusedContents,
++                       weak_factory_.GetWeakPtr(),
++                       web_contents->GetWeakPtr()));
++    return;
++  }
++  ActivateFocusedContents(web_contents->GetWeakPtr());
++}
++
++void MultiContentsViewDelegateImpl::ActivateFocusedContents(
++    base::WeakPtr<content::WebContents> web_contents) {
++  if (!web_contents) {
++    return;
++  }
+   const tabs::TabInterface* tab =
+-      tabs::TabInterface::MaybeGetFromContents(web_contents);
++      tabs::TabInterface::MaybeGetFromContents(web_contents.get());
+   if (!tab || !tab->IsSplit()) {
+     return;
+   }
+@@ -88,14 +109,15 @@ void MultiContentsViewDelegateImpl::ResizeWebContents(double start_ratio,
    }
  }
  
@@ -1174,15 +1216,17 @@
      const split_tabs::SplitTabId split_id =
 --- a/chrome/browser/ui/views/frame/multi_contents_view_delegate.h
 +++ b/chrome/browser/ui/views/frame/multi_contents_view_delegate.h
-@@ -8,6 +8,7 @@
+@@ -7,7 +7,9 @@
+ 
  #include <array>
  
++#include "base/memory/weak_ptr.h"
  #include "chrome/browser/ui/views/frame/multi_contents_view_drop_target_controller.h"
 +#include "components/split_tabs/split_layout_tree.h"
  
  class TabStripModel;
  class BrowserWindowInterface;
-@@ -23,8 +24,9 @@ class MultiContentsViewDelegate
+@@ -23,8 +25,9 @@ class MultiContentsViewDelegate
  
    virtual void WebContentsFocused(content::WebContents* contents) = 0;
    virtual void ResizeWebContents(double ratio, bool done_resizing) = 0;
@@ -1194,7 +1238,7 @@
    virtual void ReverseWebContents() = 0;
  };
  
-@@ -46,8 +48,8 @@ class MultiContentsViewDelegateImpl : public MultiContentsViewDelegate {
+@@ -46,8 +49,8 @@ class MultiContentsViewDelegateImpl : public MultiContentsViewDelegate {
    // Must already be in a split.
    void ResizeWebContents(double ratio, bool done_resizing) override;
  
@@ -1205,6 +1249,19 @@
  
    // Reverses the order of split tabs.
    // Must already be in a split.
+@@ -65,9 +68,12 @@ class MultiContentsViewDelegateImpl : public MultiContentsViewDelegate {
+                      TabDragTarget::DragController& drag_controller) override;
+ 
+  private:
++  void ActivateFocusedContents(base::WeakPtr<content::WebContents> contents);
++
+   // TODO(crbug.com/431000266): Use a browser window feature instead.
+   const raw_ref<BrowserWindowInterface> browser_;
+   const raw_ref<TabStripModel> tab_strip_model_;
++  base::WeakPtrFactory<MultiContentsViewDelegateImpl> weak_factory_{this};
+ };
+ 
+ #endif  // CHROME_BROWSER_UI_VIEWS_FRAME_MULTI_CONTENTS_VIEW_DELEGATE_H_
 --- a/components/sessions/core/session_service_commands.cc
 +++ b/components/sessions/core/session_service_commands.cc
 @@ -8,6 +8,7 @@
