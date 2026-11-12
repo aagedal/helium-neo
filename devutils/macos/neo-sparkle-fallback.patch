@@ -30,7 +30,7 @@
 +
 +@implementation NeoDownloadProbe {
 +  NSURLSession* session_;
-+  NSArray<NSURLSessionDataTask*>* tasks_;
++  NSArray<NSURLSessionTask*>* tasks_;
 +  NSMutableArray<NSNumber*>* bytes_;
 +  NSMutableArray<NSNumber*>* rates_;
 +  NSDate* start_;
