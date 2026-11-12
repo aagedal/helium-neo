@@ -398,3 +398,4 @@ helium/ui/macos-webkit-opt-in.patch
 helium/ui/macos-webkit-tab-fixes.patch
 helium/ui/download-overlay.patch
 helium/ui/screenshot-frameless-overlay.patch
+helium/ui/tab-switcher.patch
