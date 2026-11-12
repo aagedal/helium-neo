@@ -1,0 +1,129 @@
+--- a/chrome/browser/helium_webkit_streaming_mac.mm
++++ b/chrome/browser/helium_webkit_streaming_mac.mm
+@@ -908,36 +908,102 @@
+     web_contents()->NotifyNavigationStateChanged(content::INVALIDATE_TYPE_ALL);
+   }
+ 
+-  // The tab shows the WebKit site's icon. Chromium's blank page underneath
+-  // downloads and decodes it in its sandboxed renderer, as it does for its own
+-  // favicons, and it is shown on that page's entry.
++  // The tab shows the WebKit site's icon: the one the page declares, else
++  // /favicon.ico. Chromium's blank page underneath downloads and decodes it in
++  // its sandboxed renderer, as it does for its own favicons, and it is shown on
++  // that page's entry.
+   void UpdateFavicon(content::NavigationEntry& entry) {
+     const GURL page = url();
+     if (!IsWebKitPageURL(page))
+       return;
+-    const GURL icon = page.GetWithEmptyPath().Resolve("/favicon.ico");
+-    if (icon != favicon_url_) {
+-      favicon_url_ = icon;
++    const GURL fallback = page.GetWithEmptyPath().Resolve("/favicon.ico");
++    if (fallback != fallback_favicon_url_) {
++      fallback_favicon_url_ = fallback;
++      declared_favicon_url_ = GURL();
+       favicon_ = gfx::Image();
+-      web_contents()->DownloadImage(
+-          icon, /*is_favicon=*/true, /*preferred_size=*/gfx::Size(),
+-          /*max_bitmap_size=*/64, /*bypass_cache=*/false,
+-          base::BindOnce(&StreamingTab::FaviconDownloaded,
+-                         activation_factory_.GetWeakPtr()));
++      DownloadFavicon(fallback);
+     }
++    // Sites such as TV 2 Play answer /favicon.ico with their app's HTML page.
++    // Ask until the page has declared an icon, as its head may still load.
++    if (declared_favicon_url_.is_empty())
++      FindDeclaredFavicon();
+     if (!favicon_.IsEmpty()) {
+       entry.GetFavicon().valid = true;
+       entry.GetFavicon().url = favicon_url_;
+       entry.GetFavicon().image = favicon_;
+     }
+   }
++  void DownloadFavicon(const GURL& icon) {
++    favicon_url_ = icon;
++    web_contents()->DownloadImage(
++        icon, /*is_favicon=*/true, /*preferred_size=*/gfx::Size(),
++        /*max_bitmap_size=*/64, /*bypass_cache=*/false,
++        base::BindOnce(&StreamingTab::FaviconDownloaded,
++                       activation_factory_.GetWeakPtr()));
++  }
++  // Reads the icon links in an isolated world, so the page's own scripts can't
++  // change the answer. Prefers a raster icon of at least 32 pixels, then
++  // smaller ones, then SVG, then the Apple touch icon.
++  void FindDeclaredFavicon() {
++    if (finding_declared_favicon_ || !controller_)
++      return;
++    finding_declared_favicon_ = true;
++    NSString* script =
++        @"(() => {"
++         "  const icons = [...document.querySelectorAll('link[rel][href]')]"
++         "    .filter(l => /(^|\\s)(icon|apple-touch-icon)(\\s|$)/i"
++         "      .test(l.rel))"
++         "    .map(l => {"
++         "      const m = /(\\d+)x\\d+/.exec(l.getAttribute('sizes') || '');"
++         "      const size = m ? +m[1] : 0;"
++         "      return {href: l.href,"
++         "              rank: [/apple-touch-icon/i.test(l.rel) ? 1 : 0,"
++         "                     /svg/i.test(l.type) ||"
++         "                         /\\.svg([?#]|$)/i.test(l.href) ? 1 : 0,"
++         "                     size >= 32 ? size : 10000 - size]};"
++         "    });"
++         "  icons.sort((a, b) => a.rank[0] - b.rank[0] ||"
++         "      a.rank[1] - b.rank[1] || a.rank[2] - b.rank[2]);"
++         "  return icons.length ? icons[0].href : '';"
++         "})()";
++    base::WeakPtr<StreamingTab> weak = activation_factory_.GetWeakPtr();
++    const GURL site = fallback_favicon_url_;
++    [controller_.webView evaluateJavaScript:script
++                                    inFrame:nil
++                             inContentWorld:WKContentWorld.defaultClientWorld
++                          completionHandler:^(id result, NSError* error) {
++                            if (weak) {
++                              weak->DeclaredFaviconFound(
++                                  site,
++                                  [result isKindOfClass:[NSString class]]
++                                      ? GURL(base::SysNSStringToUTF8(result))
++                                      : GURL());
++                            }
++                          }];
++  }
++  // `site` is the default icon of the site the page was on when asked.
++  void DeclaredFaviconFound(const GURL& site, const GURL& icon) {
++    finding_declared_favicon_ = false;
++    if (site != fallback_favicon_url_ || !icon.SchemeIsHTTPOrHTTPS() ||
++        icon == fallback_favicon_url_ || !declared_favicon_url_.is_empty()) {
++      return;
++    }
++    declared_favicon_url_ = icon;
++    DownloadFavicon(icon);
++  }
+   void FaviconDownloaded(int id,
+                          int http_status_code,
+                          const GURL& image_url,
+                          const std::vector<SkBitmap>& bitmaps,
+                          const std::vector<gfx::Size>& sizes) {
+-    if (image_url != favicon_url_ || bitmaps.empty())
++    if (image_url != favicon_url_)
+       return;
++    if (bitmaps.empty()) {
++      // The declared icon failed, perhaps as SVG; keep the site's default.
++      if (image_url == declared_favicon_url_ && favicon_.IsEmpty())
++        DownloadFavicon(fallback_favicon_url_);
++      return;
++    }
+     // The smallest bitmap that is sharp at 2x, else the largest one.
+     const SkBitmap* best = nullptr;
+     for (const SkBitmap& bitmap : bitmaps) {
+@@ -1054,7 +1120,11 @@
+   bool manual_webkit_ = false;
+   bool prefer_chromium_ = false;
+   GURL last_requested_url_;
++  // The icon being downloaded, and the two it may come from.
+   GURL favicon_url_;
++  GURL fallback_favicon_url_;
++  GURL declared_favicon_url_;
++  bool finding_declared_favicon_ = false;
+   gfx::Image favicon_;
+   base::RepeatingClosureList changed_;
+   base::WeakPtrFactory<StreamingTab> activation_factory_{this};
