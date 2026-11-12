@@ -1083,7 +1083,7 @@
    gfx::Point drag_end_;
 --- /dev/null
 +++ b/chrome/browser/image_editor/screenshot_source.cc
-@@ -0,0 +1,1682 @@
+@@ -0,0 +1,1683 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -2672,10 +2672,11 @@
 +    }
 +    kept.Append(std::move(value));
 +  }
++  // Every candidate was moved into `kept`, so put them back first.
++  *candidates = std::move(kept);
 +  if (!restricted)
 +    return;
 +  const bool chosen = *status == "unique" || *status == "preferred";
-+  *candidates = std::move(kept);
 +  if (candidates->empty())
 +    sources.Set("status", "none");
 +  else if (chosen)
