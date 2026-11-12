@@ -3442,18 +3442,6 @@
  #include "chrome/browser/ui/tab_contents/core_tab_helper.h"
  #include "chrome/browser/ui/tabs/features.h"
  #include "chrome/browser/ui/tabs/page_context_eligibility_helper.h"
-@@ -225,10 +226,10 @@
- #include "components/strings/grit/components_strings.h"
- #include "components/supervised_user/core/browser/supervised_user_preferences.h"
- #include "components/supervised_user/core/browser/supervised_user_url_filtering_service.h"
--#include "components/translate/core/common/translate_switches.h"
- #include "components/translate/core/browser/translate_download_manager.h"
- #include "components/translate/core/browser/translate_manager.h"
- #include "components/translate/core/browser/translate_prefs.h"
-+#include "components/translate/core/common/translate_switches.h"
- #include "components/translate/core/common/translate_util.h"
- #include "components/url_formatter/url_formatter.h"
- #include "components/user_prefs/user_prefs.h"
 @@ -1303,6 +1304,13 @@ void RenderViewContextMenu::InitMenu() {
    const bool use_simplified_menu_for_text_selection =
        ShouldUseSimplifiedTextSelection();
