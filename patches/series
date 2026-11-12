@@ -410,3 +410,4 @@ helium/ui/screenshot-quick-save.patch
 helium/ui/macos-webkit-marker-header.patch
 helium/ui/pinned-tab-startup.patch
 helium/ui/macos-webkit-declared-favicon.patch
+helium/ui/multi-pane-split-menus.patch
