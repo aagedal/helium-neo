@@ -1,0 +1,273 @@
+--- a/chrome/browser/ui/views/frame/BUILD.gn
++++ b/chrome/browser/ui/views/frame/BUILD.gn
+@@ -3298,6 +3298,7 @@ source_set("contents_container_view_impl") {
+     "//chrome/browser/ui/read_anything",
+     "//chrome/browser/ui/views/helium:frame_corner_radius",
+     "//chrome/browser/ui/views/indigo",
++    "//chrome/browser/ui/views/location_bar:impl",
+     "//chrome/browser/ui/views/new_tab_footer",
+     "//chrome/common:chrome_features",
+     "//components/search",
+--- a/chrome/browser/ui/views/frame/contents_container_view.cc
++++ b/chrome/browser/ui/views/frame/contents_container_view.cc
+@@ -22,6 +22,7 @@
+ #include "chrome/browser/ui/tabs/pane_settings.h"
+ #include "chrome/browser/ui/ui_features.h"
+ #include "chrome/browser/ui/view_ids.h"
++#include "chrome/browser/profiles/profile.h"
+ #include "chrome/browser/ui/views/frame/browser_view.h"
+ #include "chrome/browser/ui/views/frame/contents_capture_border_view.h"
+ #include "chrome/browser/ui/views/frame/contents_container_outline.h"
+@@ -32,6 +33,7 @@
+ #include "chrome/browser/ui/views/frame/top_container_view.h"
+ #include "chrome/browser/ui/views/helium/frame_corner_radius.h"
+ #include "chrome/browser/ui/views/indigo/indigo_toolbar.h"
++#include "chrome/browser/ui/views/location_bar/location_bar_progress_view.h"
+ #include "chrome/browser/ui/views/new_tab_footer/footer_web_view.h"
+ #include "chrome/common/chrome_features.h"
+ #include "components/search/ntp_features.h"
+@@ -91,6 +93,21 @@ ContentsContainerView::ContentsContainerView(BrowserView* browser_view)
+       base::FeatureList::IsEnabled(
+           features::kUseDefaultDeadlineWhenAnimatingBounds));
+ 
++  frameless_progress_view_ =
++      AddChildView(std::make_unique<LocationBarProgressView>(
++          browser_view->GetProfile()->GetPrefs()));
++  frameless_progress_view_->SetPaintAtTopEdge(gfx::RoundedCornersF());
++  const auto update_progress_contents = base::BindRepeating(
++      [](LocationBarProgressView* progress_view, views::WebView* web_view) {
++        progress_view->SetWebContents(web_view->web_contents());
++      },
++      base::Unretained(frameless_progress_view_.get()));
++  contents_attached_subscription_ =
++      contents_view_->AddWebContentsAttachedCallback(update_progress_contents);
++  contents_detached_subscription_ =
++      contents_view_->AddWebContentsDetachedCallback(update_progress_contents);
++  UpdateFramelessProgressVisibility();
++
+   if (base::FeatureList::IsEnabled(ntp_features::kNtpFooter)) {
+     new_tab_footer_view_separator_ =
+         AddChildView(ContentsSeparator::CreateContentsSeparator());
+@@ -171,6 +188,8 @@ ContentsContainerView::ContentsContainerView(BrowserView* browser_view)
+ }
+ 
+ ContentsContainerView::~ContentsContainerView() {
++  contents_attached_subscription_ = {};
++  contents_detached_subscription_ = {};
+   indigo_overlay_view_ = nullptr;
+   // read_anything_immersive_overlay_view_ holds a raw_ptr to
+   // contents_view_. We need to make sure we destroy
+@@ -264,6 +283,13 @@ void ContentsContainerView::UpdateBorderAndOverlay(bool is_in_split,
+ #endif  //  BUILDFLAG(IS_CHROMEOS)
+ }
+ 
++void ContentsContainerView::UpdateFramelessProgressVisibility() {
++  // Past the halfway point of the reveal, the location bar shows progress.
++  frameless_progress_view_->SetSuppressed(
++      !browser_view_->IsZenModeEnabledForLayout() ||
++      browser_view_->GetTopChromeRevealRatio() > 0.5f);
++}
++
+ void ContentsContainerView::SetBorderRoundedCornersFrom(
+     const gfx::RoundedCornersF& corner_radii) {
+   // Update devtools rounded corners. Note, devtools exists behind the contents
+@@ -306,6 +332,7 @@ void ContentsContainerView::SetBorderRoundedCornersFrom(
+ 
+   contents_view_->SetBackgroundRadii(radii);
+   contents_view_->holder()->SetNativeViewCornerRadii(radii);
++  frameless_progress_view_->SetPaintAtTopEdge(content_upper_rounded_corners);
+   contents_scrim_view_->SetRoundedCorners(corner_radii);
+ 
+   if (new_tab_footer_view_) {
+@@ -623,6 +650,13 @@ views::ProposedLayout ContentsContainerView::CalculateProposedLayout(
+       toast_anchor_view_.get(), toast_anchor_view_->GetVisible(),
+       gfx::BoundingRect(contents_rect.origin(), contents_rect.top_right()));
+ 
++  // Tall enough for the glow below the bar.
++  constexpr int kFramelessProgressHeight = 10;
++  layouts.child_layouts.emplace_back(
++      frameless_progress_view_.get(), frameless_progress_view_->GetVisible(),
++      gfx::Rect(contents_rect.x(), contents_rect.y(), contents_rect.width(),
++                std::min(kFramelessProgressHeight, contents_rect.height())));
++
+   if (glic_border_) {
+     // |glic_border_| should not be seen over devtools.
+     layouts.child_layouts.emplace_back(glic_border_.get(),
+--- a/chrome/browser/ui/views/frame/contents_container_view.h
++++ b/chrome/browser/ui/views/frame/contents_container_view.h
+@@ -20,6 +20,7 @@
+ #include "ui/views/view.h"
+ 
+ class BrowserView;
++class LocationBarProgressView;
+ class ContentsCaptureBorderView;
+ class ContentsContainerOutline;
+ class ContentsWebView;
+@@ -148,6 +149,10 @@ class ContentsContainerView : public views::View,
+ 
+   views::View* GetToastAnchorView() { return toast_anchor_view_; }
+ 
++  // Shows page loading progress over the top of the contents while frameless
++  // mode hides the toolbar, and hides it while the toolbar is revealed.
++  void UpdateFramelessProgressVisibility();
++
+  private:
+   void UpdateContentsClip();
+ 
+@@ -189,6 +194,10 @@ class ContentsContainerView : public views::View,
+ 
+   raw_ptr<ContentsWebView> contents_view_ = nullptr;
+ 
++  raw_ptr<LocationBarProgressView> frameless_progress_view_ = nullptr;
++  base::CallbackListSubscription contents_attached_subscription_;
++  base::CallbackListSubscription contents_detached_subscription_;
++
+   TabModalDialogHost web_contents_modal_dialog_host_;
+ 
+   // The view that contains devtools window for the WebContents.
+--- a/chrome/browser/ui/views/frame/multi_contents_view.cc
++++ b/chrome/browser/ui/views/frame/multi_contents_view.cc
+@@ -591,6 +591,9 @@ int MultiContentsView::GetInactiveIndex() const {
+ }
+ 
+ void MultiContentsView::MaybeUpdateContentsBorderAndOverlay() {
++  for (ContentsContainerView* container : contents_container_views_) {
++    container->UpdateFramelessProgressVisibility();
++  }
+   top_chrome_attached_for_border_ = IsTopChromeAttachedForBorder();
+   if (IsInSplitView() || ShouldUseRoundedFrame()) {
+     UpdateContentsBorderAndOverlay();
+@@ -598,6 +601,9 @@ void MultiContentsView::MaybeUpdateContentsBorderAndOverlay() {
+ }
+ 
+ void MultiContentsView::MaybeUpdateBorderForZenReveal() {
++  for (ContentsContainerView* container : contents_container_views_) {
++    container->UpdateFramelessProgressVisibility();
++  }
+   const bool top_chrome_attached = IsTopChromeAttachedForBorder();
+   if (top_chrome_attached_for_border_ &&
+       *top_chrome_attached_for_border_ == top_chrome_attached) {
+--- a/chrome/browser/ui/views/location_bar/BUILD.gn
++++ b/chrome/browser/ui/views/location_bar/BUILD.gn
+@@ -85,6 +85,7 @@ source_set("impl") {
+   if (toolkit_views) {
+     public += [
+       "location_bar_actions.h",
++      "location_bar_progress_view.h",
+       "zoom_bubble_manager_views.h",
+     ]
+     sources += [
+@@ -97,7 +98,6 @@ source_set("impl") {
+       "location_bar_bubble_delegate_view.cc",
+       "location_bar_layout.cc",
+       "location_bar_progress_view.cc",
+-      "location_bar_progress_view.h",
+       "location_bar_view.cc",
+       "location_icon_state_helper.cc",
+       "location_icon_view.cc",
+--- a/chrome/browser/ui/views/location_bar/location_bar_progress_view.cc
++++ b/chrome/browser/ui/views/location_bar/location_bar_progress_view.cc
+@@ -130,6 +130,23 @@ void LocationBarProgressView::SetLocationBarFocused(bool focused) {
+   UpdateVisibility();
+ }
+ 
++void LocationBarProgressView::SetPaintAtTopEdge(
++    const gfx::RoundedCornersF& corner_radii) {
++  if (top_edge_corner_radii_ == corner_radii) {
++    return;
++  }
++  top_edge_corner_radii_ = corner_radii;
++  SchedulePaint();
++}
++
++void LocationBarProgressView::SetSuppressed(bool suppressed) {
++  if (suppressed_ == suppressed) {
++    return;
++  }
++  suppressed_ = suppressed;
++  UpdateVisibility();
++}
++
+ double LocationBarProgressView::GetDisplayedProgress() const {
+   return progress_animation_.CurrentValueBetween(progress_start_,
+                                                  progress_target_);
+@@ -197,7 +214,7 @@ void LocationBarProgressView::ResetState() {
+ 
+ void LocationBarProgressView::UpdateVisibility() {
+   SetVisible(IsProgressBarEnabled() && has_active_progress_ &&
+-             !location_bar_focused_);
++             !location_bar_focused_ && !suppressed_);
+ }
+ 
+ bool LocationBarProgressView::IsProgressBarEnabled() const {
+@@ -264,10 +281,27 @@ void LocationBarProgressView::OnPaint(gfx::Canvas* canvas) {
+       SK_ColorWHITE, primary_color, kAppearance.shine_white_mix);
+ 
+   canvas->Save();
+-  const SkScalar corner_radius = LocationBarView::ComputeBorderRadius(size());
+-  const SkRRect clip = SkRRect::MakeRectXY(
+-      gfx::RectToSkRect(GetLocalBounds()), corner_radius, corner_radius);
+-  canvas->ClipPath(SkPath::RRect(clip), /*do_anti_alias=*/true);
++  if (top_edge_corner_radii_) {
++    const gfx::RoundedCornersF& radii = *top_edge_corner_radii_;
++    const SkVector corners[] = {
++        {radii.upper_left(), radii.upper_left()},
++        {radii.upper_right(), radii.upper_right()},
++        {radii.lower_right(), radii.lower_right()},
++        {radii.lower_left(), radii.lower_left()},
++    };
++    SkRRect clip;
++    clip.setRectRadii(gfx::RectToSkRect(GetLocalBounds()), corners);
++    canvas->ClipPath(SkPath::RRect(clip), /*do_anti_alias=*/true);
++    // The bar is drawn along the bottom edge below, so flip it to the top.
++    canvas->Translate(gfx::Vector2d(0, height()));
++    canvas->Scale(1, -1);
++  } else {
++    const SkScalar corner_radius =
++        LocationBarView::ComputeBorderRadius(size());
++    const SkRRect clip = SkRRect::MakeRectXY(
++        gfx::RectToSkRect(GetLocalBounds()), corner_radius, corner_radius);
++    canvas->ClipPath(SkPath::RRect(clip), /*do_anti_alias=*/true);
++  }
+ 
+   cc::PaintFlags flags;
+   flags.setAntiAlias(true);
+--- a/chrome/browser/ui/views/location_bar/location_bar_progress_view.h
++++ b/chrome/browser/ui/views/location_bar/location_bar_progress_view.h
+@@ -6,11 +6,14 @@
+ #define CHROME_BROWSER_UI_VIEWS_LOCATION_BAR_LOCATION_BAR_PROGRESS_VIEW_H_
+ 
+ #include "components/prefs/pref_change_registrar.h"
++#include <optional>
++
+ #include "content/public/browser/web_contents_observer.h"
+ #include "ui/base/metadata/metadata_header_macros.h"
+ #include "ui/gfx/animation/animation_delegate.h"
+ #include "ui/gfx/animation/slide_animation.h"
+ #include "ui/gfx/animation/throb_animation.h"
++#include "ui/gfx/geometry/rounded_corners_f.h"
+ #include "ui/views/view.h"
+ 
+ class PrefService;
+@@ -29,6 +32,12 @@ class LocationBarProgressView : public views::View,
+   void SetWebContents(content::WebContents* contents);
+   void SetLocationBarFocused(bool focused);
+ 
++  // Paints the bar along the top edge instead, glowing downwards and clipped
++  // to `corner_radii`. Used over the page while the toolbar is hidden.
++  void SetPaintAtTopEdge(const gfx::RoundedCornersF& corner_radii);
++  // Hides the bar even while a page loads.
++  void SetSuppressed(bool suppressed);
++
+  private:
+   double GetDisplayedProgress() const;
+   void BeginLoading(double progress);
+@@ -64,6 +73,8 @@ class LocationBarProgressView : public views::View,
+   double progress_target_ = 0.0;
+   bool has_active_progress_ = false;
+   bool location_bar_focused_ = false;
++  bool suppressed_ = false;
++  std::optional<gfx::RoundedCornersF> top_edge_corner_radii_;
+   bool finishing_ = false;
+ };
+ 

@@ -413,3 +413,4 @@ helium/ui/pinned-tab-startup.patch
 helium/ui/macos-webkit-declared-favicon.patch
 helium/ui/multi-pane-split-menus.patch
 helium/ui/split-layout-tree.patch
+helium/ui/frameless-progress-bar.patch
