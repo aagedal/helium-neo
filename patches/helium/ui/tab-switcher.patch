@@ -1,6 +1,6 @@
 --- /dev/null
 +++ b/chrome/browser/ui/views/helium/tab_switcher.h
-@@ -0,0 +1,51 @@
+@@ -0,0 +1,56 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -12,6 +12,7 @@
 +#include "base/memory/weak_ptr.h"
 +#include "base/timer/timer.h"
 +#include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
++#include "components/tabs/public/tab_interface.h"
 +
 +class BrowserView;
 +
@@ -19,8 +20,9 @@
 +// cycles through while its modifier is held, like the macOS app switcher. The
 +// active tab is highlighted, with the previous tabs in the cycle to its left
 +// and the next ones to its right. Tabs still switch on every press; the
-+// overlay only shows where the cycle is. BrowserView owns it and deletes it
-+// when the modifier is released.
++// overlay shows where the cycle is, and clicking a tab in it switches to that
++// tab right away. BrowserView owns it and deletes it when the modifier is
++// released.
 +class TabSwitcher : public TabStripModelObserver {
 + public:
 +  explicit TabSwitcher(BrowserView* browser_view);
@@ -44,17 +46,20 @@
 +
 +  void Show();
 +  void Refresh();
++  // Switches to the clicked tab and ends the cycle. Deletes `this`.
++  void ActivateTab(tabs::TabHandle handle);
 +
 +  const raw_ptr<BrowserView> browser_view_;
 +  base::OneShotTimer show_timer_;
 +  // Deletes itself after its widget closes.
 +  base::WeakPtr<Bubble> bubble_;
++  base::WeakPtrFactory<TabSwitcher> weak_factory_{this};
 +};
 +
 +#endif  // CHROME_BROWSER_UI_VIEWS_HELIUM_TAB_SWITCHER_H_
 --- /dev/null
 +++ b/chrome/browser/ui/views/helium/tab_switcher.cc
-@@ -0,0 +1,261 @@
+@@ -0,0 +1,332 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -74,15 +79,21 @@
 +#include "chrome/browser/ui/color/chrome_color_id.h"
 +#include "chrome/browser/ui/tab_ui_helper.h"
 +#include "chrome/browser/ui/tabs/tab_strip_model.h"
++#include "chrome/browser/ui/tabs/tab_strip_user_gesture_details.h"
 +#include "chrome/browser/ui/views/frame/browser_view.h"
 +#include "chrome/grit/generated_resources.h"
 +#include "components/tabs/public/tab_interface.h"
 +#include "components/url_formatter/elide_url.h"
 +#include "ui/base/l10n/l10n_util.h"
++#include "ui/base/metadata/metadata_header_macros.h"
++#include "ui/base/metadata/metadata_impl_macros.h"
 +#include "ui/base/models/image_model.h"
 +#include "ui/base/mojom/dialog_button.mojom.h"
++#include "ui/events/event_constants.h"
++#include "ui/views/accessibility/view_accessibility.h"
 +#include "ui/views/background.h"
 +#include "ui/views/bubble/bubble_dialog_delegate_view.h"
++#include "ui/views/controls/button/button.h"
 +#include "ui/views/controls/image_view.h"
 +#include "ui/views/controls/label.h"
 +#include "ui/views/layout/box_layout.h"
@@ -102,49 +113,91 @@
 +constexpr int kTileSize = 44;
 +constexpr int kTileCornerRadius = 10;
 +
-+// A tab in the switcher: its favicon on a tile, with the title below.
-+std::unique_ptr<views::View> CreateCard(tabs::TabInterface* tab,
-+                                        bool selected) {
-+  TabUIHelper* helper = TabUIHelper::From(tab);
++// A tab in the switcher: its favicon on a tile, with the title below. The
++// pointer highlights it, and clicking it switches to the tab.
++class Card : public views::Button {
++  METADATA_HEADER(Card, views::Button)
 +
-+  auto card = std::make_unique<views::View>();
-+  auto* layout = card->SetLayoutManager(std::make_unique<views::BoxLayout>(
-+      views::BoxLayout::Orientation::kVertical, gfx::Insets::VH(10, 6), 8));
-+  layout->set_cross_axis_alignment(
-+      views::BoxLayout::CrossAxisAlignment::kCenter);
-+  if (selected) {
-+    card->SetBackground(views::CreateRoundedRectBackground(
-+        kColorOmniboxResultsBackgroundSelected, kCardCornerRadius));
++ public:
++  Card(tabs::TabInterface* tab, bool selected, PressedCallback pressed)
++      : views::Button(std::move(pressed)), selected_(selected) {
++    TabUIHelper* helper = TabUIHelper::From(tab);
++
++    auto* layout = SetLayoutManager(std::make_unique<views::BoxLayout>(
++        views::BoxLayout::Orientation::kVertical, gfx::Insets::VH(10, 6), 8));
++    layout->set_cross_axis_alignment(
++        views::BoxLayout::CrossAxisAlignment::kCenter);
++    // The modifier is still held while clicking, and macOS turns Ctrl+click
++    // into a right click.
++    SetTriggerableEventFlags(ui::EF_LEFT_MOUSE_BUTTON |
++                             ui::EF_RIGHT_MOUSE_BUTTON);
++    // The overlay can't take focus; the shortcut keeps driving it.
++    SetFocusBehavior(FocusBehavior::NEVER);
++
++    auto* tile = AddChildView(std::make_unique<views::ImageView>());
++    tile->SetImage(helper->GetFavicon());
++    tile->SetImageSize({kFaviconSize, kFaviconSize});
++    tile->SetPreferredSize(gfx::Size(kTileSize, kTileSize));
++    tile->SetBackground(views::CreateRoundedRectBackground(
++        kColorOmniboxResultsBackgroundHovered, kTileCornerRadius));
++    tile->SetCanProcessEventsWithinSubtree(false);
++
++    title_ = AddChildView(std::make_unique<views::Label>(helper->GetTitle()));
++    title_->SetMultiLine(true);
++    title_->SetMaxLines(2);
++    title_->SetMaximumWidth(kCardWidth - 12);
++    title_->SetHorizontalAlignment(gfx::ALIGN_CENTER);
++    title_->SetCanProcessEventsWithinSubtree(false);
++
++    GetViewAccessibility().SetName(helper->GetTitle());
++    SetPreferredSize(gfx::Size(kCardWidth, GetHeightForWidth(kCardWidth)));
++    UpdateColors();
++  }
++  Card(const Card&) = delete;
++  Card& operator=(const Card&) = delete;
++  ~Card() override = default;
++
++  // views::Button:
++  void StateChanged(ButtonState old_state) override {
++    views::Button::StateChanged(old_state);
++    UpdateColors();
 +  }
 +
-+  auto* tile = card->AddChildView(std::make_unique<views::ImageView>());
-+  tile->SetImage(helper->GetFavicon());
-+  tile->SetImageSize({kFaviconSize, kFaviconSize});
-+  tile->SetPreferredSize(gfx::Size(kTileSize, kTileSize));
-+  tile->SetBackground(views::CreateRoundedRectBackground(
-+      kColorOmniboxResultsBackgroundHovered, kTileCornerRadius));
++ private:
++  void UpdateColors() {
++    const bool highlighted =
++        GetState() == STATE_HOVERED || GetState() == STATE_PRESSED;
++    if (selected_) {
++      SetBackground(views::CreateRoundedRectBackground(
++          kColorOmniboxResultsBackgroundSelected, kCardCornerRadius));
++    } else if (highlighted) {
++      // A translucent fill, so the tile still stands out from the card.
++      SetBackground(views::CreateRoundedRectBackground(
++          kColorOmniboxResultsBackgroundHoverOverlay, kCardCornerRadius));
++    } else {
++      SetBackground(nullptr);
++    }
++    title_->SetEnabledColor(selected_      ? kColorOmniboxResultsTextSelected
++                            : highlighted ? kColorOmniboxText
++                                          : kColorOmniboxResultsTextDimmed);
++  }
 +
-+  auto* title =
-+      card->AddChildView(std::make_unique<views::Label>(helper->GetTitle()));
-+  title->SetMultiLine(true);
-+  title->SetMaxLines(2);
-+  title->SetMaximumWidth(kCardWidth - 12);
-+  title->SetHorizontalAlignment(gfx::ALIGN_CENTER);
-+  title->SetEnabledColor(selected ? kColorOmniboxResultsTextSelected
-+                                  : kColorOmniboxResultsTextDimmed);
++  const bool selected_;
++  raw_ptr<views::Label> title_ = nullptr;
++};
 +
-+  card->SetPreferredSize(
-+      gfx::Size(kCardWidth, card->GetHeightForWidth(kCardWidth)));
-+  return card;
-+}
++BEGIN_METADATA(Card)
++END_METADATA
 +
 +}  // namespace
 +
 +// Hosts the cards in a bubble centered over the browser window.
 +class TabSwitcher::Bubble : public views::BubbleDialogDelegate {
 + public:
-+  explicit Bubble(BrowserView* browser_view)
-+      : views::BubbleDialogDelegate(browser_view, views::BubbleBorder::FLOAT) {
++  Bubble(BrowserView* browser_view,
++         base::RepeatingCallback<void(tabs::TabHandle)> activate)
++      : views::BubbleDialogDelegate(browser_view, views::BubbleBorder::FLOAT),
++        activate_(std::move(activate)) {
 +    SetButtons(static_cast<int>(ui::mojom::DialogButton::kNone));
 +    SetShowCloseButton(false);
 +    SetShowTitle(false);
@@ -153,7 +206,6 @@
 +    set_corner_radius(kCornerRadius);
 +    set_adjust_if_offscreen(false);
 +    set_close_on_deactivate(false);
-+    set_accept_events(false);
 +    SetCanActivate(false);
 +    SetBackgroundColor(kColorOmniboxResultsBackground);
 +
@@ -208,8 +260,10 @@
 +        std::min(position - std::min(position, visible / 2),
 +                 order.size() - visible);
 +    for (size_t i = first; i < first + visible; ++i) {
-+      cards_->AddChildView(
-+          CreateCard(model->GetTabAtIndex(order[i]), i == position));
++      tabs::TabInterface* tab = model->GetTabAtIndex(order[i]);
++      cards_->AddChildView(std::make_unique<Card>(
++          tab, i == position,
++          base::BindRepeating(activate_, tab->GetHandle())));
 +    }
 +
 +    tabs::TabInterface* active = model->GetTabAtIndex(order[position]);
@@ -226,6 +280,9 @@
 +
 +    if (widget_) {
 +      SizeToContents();
++      // Highlight the card that is now under a resting pointer.
++      widget_->LayoutRootViewIfNecessary();
++      widget_->SynthesizeMouseMoveEvent();
 +    }
 +  }
 +
@@ -249,6 +306,7 @@
 +                                                                  this);
 +  }
 +
++  base::RepeatingCallback<void(tabs::TabHandle)> activate_;
 +  raw_ptr<views::View> cards_ = nullptr;
 +  raw_ptr<views::Label> footer_ = nullptr;
 +  std::unique_ptr<views::Widget> widget_;
@@ -305,7 +363,11 @@
 +      !browser_view_->GetWidget()->IsVisible()) {
 +    return;
 +  }
-+  auto* bubble = new Bubble(browser_view_);
++  // The bubble closes asynchronously, so a click can still reach it after
++  // `this` is gone.
++  auto* bubble = new Bubble(browser_view_,
++                            base::BindRepeating(&TabSwitcher::ActivateTab,
++                                                weak_factory_.GetWeakPtr()));
 +  bubble_ = bubble->GetWeakPtr();
 +  bubble->SetTabs(model);
 +  bubble->Show();
@@ -314,6 +376,20 @@
 +void TabSwitcher::Refresh() {
 +  if (bubble_) {
 +    bubble_->SetTabs(browser_view_->browser()->GetTabStripModel());
++  }
++}
++
++void TabSwitcher::ActivateTab(tabs::TabHandle handle) {
++  TabStripModel* model = browser_view_->browser()->GetTabStripModel();
++  tabs::TabInterface* tab = handle.Get();
++  const int index = tab ? model->GetIndexOfTab(tab) : TabStripModel::kNoTab;
++  // Ends MRU cycling first, so the switch counts as a normal activation.
++  // Deletes `this`.
++  browser_view_->StopTabCycling();
++  if (index != TabStripModel::kNoTab) {
++    model->ActivateTabAt(index, TabStripUserGestureDetails(
++                                    TabStripUserGestureDetails::GestureType::
++                                        kMouse));
 +  }
 +}
 --- a/chrome/browser/ui/views/helium/BUILD.gn
