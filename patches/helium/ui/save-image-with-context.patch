@@ -10,12 +10,40 @@
  #define IDC_CONTENT_CONTEXT_OPENIMAGENEWTAB 50123
 --- a/chrome/app/generated_resources.grd
 +++ b/chrome/app/generated_resources.grd
-@@ -285,6 +285,9 @@
+@@ -285,6 +285,37 @@
        <message name="IDS_HELIUM_EQUALIZE_SPLIT_PANES" desc="Split view menu item giving the panes even sizes: panes in the same row get the same width and panes in the same column the same height.">Make All Panes the Same Size</message>
        <message name="IDS_HELIUM_SPLIT_TAB_MUTE_SITE" desc="Item in the Mute Sites submenu of a split view with three or more panes, muting one of the sites shown in it.">Mute <ph name="SITE">$1<ex>example.com</ex></ph></message>
        <message name="IDS_HELIUM_SPLIT_TAB_UNMUTE_SITE" desc="Item in the Mute Sites submenu of a split view with three or more panes, unmuting one of the sites shown in it.">Unmute <ph name="SITE">$1<ex>example.com</ex></ph></message>
 +      <message name="IDS_HELIUM_SAVE_IMAGE_WITH_CONTEXT" desc="Context menu item saving an image to the downloads folder without asking where, with the address of the page and of the image added to its metadata.">Save Image with Context Metadata</message>
-+      <message name="IDS_HELIUM_SAVE_IMAGE_WITH_CONTEXT_UNSUPPORTED" desc="Shown after saving an image with context metadata when its format, such as GIF or SVG, can't hold metadata.">The image was saved without context metadata, as its format can't hold any.</message>
++      <message name="IDS_HELIUM_SAVE_IMAGE_WITH_CONTEXT_UNSUPPORTED" desc="Shown after saving an image with context metadata when its format, such as GIF or SVG, can't hold metadata. The download overlay's Edit Metadata button can save it in a sidecar file instead.">The image was saved without context metadata, as its format can't hold any. To save it in a separate file next to the image, choose Edit Metadata in the download overlay.</message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_TITLE" desc="Title of the panel showing and editing the metadata of an image saved with its context.">Saved Image Metadata</message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_OWN_SECTION" desc="Heading of the metadata the saved image came with, which is never changed.">In the image</message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_OWN_TITLE" desc="The saved image's own title.">Title: <ph name="VALUE">$1<ex>Harbour at dawn</ex></ph></message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_OWN_CREATOR" desc="The saved image's own creator, such as the photographer.">Creator: <ph name="VALUE">$1<ex>A Photographer</ex></ph></message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_OWN_RIGHTS" desc="The saved image's own copyright notice.">Copyright: <ph name="VALUE">$1<ex>© 2026 A Photographer</ex></ph></message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_OWN_CREDIT" desc="The saved image's own credit line.">Credit: <ph name="VALUE">$1<ex>NTB</ex></ph></message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_OWN_SOURCE" desc="The saved image's own IPTC source.">Source: <ph name="VALUE">$1<ex>NTB</ex></ph></message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_OWN_DESCRIPTION" desc="The saved image's own description or caption.">Description: <ph name="VALUE">$1<ex>Boats in the harbour</ex></ph></message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_OWN_NONE" desc="Shown when the saved image came without a title, creator, copyright, credit, source or description.">No title, creator, copyright, credit, source or description.</message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_UNREADABLE" desc="Shown when the saved image's metadata couldn't be read, so the image file was left unchanged.">Its metadata couldn't be read, so the image file is left as it was downloaded.</message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_SIGNED" desc="Shown when the saved image carries Content Credentials (C2PA), a signature that any change to the file would break.">It has Content Credentials, which any change to the file shows as altered.</message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_ADDED_SECTION" desc="Heading of the context metadata Helium added to the saved image.">Added by Helium</message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_PAGE" desc="The address of the page the image was saved from.">Page: <ph name="URL">$1<ex>https://www.tv2.no/</ex></ph></message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_IMAGE" desc="The address of the saved image itself.">Image: <ph name="URL">$1<ex>https://www.cdn.tv2.no/images/1.webp</ex></ph></message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_SAVED" desc="When the image was saved.">Saved: <ph name="DATE">$1<ex>2026-11-13_23:06</ex></ph></message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_SOURCE_FIELD" desc="Label of the editable IPTC Source field Helium fills in for a saved image.">Source</message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_DESCRIPTION_FIELD" desc="Label of the editable description Helium fills in for a saved image.">Description</message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_KEPT" desc="Shown when the saved image had its own source or description, which Helium keeps instead of adding its own.">The image's own source and description are kept.</message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_IN_IMAGE" desc="Says where the context metadata is stored: in the image file.">Stored in the image file.</message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_IN_SIDECAR" desc="Says where the context metadata is stored: in an XMP sidecar file next to the image.">Stored in <ph name="FILE">$1<ex>photo.xmp</ex></ph>, next to the image.</message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_NOWHERE" desc="Says the context metadata isn't stored, as the image's format can't hold metadata and no sidecar file is saved.">Not stored, as this format can't hold metadata.</message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_OPTIONS_SECTION" desc="Heading of the choices for saving images with context metadata, which apply to this image and are remembered.">Options</message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_SIDECAR_OPTION" desc="Checkbox saving the context metadata of images whose format can't hold metadata in an XMP sidecar file next to them.">Save it in an XMP file next to images that can't hold metadata, such as GIF and SVG</message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_EMBED_OPTION" desc="Checkbox adding the context metadata to images with Content Credentials, which then show as altered, instead of saving it in an XMP sidecar file.">Add it to images with Content Credentials, which then show as altered</message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_FOLDER" desc="The folder images saved with their context go to.">Images are saved in <ph name="FOLDER">$1<ex>/Users/me/Downloads</ex></ph></message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_CHANGE_FOLDER" desc="Button choosing the folder images saved with their context go to.">Change Folder…</message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_UPDATE" desc="Button storing the edited context metadata of a saved image.">Update File</message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_UPDATE_FAILED" desc="Shown when the edited context metadata of a saved image couldn't be stored.">The file couldn't be updated.</message>
 +      <message name="IDS_HELIUM_SAVE_IMAGE_WITH_CONTEXT_FAILED" desc="Shown when an image was saved but its context metadata couldn't be added.">The image was saved, but its context metadata couldn't be added.</message>
        <message name="IDS_HELIUM_REMOVE_FROM_SPLIT" desc="Tab context menu action taking this tab out of its split view without closing it; the other panes fill its space.">Remove from Split</message>
        <message name="IDS_HELIUM_SAVE_SPLIT_LAYOUT" desc="Split Layout submenu item that saves the arrangement of the split's panes under a name, to apply to other splits.">Save Current Layout…</message>
@@ -354,23 +382,34 @@
  
 --- a/chrome/browser/ui/views/sharing_hub/BUILD.gn
 +++ b/chrome/browser/ui/views/sharing_hub/BUILD.gn
-@@ -10,6 +10,7 @@ assert(toolkit_views)
+@@ -10,13 +10,17 @@ assert(toolkit_views)
  source_set("sharing_hub") {
    public = [
      "preview_view.h",
++    "screenshot/image_context_bubble.h",
 +    "screenshot/image_context_save.h",
      "screenshot/screenshot_captured_bubble.h",
      "screenshot/screenshot_quick_save.h",
      "sharing_hub_bubble_util.h",
-@@ -37,6 +38,7 @@ source_set("sharing_hub") {
+   ]
+   public_deps = [
++    ":screenshot_documentation",
+     "//base",
+     "//chrome/browser/image_editor",
++    "//chrome/browser/image_editor:image_context_metadata",
+     "//chrome/browser/share",
+     "//chrome/browser/sharing_hub",
+     "//chrome/browser/ui/views/location_bar",
+@@ -37,6 +41,8 @@ source_set("sharing_hub") {
  source_set("impl") {
    sources = [
      "preview_view.cc",
++    "screenshot/image_context_bubble.cc",
 +    "screenshot/image_context_save.cc",
      "screenshot/screenshot_captured_bubble.cc",
      "screenshot/screenshot_quick_save.cc",
      "sharing_hub_bubble_util.cc",
-@@ -48,16 +50,19 @@ source_set("impl") {
+@@ -48,16 +54,21 @@ source_set("impl") {
      "//chrome/browser/download",
      "//chrome/browser/ui/views/download",
      "//chrome/browser/image_editor",
@@ -382,6 +421,8 @@
      "//chrome/browser/ui/select_file_policy",
 +    "//chrome/browser/ui:simple_message_box_headers",
      "//chrome/browser/ui/views:layout_provider",
++    "//chrome/browser/ui/views/frame:browser_view_header",
++    "//chrome/browser/ui/views/frame:toolbar_button_provider",
      "//components/omnibox/browser:vector_icons",
      "//components/prefs",
      "//components/url_formatter",
@@ -392,7 +433,7 @@
      "//ui/strings:ui_strings",
 --- /dev/null
 +++ b/chrome/browser/image_editor/image_context_metadata.cc
-@@ -0,0 +1,904 @@
+@@ -0,0 +1,1020 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -1136,6 +1177,77 @@
 +  out += "</" + *tag + '>';
 +}
 +
++// Returns the rdf:RDF element of an XMP packet, with the namespaces in scope.
++base::DictValue* FindRdf(base::Value& root, Scope& scope) {
++  if (!IsElement(root)) {
++    return nullptr;
++  }
++  base::DictValue* rdf = &root.GetDict();
++  const QualifiedName root_name = ElementName(*rdf, scope);
++  if (root_name.Is(kXmpMetaNamespace, "xmpmeta") ||
++      root_name.Is(kXmpMetaNamespace, "xapmeta")) {
++    return FindChild(*rdf, kRdfNamespace, "RDF", scope);
++  }
++  return root_name.Is(kRdfNamespace, "RDF") ? rdf : nullptr;
++}
++
++// The text directly in `element`.
++std::string ElementText(const base::DictValue& element) {
++  std::string text;
++  if (const base::ListValue* children = element.FindList(kChildrenKey)) {
++    for (const base::Value& child : *children) {
++      if (!IsElement(child) && child.is_dict()) {
++        if (const std::string* part = child.GetDict().FindString(kTextKey)) {
++          text += *part;
++        }
++      }
++    }
++  }
++  return text;
++}
++
++// The value of a property as text: the default of alternatives, the items of
++// a list joined, or plain text.
++std::string PropertyText(base::DictValue& property, Scope& scope) {
++  const size_t depth = scope.size();
++  for (std::string_view type : {"Alt", "Seq", "Bag"}) {
++    base::DictValue* list = FindChild(property, kRdfNamespace, type, scope);
++    if (!list) {
++      continue;
++    }
++    std::vector<std::string> items;
++    for (base::Value& item : *list->EnsureList(kChildrenKey)) {
++      if (!IsElement(item)) {
++        continue;
++      }
++      const size_t item_depth = scope.size();
++      if (ElementName(item.GetDict(), scope).Is(kRdfNamespace, "li")) {
++        const std::string text = ElementText(item.GetDict());
++        const std::string* language =
++            item.GetDict().FindStringByDottedPath("attributes.xml:lang");
++        if (type == "Alt" && language && *language == "x-default") {
++          scope.resize(depth);
++          return text;
++        }
++        if (!text.empty()) {
++          items.push_back(text);
++        }
++      }
++      scope.resize(item_depth);
++    }
++    scope.resize(depth);
++    if (type == "Alt") {
++      return items.empty() ? std::string() : items.front();
++    }
++    std::string joined;
++    for (const std::string& item : items) {
++      joined += (joined.empty() ? "" : ", ") + item;
++    }
++    return joined;
++  }
++  return ElementText(property);
++}
++
 +base::Value EmptyXmp() {
 +  return Element(
 +      "x:xmpmeta", {}, base::DictValue().Set("x", kXmpMetaNamespace),
@@ -1164,18 +1276,8 @@
 +std::optional<std::string> AddImageContextToXmp(const ImageContext& context,
 +                                                const base::Value* existing) {
 +  base::Value root = existing ? existing->Clone() : EmptyXmp();
-+  if (!IsElement(root)) {
-+    return std::nullopt;
-+  }
 +  Scope scope;
-+  base::DictValue* rdf = &root.GetDict();
-+  const QualifiedName root_name = ElementName(*rdf, scope);
-+  if (root_name.Is(kXmpMetaNamespace, "xmpmeta") ||
-+      root_name.Is(kXmpMetaNamespace, "xapmeta")) {
-+    rdf = FindChild(*rdf, kRdfNamespace, "RDF", scope);
-+  } else if (!root_name.Is(kRdfNamespace, "RDF")) {
-+    rdf = nullptr;
-+  }
++  base::DictValue* rdf = FindRdf(root, scope);
 +  if (!rdf) {
 +    return std::nullopt;
 +  }
@@ -1280,6 +1382,61 @@
 +  return out;
 +}
 +
++ImageXmpSummary SummarizeXmp(const base::Value& existing) {
++  ImageXmpSummary summary;
++  base::Value root = existing.Clone();
++  Scope scope;
++  base::DictValue* rdf = FindRdf(root, scope);
++  if (!rdf) {
++    return summary;
++  }
++  struct Field {
++    std::string_view ns;
++    std::string_view local;
++    std::string ImageXmpSummary::* text;
++  };
++  static constexpr Field kFields[] = {
++      {kDcNamespace, "title", &ImageXmpSummary::title},
++      {kDcNamespace, "creator", &ImageXmpSummary::creator},
++      {kDcNamespace, "rights", &ImageXmpSummary::rights},
++      {kPhotoshopNamespace, "Credit", &ImageXmpSummary::credit},
++      {kPhotoshopNamespace, "Source", &ImageXmpSummary::source},
++      {kDcNamespace, "description", &ImageXmpSummary::description},
++  };
++  for (base::Value& child : *rdf->EnsureList(kChildrenKey)) {
++    if (!IsElement(child)) {
++      continue;
++    }
++    base::DictValue& description = child.GetDict();
++    const size_t depth = scope.size();
++    if (ElementName(description, scope).Is(kRdfNamespace, "Description")) {
++      for (const Field& field : kFields) {
++        std::string& text = summary.*field.text;
++        if (!text.empty()) {
++          continue;
++        }
++        if (const base::DictValue* attributes =
++                description.FindDict(kAttributesKey)) {
++          for (const auto [name, value] : *attributes) {
++            if (value.is_string() &&
++                Resolve(name, scope, true).Is(field.ns, field.local)) {
++              text = value.GetString();
++            }
++          }
++        }
++        const size_t property_depth = scope.size();
++        if (base::DictValue* property =
++                FindChild(description, field.ns, field.local, scope)) {
++          text = PropertyText(*property, scope);
++        }
++        scope.resize(property_depth);
++      }
++    }
++    scope.resize(depth);
++  }
++  return summary;
++}
++
 +std::optional<std::string> EmbedXmp(std::string_view file,
 +                                    XmpContainer container,
 +                                    std::string_view xmp) {
@@ -1299,7 +1456,7 @@
 +}  // namespace image_editor
 --- /dev/null
 +++ b/chrome/browser/image_editor/image_context_metadata.h
-@@ -0,0 +1,69 @@
+@@ -0,0 +1,83 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -1360,6 +1517,20 @@
 +std::optional<std::string> AddImageContextToXmp(const ImageContext& context,
 +                                                const base::Value* existing);
 +
++// The fields of an image's own XMP that photo apps show, as text.
++struct ImageXmpSummary {
++  std::string title;
++  // The creators, joined.
++  std::string creator;
++  std::string rights;
++  std::string credit;
++  std::string source;
++  std::string description;
++};
++
++// Summarizes `existing`, an XMP packet as parsed by data_decoder's XmlParser.
++ImageXmpSummary SummarizeXmp(const base::Value& existing);
++
 +// Returns `file` with its XMP packet replaced by `xmp`, or with `xmp` added
 +// when it has none. Returns nullopt when the file can't hold it.
 +std::optional<std::string> EmbedXmp(std::string_view file,
@@ -1371,7 +1542,7 @@
 +#endif  // CHROME_BROWSER_IMAGE_EDITOR_IMAGE_CONTEXT_METADATA_H_
 --- /dev/null
 +++ b/chrome/browser/image_editor/image_context_metadata_unittest.cc
-@@ -0,0 +1,512 @@
+@@ -0,0 +1,556 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -1600,6 +1771,50 @@
 +  EXPECT_EQ(xmp->find("Saved from example.com"), std::string::npos);
 +  EXPECT_EQ(xmp->find("<photoshop:Source>"), std::string::npos);
 +  EXPECT_NE(xmp->find("<dc:source>"), std::string::npos);
++}
++
++TEST(ImageContextMetadataTest, SummarizesTheImagesOwnFields) {
++  const base::Value existing = ParsedXmp(R"({
++    "type": "element", "tag": "x:xmpmeta",
++    "namespaces": {"x": "adobe:ns:meta/"},
++    "children": [{
++      "type": "element", "tag": "rdf:RDF",
++      "namespaces": {"rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#"},
++      "children": [{
++        "type": "element", "tag": "rdf:Description",
++        "namespaces": {
++          "dc": "http://purl.org/dc/elements/1.1/",
++          "ps": "http://ns.adobe.com/photoshop/1.0/"
++        },
++        "attributes": {"ps:Credit": "Agency"},
++        "children": [
++          {"type": "element", "tag": "dc:title", "children": [
++            {"type": "element", "tag": "rdf:Alt", "children": [
++              {"type": "element", "tag": "rdf:li",
++               "attributes": {"xml:lang": "nb"},
++               "children": [{"type": "text", "text": "Havn"}]},
++              {"type": "element", "tag": "rdf:li",
++               "attributes": {"xml:lang": "x-default"},
++               "children": [{"type": "text", "text": "Harbour"}]}]}]},
++          {"type": "element", "tag": "dc:creator", "children": [
++            {"type": "element", "tag": "rdf:Seq", "children": [
++              {"type": "element", "tag": "rdf:li",
++               "children": [{"type": "text", "text": "A"}]},
++              {"type": "element", "tag": "rdf:li",
++               "children": [{"type": "text", "text": "B"}]}]}]},
++          {"type": "element", "tag": "ps:Source",
++           "children": [{"type": "text", "text": "NTB"}]}
++        ]
++      }]
++    }]
++  })");
++  const ImageXmpSummary summary = SummarizeXmp(existing);
++  EXPECT_EQ("Harbour", summary.title);
++  EXPECT_EQ("A, B", summary.creator);
++  EXPECT_EQ("Agency", summary.credit);
++  EXPECT_EQ("NTB", summary.source);
++  EXPECT_EQ("", summary.rights);
++  EXPECT_EQ("", summary.description);
 +}
 +
 +TEST(ImageContextMetadataTest, RejectsOtherXml) {
@@ -1885,8 +2100,454 @@
 +}  // namespace
 +}  // namespace image_editor
 --- /dev/null
++++ b/chrome/browser/ui/views/sharing_hub/screenshot/image_context_bubble.cc
+@@ -0,0 +1,413 @@
++// Copyright 2026 The Helium Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#include "chrome/browser/ui/views/sharing_hub/screenshot/image_context_bubble.h"
++
++#include <memory>
++#include <optional>
++#include <string>
++#include <utility>
++
++#include "base/functional/bind.h"
++#include "base/memory/raw_ptr.h"
++#include "base/memory/weak_ptr.h"
++#include "base/strings/utf_string_conversions.h"
++#include "chrome/browser/download/download_prefs.h"
++#include "chrome/browser/image_editor/image_context_metadata.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/sharing_hub/sharing_hub_features.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
++#include "chrome/browser/ui/browser_window/public/global_browser_collection.h"
++#include "chrome/browser/ui/select_file_policy/chrome_select_file_policy.h"
++#include "chrome/browser/ui/views/download/bubble/helium_download_overlay.h"
++#include "chrome/browser/ui/views/frame/browser_view.h"
++#include "chrome/browser/ui/views/frame/toolbar_button_provider.h"
++#include "chrome/browser/ui/views/location_bar/location_bar_bubble_delegate_view.h"
++#include "chrome/browser/ui/views/sharing_hub/screenshot/image_context_save.h"
++#include "chrome/browser/ui/views/sharing_hub/screenshot/screenshot_documentation.h"
++#include "chrome/grit/generated_resources.h"
++#include "components/download/public/common/download_item.h"
++#include "components/prefs/pref_service.h"
++#include "content/public/browser/download_manager.h"
++#include "content/public/browser/web_contents.h"
++#include "ui/base/l10n/l10n_util.h"
++#include "ui/base/metadata/metadata_header_macros.h"
++#include "ui/base/metadata/metadata_impl_macros.h"
++#include "ui/base/mojom/dialog_button.mojom.h"
++#include "ui/shell_dialogs/select_file_dialog.h"
++#include "ui/shell_dialogs/selected_file_info.h"
++#include "ui/views/accessibility/view_accessibility.h"
++#include "ui/views/controls/button/checkbox.h"
++#include "ui/views/controls/button/md_text_button.h"
++#include "ui/views/controls/label.h"
++#include "ui/views/controls/textarea/textarea.h"
++#include "ui/views/controls/textfield/textfield.h"
++#include "ui/views/layout/box_layout.h"
++#include "ui/views/style/typography.h"
++
++namespace sharing_hub {
++namespace {
++
++using Location = SavedImageContext::Location;
++
++constexpr int kContentWidth = 420;
++
++class ImageContextBubble : public LocationBarBubbleDelegateView,
++                           public ui::SelectFileDialog::Listener {
++  METADATA_HEADER(ImageContextBubble, LocationBarBubbleDelegateView)
++
++ public:
++  ImageContextBubble(views::BubbleAnchor anchor,
++                     content::WebContents* web_contents,
++                     scoped_refptr<SavedImageContext> image)
++      : LocationBarBubbleDelegateView(anchor, nullptr),
++        image_(std::move(image)),
++        web_contents_(web_contents->GetWeakPtr()) {
++    SetTitle(IDS_HELIUM_IMAGE_CONTEXT_TITLE);
++    SetButtons(static_cast<int>(ui::mojom::DialogButton::kOk) |
++               static_cast<int>(ui::mojom::DialogButton::kCancel));
++    SetButtonLabel(ui::mojom::DialogButton::kOk,
++                   l10n_util::GetStringUTF16(IDS_HELIUM_IMAGE_CONTEXT_UPDATE));
++    SetAcceptCallbackWithClose(base::BindRepeating(&ImageContextBubble::Update,
++                                                   base::Unretained(this)));
++    set_close_on_deactivate(false);
++    set_fixed_width(kContentWidth + 40);
++  }
++
++  ImageContextBubble(const ImageContextBubble&) = delete;
++  ImageContextBubble& operator=(const ImageContextBubble&) = delete;
++
++  ~ImageContextBubble() override {
++    if (folder_dialog_) {
++      folder_dialog_->ListenerDestroyed();
++    }
++  }
++
++  // Shows the bubble over the top right of the anchor, the browser window in
++  // frameless mode, instead of below a toolbar button that would reveal the
++  // toolbar.
++  void set_overlay(bool overlay) { overlay_ = overlay; }
++
++ private:
++  // LocationBarBubbleDelegateView:
++  gfx::Rect GetBubbleBounds() override {
++    gfx::Rect bounds = LocationBarBubbleDelegateView::GetBubbleBounds();
++    views::View* anchor = GetAnchorView();
++    if (!overlay_ || !anchor) {
++      return bounds;
++    }
++    constexpr int kOverlayInset = 16;
++    const gfx::Rect anchor_bounds = anchor->GetBoundsInScreen();
++    bounds.set_x(anchor_bounds.right() - bounds.width() - kOverlayInset);
++    bounds.set_y(anchor_bounds.y() + kOverlayInset);
++    return bounds;
++  }
++
++  bool ShouldShowCloseButton() const override { return true; }
++
++  void Init() override {
++    set_margins(gfx::Insets(20));
++    SetLayoutManager(
++        std::make_unique<views::BoxLayout>(
++            views::BoxLayout::Orientation::kVertical, gfx::Insets(), 8))
++        ->set_cross_axis_alignment(
++            views::BoxLayout::CrossAxisAlignment::kStart);
++    const image_editor::ImageMetadataInfo& info = image_->info;
++    const image_editor::ImageXmpSummary own =
++        image_->own_xmp ? image_editor::SummarizeXmp(*image_->own_xmp)
++                        : image_editor::ImageXmpSummary();
++
++    // The image's own metadata, which is never changed.
++    AddHeading(IDS_HELIUM_IMAGE_CONTEXT_OWN_SECTION);
++    bool has_own = false;
++    for (const auto& [message_id, value] :
++         {std::pair(IDS_HELIUM_IMAGE_CONTEXT_OWN_TITLE, own.title),
++          std::pair(IDS_HELIUM_IMAGE_CONTEXT_OWN_CREATOR, own.creator),
++          std::pair(IDS_HELIUM_IMAGE_CONTEXT_OWN_RIGHTS, own.rights),
++          std::pair(IDS_HELIUM_IMAGE_CONTEXT_OWN_CREDIT, own.credit),
++          std::pair(IDS_HELIUM_IMAGE_CONTEXT_OWN_SOURCE, own.source),
++          std::pair(IDS_HELIUM_IMAGE_CONTEXT_OWN_DESCRIPTION,
++                    own.description)}) {
++      if (!value.empty()) {
++        has_own = true;
++        AddText(
++            l10n_util::GetStringFUTF16(message_id, base::UTF8ToUTF16(value)),
++            4);
++      }
++    }
++    if (info.xmp && !image_->own_xmp) {
++      AddText(l10n_util::GetStringUTF16(IDS_HELIUM_IMAGE_CONTEXT_UNREADABLE));
++    } else if (!has_own) {
++      AddText(l10n_util::GetStringUTF16(IDS_HELIUM_IMAGE_CONTEXT_OWN_NONE));
++    }
++    if (info.has_content_credentials) {
++      AddText(l10n_util::GetStringUTF16(IDS_HELIUM_IMAGE_CONTEXT_SIGNED));
++    }
++
++    // The context, of which the summary fields can be edited when the image
++    // had none of its own.
++    AddHeading(IDS_HELIUM_IMAGE_CONTEXT_ADDED_SECTION);
++    const image_editor::ImageContext& context = image_->context;
++    AddText(l10n_util::GetStringFUTF16(IDS_HELIUM_IMAGE_CONTEXT_PAGE,
++                                       base::UTF8ToUTF16(context.page_url)),
++            2)
++        ->SetSelectable(true);
++    if (!context.image_url.empty()) {
++      AddText(l10n_util::GetStringFUTF16(IDS_HELIUM_IMAGE_CONTEXT_IMAGE,
++                                         base::UTF8ToUTF16(context.image_url)),
++              2)
++          ->SetSelectable(true);
++    }
++    if (const std::string saved = ScreenshotDisplayDate(context.saved_at);
++        !saved.empty()) {
++      AddText(l10n_util::GetStringFUTF16(IDS_HELIUM_IMAGE_CONTEXT_SAVED,
++                                         base::UTF8ToUTF16(saved)));
++    }
++    if (own.source.empty()) {
++      source_ = AddField(IDS_HELIUM_IMAGE_CONTEXT_SOURCE_FIELD,
++                         std::make_unique<views::Textfield>(), 32);
++      source_->SetText(base::UTF8ToUTF16(context.source));
++    }
++    if (own.description.empty()) {
++      description_ = AddField(IDS_HELIUM_IMAGE_CONTEXT_DESCRIPTION_FIELD,
++                              std::make_unique<views::Textarea>(), 120);
++      description_->SetText(base::UTF8ToUTF16(context.description));
++    }
++    if (!own.source.empty() || !own.description.empty()) {
++      AddText(l10n_util::GetStringUTF16(IDS_HELIUM_IMAGE_CONTEXT_KEPT));
++    }
++    switch (image_->location) {
++      case Location::kImage:
++        AddText(l10n_util::GetStringUTF16(IDS_HELIUM_IMAGE_CONTEXT_IN_IMAGE));
++        break;
++      case Location::kSidecar:
++        AddText(l10n_util::GetStringFUTF16(
++            IDS_HELIUM_IMAGE_CONTEXT_IN_SIDECAR,
++            image_->sidecar.BaseName().LossyDisplayName()));
++        break;
++      case Location::kNowhere:
++        AddText(l10n_util::GetStringUTF16(IDS_HELIUM_IMAGE_CONTEXT_NOWHERE));
++        break;
++    }
++
++    // Choices for this image, remembered for the next ones.
++    AddHeading(IDS_HELIUM_IMAGE_CONTEXT_OPTIONS_SECTION);
++    if (info.container == image_editor::XmpContainer::kNone) {
++      sidecar_ = AddCheckbox(IDS_HELIUM_IMAGE_CONTEXT_SIDECAR_OPTION,
++                             image_->sidecar_for_other_formats);
++    }
++    if (info.has_content_credentials) {
++      embed_in_signed_ = AddCheckbox(IDS_HELIUM_IMAGE_CONTEXT_EMBED_OPTION,
++                                     image_->embed_in_signed);
++    }
++    folder_label_ = AddText(std::u16string());
++    folder_label_->SetSelectable(true);
++    UpdateFolderLabel();
++    AddChildView(std::make_unique<views::MdTextButton>(
++        base::BindRepeating(&ImageContextBubble::ChooseFolder,
++                            base::Unretained(this)),
++        l10n_util::GetStringUTF16(IDS_HELIUM_IMAGE_CONTEXT_CHANGE_FOLDER)));
++    status_ = AddText(std::u16string());
++    status_->SetVisible(false);
++  }
++
++  // ui::SelectFileDialog::Listener:
++  void FileSelected(const ui::SelectedFileInfo& file, int index) override {
++    folder_dialog_ = nullptr;
++    if (PrefService* prefs = GetPrefs()) {
++      prefs->SetFilePath(kSavedImageDirectoryPref, file.path());
++    }
++    UpdateFolderLabel();
++    SizeToContents();
++  }
++
++  void FileSelectionCanceled() override { folder_dialog_ = nullptr; }
++
++  views::Label* AddText(const std::u16string& text, int max_lines = 0) {
++    auto* label = AddChildView(std::make_unique<views::Label>(text));
++    label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
++    label->SetMultiLine(true);
++    label->SetMaxLines(max_lines);
++    label->SetMaximumWidth(kContentWidth);
++    return label;
++  }
++
++  void AddHeading(int message_id) {
++    AddText(l10n_util::GetStringUTF16(message_id))
++        ->SetTextStyle(views::style::STYLE_EMPHASIZED);
++  }
++
++  views::Textfield* AddField(int message_id,
++                             std::unique_ptr<views::Textfield> field,
++                             int height) {
++    const std::u16string label = l10n_util::GetStringUTF16(message_id);
++    AddText(label);
++    field->GetViewAccessibility().SetName(label);
++    field->SetPreferredSize(gfx::Size(kContentWidth, height));
++    return AddChildView(std::move(field));
++  }
++
++  views::Checkbox* AddCheckbox(int message_id, bool checked) {
++    auto* checkbox = AddChildView(std::make_unique<views::Checkbox>(
++        l10n_util::GetStringUTF16(message_id)));
++    checkbox->SetMultiLine(true);
++    checkbox->SetMaxSize(gfx::Size(kContentWidth, 0));
++    checkbox->SetChecked(checked);
++    return checkbox;
++  }
++
++  PrefService* GetPrefs() {
++    return web_contents_
++               ? Profile::FromBrowserContext(web_contents_->GetBrowserContext())
++                     ->GetPrefs()
++               : nullptr;
++  }
++
++  void UpdateFolderLabel() {
++    PrefService* prefs = GetPrefs();
++    if (!prefs) {
++      return;
++    }
++    base::FilePath folder = prefs->GetFilePath(kSavedImageDirectoryPref);
++    if (folder.empty()) {
++      folder =
++          DownloadPrefs::FromBrowserContext(web_contents_->GetBrowserContext())
++              ->DownloadPath();
++    }
++    folder_label_->SetText(l10n_util::GetStringFUTF16(
++        IDS_HELIUM_IMAGE_CONTEXT_FOLDER, folder.LossyDisplayName()));
++  }
++
++  void ChooseFolder() {
++    PrefService* prefs = GetPrefs();
++    if (!prefs || folder_dialog_) {
++      return;
++    }
++    folder_dialog_ = ui::SelectFileDialog::Create(
++        this, std::make_unique<ChromeSelectFilePolicy>(web_contents_.get()));
++    folder_dialog_->SelectFile(
++        ui::SelectFileDialog::SELECT_FOLDER,
++        l10n_util::GetStringUTF16(IDS_HELIUM_IMAGE_CONTEXT_CHANGE_FOLDER),
++        prefs->GetFilePath(kSavedImageDirectoryPref), nullptr, 0,
++        base::FilePath::StringType(), web_contents_->GetTopLevelNativeWindow());
++  }
++
++  // Stores the edited context, closing the bubble once it's done.
++  bool Update() {
++    if (!image_->ready) {
++      return false;
++    }
++    if (source_) {
++      image_->context.source = base::UTF16ToUTF8(source_->GetText());
++    }
++    if (description_) {
++      image_->context.description = base::UTF16ToUTF8(description_->GetText());
++    }
++    PrefService* prefs = GetPrefs();
++    if (sidecar_) {
++      image_->sidecar_for_other_formats = sidecar_->GetChecked();
++      if (prefs) {
++        prefs->SetBoolean(kSavedImageSidecarPref, sidecar_->GetChecked());
++      }
++    }
++    if (embed_in_signed_) {
++      image_->embed_in_signed = embed_in_signed_->GetChecked();
++      if (prefs) {
++        prefs->SetBoolean(kSavedImageEmbedInSignedPref,
++                          embed_in_signed_->GetChecked());
++      }
++    }
++    SetButtonEnabled(ui::mojom::DialogButton::kOk, false);
++    status_->SetVisible(false);
++    UpdateSavedImage(image_, base::BindOnce(&ImageContextBubble::Updated,
++                                            weak_factory_.GetWeakPtr()));
++    return false;
++  }
++
++  void Updated(bool success) {
++    if (!success) {
++      SetButtonEnabled(ui::mojom::DialogButton::kOk, true);
++      status_->SetText(
++          l10n_util::GetStringUTF16(IDS_HELIUM_IMAGE_CONTEXT_UPDATE_FAILED));
++      status_->SetVisible(true);
++      SizeToContents();
++      return;
++    }
++    // Offer the updated file again, from the overlay it first showed in.
++    if (download::DownloadItem* item = GetDownload()) {
++      if (BrowserWindowInterface* browser =
++              GlobalBrowserCollection::GetInstance()->FindBrowserWithTab(
++                  web_contents_.get())) {
++        if (BrowserView* browser_view =
++                BrowserView::GetBrowserViewForBrowser(browser)) {
++          HeliumDownloadOverlay::Show(browser_view, item);
++        }
++      }
++    }
++    GetWidget()->Close();
++  }
++
++  download::DownloadItem* GetDownload() {
++    if (!web_contents_) {
++      return nullptr;
++    }
++    download::DownloadItem* item =
++        web_contents_->GetBrowserContext()
++            ->GetDownloadManager()
++            ->GetDownloadByGuid(image_->download_guid);
++    return item && item->GetState() == download::DownloadItem::COMPLETE &&
++                   !item->GetFileExternallyRemoved()
++               ? item
++               : nullptr;
++  }
++
++  const scoped_refptr<SavedImageContext> image_;
++  const base::WeakPtr<content::WebContents> web_contents_;
++  bool overlay_ = false;
++  raw_ptr<views::Textfield> source_ = nullptr;
++  raw_ptr<views::Textfield> description_ = nullptr;
++  raw_ptr<views::Checkbox> sidecar_ = nullptr;
++  raw_ptr<views::Checkbox> embed_in_signed_ = nullptr;
++  raw_ptr<views::Label> folder_label_ = nullptr;
++  raw_ptr<views::Label> status_ = nullptr;
++  scoped_refptr<ui::SelectFileDialog> folder_dialog_;
++  base::WeakPtrFactory<ImageContextBubble> weak_factory_{this};
++};
++
++BEGIN_METADATA(ImageContextBubble)
++END_METADATA
++
++}  // namespace
++
++void ShowImageContextBubble(base::WeakPtr<content::WebContents> web_contents,
++                            scoped_refptr<SavedImageContext> image) {
++  if (!web_contents || !image->ready) {
++    return;
++  }
++  BrowserWindowInterface* browser =
++      GlobalBrowserCollection::GetInstance()->FindBrowserWithTab(
++          web_contents.get());
++  BrowserView* browser_view =
++      browser ? BrowserView::GetBrowserViewForBrowser(browser) : nullptr;
++  if (!browser_view) {
++    return;
++  }
++  // In frameless mode, a bubble anchored in the toolbar would reveal it.
++  const bool overlay = browser_view->IsZenModeEnabledForLayout();
++  views::BubbleAnchor anchor =
++      overlay
++          ? views::BubbleAnchor(browser_view)
++          : ToolbarButtonProvider::From(browser)->GetBubbleAnchor(std::nullopt);
++  auto bubble = std::make_unique<ImageContextBubble>(anchor, web_contents.get(),
++                                                     std::move(image));
++  auto* bubble_ptr = bubble.get();
++  if (overlay) {
++    bubble->set_overlay(true);
++    bubble->SetArrow(views::BubbleBorder::FLOAT);
++  }
++  views::BubbleDialogDelegateView::CreateBubble(std::move(bubble));
++  bubble_ptr->ShowForReason(LocationBarBubbleDelegateView::USER_GESTURE);
++}
++
++}  // namespace sharing_hub
+--- /dev/null
++++ b/chrome/browser/ui/views/sharing_hub/screenshot/image_context_bubble.h
+@@ -0,0 +1,27 @@
++// Copyright 2026 The Helium Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_VIEWS_SHARING_HUB_SCREENSHOT_IMAGE_CONTEXT_BUBBLE_H_
++#define CHROME_BROWSER_UI_VIEWS_SHARING_HUB_SCREENSHOT_IMAGE_CONTEXT_BUBBLE_H_
++
++#include "base/memory/scoped_refptr.h"
++#include "base/memory/weak_ptr.h"
++
++namespace content {
++class WebContents;
++}  // namespace content
++
++namespace sharing_hub {
++
++struct SavedImageContext;
++
++// Shows the metadata of an image saved with its context: the image's own,
++// read only, then the context Helium added, which can be edited, and where it
++// is stored. Does nothing while the image is being processed.
++void ShowImageContextBubble(base::WeakPtr<content::WebContents> web_contents,
++                            scoped_refptr<SavedImageContext> image);
++
++}  // namespace sharing_hub
++
++#endif  // CHROME_BROWSER_UI_VIEWS_SHARING_HUB_SCREENSHOT_IMAGE_CONTEXT_BUBBLE_H_
+--- /dev/null
 +++ b/chrome/browser/ui/views/sharing_hub/screenshot/image_context_save.cc
-@@ -0,0 +1,362 @@
+@@ -0,0 +1,422 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -1903,18 +2564,21 @@
 +#include "base/i18n/time_formatting.h"
 +#include "base/memory/raw_ptr.h"
 +#include "base/memory/weak_ptr.h"
++#include "base/notreached.h"
 +#include "base/strings/utf_string_conversions.h"
 +#include "base/task/thread_pool.h"
 +#include "base/time/time.h"
 +#include "base/uuid.h"
 +#include "base/values.h"
++#include "chrome/app/vector_icons/vector_icons.h"
 +#include "chrome/browser/download/download_prefs.h"
 +#include "chrome/browser/download/download_target_determiner.h"
 +#include "chrome/browser/image_editor/image_context_metadata.h"
 +#include "chrome/browser/profiles/profile.h"
 +#include "chrome/browser/sharing_hub/sharing_hub_features.h"
 +#include "chrome/browser/ui/simple_message_box.h"
-+#include "chrome/browser/ui/views/sharing_hub/screenshot/screenshot_documentation.h"
++#include "chrome/browser/ui/views/download/bubble/helium_download_overlay.h"
++#include "chrome/browser/ui/views/sharing_hub/screenshot/image_context_bubble.h"
 +#include "chrome/grit/generated_resources.h"
 +#include "components/download/public/common/download_item.h"
 +#include "components/download/public/common/download_url_parameters.h"
@@ -1932,27 +2596,9 @@
 +using image_editor::ImageContext;
 +using image_editor::ImageMetadataInfo;
 +using image_editor::XmpContainer;
++using Location = SavedImageContext::Location;
 +
 +constexpr size_t kMaxImageSize = 256 * 1024 * 1024;
-+
-+struct Options {
-+  // Whether images that can't hold metadata get a sidecar file.
-+  bool sidecar_for_other_formats = false;
-+  // Whether to add the context to images with Content Credentials.
-+  bool embed_in_signed = false;
-+  // The language of the description, as for screenshots.
-+  ScreenshotTextLanguage language = ScreenshotTextLanguage::kEnglish;
-+  // The platform or host the image was saved from, if any.
-+  std::string site;
-+};
-+
-+enum class Outcome { kEmbedded, kSidecar, kNoMetadata, kFailed };
-+
-+struct SavedImage {
-+  bool read = false;
-+  std::string file;
-+  ImageMetadataInfo info;
-+};
 +
 +// Leaves out user names and passwords.
 +std::string AddressForRecord(const GURL& url) {
@@ -1966,15 +2612,16 @@
 +}
 +
 +// A readable summary first, then the record, as screenshots have.
-+std::string Describe(const ImageContext& context, const Options& options) {
-+  const bool norwegian = options.language == ScreenshotTextLanguage::kNorwegian;
++std::string Describe(const SavedImageContext& image) {
++  const ImageContext& context = image.context;
++  const bool norwegian = image.language == ScreenshotTextLanguage::kNorwegian;
 +  std::string description;
 +  const std::string saved = ScreenshotDisplayDate(context.saved_at);
 +  if (!saved.empty()) {
 +    description += (norwegian ? "Lagret: " : "Saved: ") + saved + "\n";
 +  }
-+  if (!options.site.empty()) {
-+    description += options.site + "\n";
++  if (!image.site.empty()) {
++    description += image.site + "\n";
 +  }
 +  if (!description.empty()) {
 +    description += "\n";
@@ -1991,146 +2638,189 @@
 +  return description;
 +}
 +
-+SavedImage ReadImage(const base::FilePath& path) {
-+  SavedImage image;
-+  image.read =
-+      base::ReadFileToStringWithMaxSize(path, &image.file, kMaxImageSize);
++struct DownloadedImage {
++  bool read = false;
++  ImageMetadataInfo info;
++};
++
++DownloadedImage InspectDownloadedImage(const base::FilePath& path) {
++  DownloadedImage image;
++  std::string file;
++  image.read = base::ReadFileToStringWithMaxSize(path, &file, kMaxImageSize);
 +  if (image.read) {
-+    image.info = image_editor::InspectImageMetadata(image.file);
++    image.info = image_editor::InspectImageMetadata(file);
 +  }
 +  return image;
 +}
 +
-+// Writes `xmp` to an XMP file next to `image`, named as photo apps look for it,
-+// without replacing another file.
-+Outcome WriteSidecar(const base::FilePath& image, const std::string& xmp) {
-+  base::FilePath sidecar = image.ReplaceExtension(FILE_PATH_LITERAL("xmp"));
-+  if (base::PathExists(sidecar)) {
-+    sidecar = image.AddExtension(FILE_PATH_LITERAL("xmp"));
-+  }
-+  if (base::PathExists(sidecar)) {
-+    return Outcome::kFailed;
-+  }
-+  return base::WriteFile(sidecar, xmp) ? Outcome::kSidecar : Outcome::kFailed;
-+}
++// What UpdateSavedImage() does away from the UI thread.
++struct StoreTask {
++  base::FilePath path;
++  XmpContainer container = XmpContainer::kNone;
++  Location target = Location::kNowhere;
++  Location location = Location::kNowhere;
++  base::FilePath sidecar;
++  std::string original_file;
++  bool keep_original = false;
++  std::string image_xmp;
++  std::string sidecar_xmp;
++};
 +
-+Outcome EmbedInImage(const base::FilePath& path,
-+                     const std::string& file,
-+                     XmpContainer container,
-+                     const std::string& xmp) {
-+  const std::optional<std::string> embedded =
-+      image_editor::EmbedXmp(file, container, xmp);
-+  if (!embedded) {
-+    return WriteSidecar(path, xmp);
-+  }
-+  // Rewrite the file in place, which keeps its extended attributes, such as
-+  // the addresses macOS shows under "Where from".
-+  return base::WriteFile(path, *embedded) ? Outcome::kEmbedded
-+                                          : Outcome::kFailed;
-+}
++struct StoreResult {
++  bool success = false;
++  Location location = Location::kNowhere;
++  base::FilePath sidecar;
++  std::string original_file;
++};
 +
-+void ShowOutcome(base::WeakPtr<content::WebContents> web_contents,
-+                 Outcome outcome) {
-+  if (outcome == Outcome::kEmbedded || outcome == Outcome::kSidecar ||
-+      !web_contents) {
-+    return;
-+  }
-+  chrome::ShowWarningMessageBoxAsync(
-+      web_contents->GetTopLevelNativeWindow(),
-+      l10n_util::GetStringUTF16(IDS_HELIUM_SAVE_IMAGE_WITH_CONTEXT),
-+      l10n_util::GetStringUTF16(
-+          outcome == Outcome::kNoMetadata
-+              ? IDS_HELIUM_SAVE_IMAGE_WITH_CONTEXT_UNSUPPORTED
-+              : IDS_HELIUM_SAVE_IMAGE_WITH_CONTEXT_FAILED));
-+}
-+
-+void RunAndShowOutcome(base::WeakPtr<content::WebContents> web_contents,
-+                       base::OnceCallback<Outcome()> task) {
-+  base::ThreadPool::PostTaskAndReplyWithResult(
-+      FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
-+      std::move(task), base::BindOnce(&ShowOutcome, std::move(web_contents)));
-+}
-+
-+void WriteContextSidecar(base::WeakPtr<content::WebContents> web_contents,
-+                         const base::FilePath& path,
-+                         const ImageContext& context) {
-+  // The sidecar holds only the context; the image keeps its own metadata.
-+  RunAndShowOutcome(
-+      std::move(web_contents),
-+      base::BindOnce(&WriteSidecar, path,
-+                     *image_editor::AddImageContextToXmp(context, nullptr)));
-+}
-+
-+void ExistingXmpParsed(base::WeakPtr<content::WebContents> web_contents,
-+                       const base::FilePath& path,
-+                       const ImageContext& context,
-+                       std::string file,
-+                       XmpContainer container,
-+                       data_decoder::DataDecoder::ValueOrError existing) {
-+  const std::optional<std::string> xmp =
-+      existing.has_value()
-+          ? image_editor::AddImageContextToXmp(context, &existing.value())
-+          : std::nullopt;
-+  if (!xmp) {
-+    // The image's metadata can't be read, so leave the file as it is.
-+    WriteContextSidecar(std::move(web_contents), path, context);
-+    return;
-+  }
-+  RunAndShowOutcome(
-+      std::move(web_contents),
-+      base::BindOnce(&EmbedInImage, path, std::move(file), container, *xmp));
-+}
-+
-+void ImageRead(base::WeakPtr<content::WebContents> web_contents,
-+               const base::FilePath& path,
-+               const ImageContext& context,
-+               Options options,
-+               SavedImage image) {
-+  if (!image.read) {
-+    ShowOutcome(std::move(web_contents), Outcome::kFailed);
-+    return;
-+  }
-+  const ImageMetadataInfo& info = image.info;
-+  if (info.container == XmpContainer::kNone) {
-+    if (options.sidecar_for_other_formats) {
-+      WriteContextSidecar(std::move(web_contents), path, context);
-+    } else {
-+      ShowOutcome(std::move(web_contents), Outcome::kNoMetadata);
++// A free name for an XMP file next to `image`, as photo apps look for it.
++base::FilePath FreeSidecarPath(const base::FilePath& image) {
++  for (const base::FilePath& sidecar :
++       {image.ReplaceExtension(FILE_PATH_LITERAL("xmp")),
++        image.AddExtension(FILE_PATH_LITERAL("xmp"))}) {
++    if (!base::PathExists(sidecar)) {
++      return sidecar;
 +    }
++  }
++  return base::FilePath();
++}
++
++StoreResult Store(StoreTask task) {
++  StoreResult result = {.location = task.location,
++                        .sidecar = task.sidecar,
++                        .original_file = std::move(task.original_file)};
++  const auto write_sidecar = [&] {
++    const base::FilePath sidecar =
++        result.sidecar.empty() ? FreeSidecarPath(task.path) : result.sidecar;
++    if (sidecar.empty() || !base::WriteFile(sidecar, task.sidecar_xmp)) {
++      return false;
++    }
++    result.sidecar = sidecar;
++    result.location = Location::kSidecar;
++    return true;
++  };
++  const auto remove_sidecar = [&] {
++    if (!result.sidecar.empty() && base::DeleteFile(result.sidecar)) {
++      result.sidecar.clear();
++    }
++  };
++
++  switch (task.target) {
++    case Location::kImage: {
++      std::string file;
++      if (!base::ReadFileToStringWithMaxSize(task.path, &file, kMaxImageSize)) {
++        return result;
++      }
++      if (task.keep_original && task.location != Location::kImage) {
++        result.original_file = file;
++      }
++      const std::optional<std::string> embedded =
++          image_editor::EmbedXmp(file, task.container, task.image_xmp);
++      if (!embedded) {
++        // Too much metadata for the format.
++        result.success = write_sidecar();
++        return result;
++      }
++      // Rewrite the file in place, which keeps its extended attributes, such
++      // as the addresses macOS shows under "Where from".
++      if (!base::WriteFile(task.path, *embedded)) {
++        return result;
++      }
++      remove_sidecar();
++      result.location = Location::kImage;
++      result.success = true;
++      return result;
++    }
++    case Location::kSidecar:
++      if (task.location == Location::kImage) {
++        // Only images with Content Credentials move out of the file. Put it
++        // back as it was downloaded.
++        if (result.original_file.empty() ||
++            !base::WriteFile(task.path, result.original_file)) {
++          return result;
++        }
++        result.original_file.clear();
++        result.location = Location::kNowhere;
++      }
++      result.success = write_sidecar();
++      return result;
++    case Location::kNowhere:
++      remove_sidecar();
++      result.location = Location::kNowhere;
++      result.success = result.sidecar.empty();
++      return result;
++  }
++  NOTREACHED();
++}
++
++void Stored(scoped_refptr<SavedImageContext> image,
++            base::OnceCallback<void(bool)> done,
++            StoreResult result) {
++  image->location = result.location;
++  image->sidecar = std::move(result.sidecar);
++  image->original_file = std::move(result.original_file);
++  image->ready = true;
++  std::move(done).Run(result.success);
++}
++
++void ShowMessage(base::WeakPtr<content::WebContents> web_contents,
++                 int message_id) {
++  if (web_contents) {
++    chrome::ShowWarningMessageBoxAsync(
++        web_contents->GetTopLevelNativeWindow(),
++        l10n_util::GetStringUTF16(IDS_HELIUM_SAVE_IMAGE_WITH_CONTEXT),
++        l10n_util::GetStringUTF16(message_id));
++  }
++}
++
++void FirstStored(base::WeakPtr<content::WebContents> web_contents,
++                 scoped_refptr<SavedImageContext> image,
++                 bool success) {
++  if (!success) {
++    ShowMessage(web_contents, IDS_HELIUM_SAVE_IMAGE_WITH_CONTEXT_FAILED);
++  } else if (image->location == Location::kNowhere) {
++    ShowMessage(web_contents, IDS_HELIUM_SAVE_IMAGE_WITH_CONTEXT_UNSUPPORTED);
++  }
++}
++
++void OwnXmpParsed(base::WeakPtr<content::WebContents> web_contents,
++                  scoped_refptr<SavedImageContext> image,
++                  data_decoder::DataDecoder::ValueOrError own_xmp) {
++  // XMP that can't be parsed is left alone, with the context in a sidecar.
++  if (own_xmp.has_value() &&
++      image_editor::AddImageContextToXmp(image->context, &own_xmp.value())) {
++    image->own_xmp = std::move(own_xmp.value());
++  }
++  UpdateSavedImage(image, base::BindOnce(&FirstStored, web_contents, image));
++}
++
++void Downloaded(base::WeakPtr<content::WebContents> web_contents,
++                scoped_refptr<SavedImageContext> image,
++                DownloadedImage downloaded) {
++  if (!downloaded.read) {
++    ShowMessage(web_contents, IDS_HELIUM_SAVE_IMAGE_WITH_CONTEXT_FAILED);
 +    return;
 +  }
-+  // Keep Content Credentials intact unless asked not to, and leave files that
-+  // can't be rewritten safely alone.
-+  if (info.unsupported ||
-+      (info.has_content_credentials && !options.embed_in_signed)) {
-+    WriteContextSidecar(std::move(web_contents), path, context);
-+    return;
-+  }
-+  if (!info.xmp) {
-+    RunAndShowOutcome(
-+        std::move(web_contents),
-+        base::BindOnce(&EmbedInImage, path, std::move(image.file),
-+                       info.container,
-+                       *image_editor::AddImageContextToXmp(context, nullptr)));
++  image->info = std::move(downloaded.info);
++  if (!image->info.xmp) {
++    UpdateSavedImage(image, base::BindOnce(&FirstStored, web_contents, image));
 +    return;
 +  }
 +  // The XMP comes from the web, so it's parsed in a sandboxed process.
 +  data_decoder::DataDecoder::ParseXmlIsolated(
-+      *info.xmp,
++      *image->info.xmp,
 +      data_decoder::mojom::XmlParser::WhitespaceBehavior::kPreserveSignificant,
-+      base::BindOnce(&ExistingXmpParsed, std::move(web_contents), path, context,
-+                     std::move(image.file), info.container));
++      base::BindOnce(&OwnXmpParsed, web_contents, image));
 +}
 +
-+// Adds the context once the image is downloaded, then deletes itself.
++// Stores the context once the image is downloaded, then deletes itself.
 +class SavedImageWatcher : public download::DownloadItem::Observer {
 + public:
 +  static void Watch(download::DownloadItem* item,
 +                    base::WeakPtr<content::WebContents> web_contents,
-+                    ImageContext context,
-+                    Options options) {
-+    auto* watcher = new SavedImageWatcher(item, std::move(web_contents),
-+                                          std::move(context), options);
++                    scoped_refptr<SavedImageContext> image) {
++    auto* watcher =
++        new SavedImageWatcher(item, std::move(web_contents), std::move(image));
 +    watcher->OnDownloadUpdated(item);
 +  }
 +
@@ -2143,13 +2833,13 @@
 +      case download::DownloadItem::IN_PROGRESS:
 +        return;
 +      case download::DownloadItem::COMPLETE:
-+        context_.saved_at = base::TimeFormatAsIso8601(base::Time::Now());
-+        context_.description = Describe(context_, options_);
++        image_->path = item->GetTargetFilePath();
++        image_->context.saved_at = base::TimeFormatAsIso8601(base::Time::Now());
++        image_->context.description = Describe(*image_);
 +        base::ThreadPool::PostTaskAndReplyWithResult(
 +            FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
-+            base::BindOnce(&ReadImage, item->GetTargetFilePath()),
-+            base::BindOnce(&ImageRead, web_contents_, item->GetTargetFilePath(),
-+                           std::move(context_), options_));
++            base::BindOnce(&InspectDownloadedImage, image_->path),
++            base::BindOnce(&Downloaded, web_contents_, image_));
 +        break;
 +      default:
 +        // The download UI reports failed and cancelled downloads.
@@ -2163,12 +2853,10 @@
 + private:
 +  SavedImageWatcher(download::DownloadItem* item,
 +                    base::WeakPtr<content::WebContents> web_contents,
-+                    ImageContext context,
-+                    Options options)
++                    scoped_refptr<SavedImageContext> image)
 +      : item_(item),
 +        web_contents_(std::move(web_contents)),
-+        context_(std::move(context)),
-+        options_(options) {
++        image_(std::move(image)) {
 +    item_->AddObserver(this);
 +  }
 +  ~SavedImageWatcher() override = default;
@@ -2180,25 +2868,27 @@
 +
 +  const raw_ptr<download::DownloadItem> item_;
 +  const base::WeakPtr<content::WebContents> web_contents_;
-+  ImageContext context_;
-+  const Options options_;
++  const scoped_refptr<SavedImageContext> image_;
 +};
 +
 +void DownloadStarted(base::WeakPtr<content::WebContents> web_contents,
-+                     ImageContext context,
-+                     Options options,
-+                     const std::string& guid,
++                     scoped_refptr<SavedImageContext> image,
 +                     download::DownloadItem* item,
 +                     download::DownloadInterruptReason reason) {
 +  if (!item || reason != download::DOWNLOAD_INTERRUPT_REASON_NONE) {
-+    helium::ClearDownloadTargetPath(guid);
++    helium::ClearDownloadTargetPath(image->download_guid);
 +    return;
 +  }
-+  SavedImageWatcher::Watch(item, std::move(web_contents), std::move(context),
-+                           options);
++  HeliumDownloadOverlay::SetExtraAction(
++      item, kEditIcon, l10n_util::GetStringUTF16(IDS_NEO_CAPTURE_EDIT_METADATA),
++      base::BindRepeating(&ShowImageContextBubble, web_contents, image));
++  SavedImageWatcher::Watch(item, std::move(web_contents), std::move(image));
 +}
 +
 +}  // namespace
++
++SavedImageContext::SavedImageContext() = default;
++SavedImageContext::~SavedImageContext() = default;
 +
 +void SaveImageWithContext(
 +    content::WebContents* web_contents,
@@ -2211,8 +2901,10 @@
 +    directory = DownloadPrefs::FromBrowserContext(profile)->DownloadPath();
 +  }
 +
-+  ImageContext context;
-+  context.page_url = AddressForRecord(web_contents->GetLastCommittedURL());
++  auto image = base::MakeRefCounted<SavedImageContext>();
++  ImageContext& context = image->context;
++  const GURL& page_url = web_contents->GetLastCommittedURL();
++  context.page_url = AddressForRecord(page_url);
 +  context.page_title = base::UTF16ToUTF8(web_contents->GetTitle());
 +  if (params->url().SchemeIsHTTPOrHTTPS()) {
 +    context.image_url = AddressForRecord(params->url());
@@ -2221,37 +2913,66 @@
 +      "Helium Neo / Chromium " + std::string(version_info::GetVersionNumber());
 +
 +  // Name the site as screenshots do, as "Facebook" or "tv2.no".
-+  const GURL& page_url = web_contents->GetLastCommittedURL();
-+  std::string site = ScreenshotPlatformName(page_url);
-+  if (site.empty() && page_url.SchemeIsHTTPOrHTTPS()) {
-+    site = page_url.host();
-+    if (site.starts_with("www.")) {
-+      site.erase(0, 4);
++  image->site = ScreenshotPlatformName(page_url);
++  if (image->site.empty() && page_url.SchemeIsHTTPOrHTTPS()) {
++    image->site = page_url.host();
++    if (image->site.starts_with("www.")) {
++      image->site.erase(0, 4);
 +    }
 +  }
-+  context.source =
-+      site.empty() ? context.page_url : site + " / " + context.page_url;
-+  const Options options = {
-+      .sidecar_for_other_formats = prefs->GetBoolean(kSavedImageSidecarPref),
-+      .embed_in_signed = prefs->GetBoolean(kSavedImageEmbedInSignedPref),
-+      .language =
-+          static_cast<ScreenshotTextLanguage>(GetScreenshotTextLanguage(prefs)),
-+      .site = std::move(site)};
++  context.source = image->site.empty() ? context.page_url
++                                       : image->site + " / " + context.page_url;
++  image->language =
++      static_cast<ScreenshotTextLanguage>(GetScreenshotTextLanguage(prefs));
++  image->sidecar_for_other_formats = prefs->GetBoolean(kSavedImageSidecarPref);
++  image->embed_in_signed = prefs->GetBoolean(kSavedImageEmbedInSignedPref);
 +
-+  const std::string guid = base::Uuid::GenerateRandomV4().AsLowercaseString();
-+  helium::SetDownloadTargetDirectory(guid, directory);
-+  params->set_guid(guid);
++  image->download_guid = base::Uuid::GenerateRandomV4().AsLowercaseString();
++  helium::SetDownloadTargetDirectory(image->download_guid, directory);
++  params->set_guid(image->download_guid);
 +  params->set_prompt(false);
-+  params->set_callback(base::BindOnce(&DownloadStarted,
-+                                      web_contents->GetWeakPtr(),
-+                                      std::move(context), options, guid));
++  params->set_callback(base::BindOnce(
++      &DownloadStarted, web_contents->GetWeakPtr(), std::move(image)));
 +  profile->GetDownloadManager()->DownloadUrl(std::move(params));
++}
++
++void UpdateSavedImage(scoped_refptr<SavedImageContext> image,
++                      base::OnceCallback<void(bool)> done) {
++  const ImageMetadataInfo& info = image->info;
++  StoreTask task = {.path = image->path,
++                    .container = info.container,
++                    .location = image->location,
++                    .sidecar = image->sidecar,
++                    .original_file = image->original_file,
++                    .keep_original = info.has_content_credentials};
++  if (info.container == XmpContainer::kNone) {
++    task.target = image->sidecar_for_other_formats ? Location::kSidecar
++                                                   : Location::kNowhere;
++  } else if (info.unsupported || (info.xmp && !image->own_xmp) ||
++             (info.has_content_credentials && !image->embed_in_signed)) {
++    // Leave files that can't be rewritten safely alone, and keep Content
++    // Credentials intact unless asked not to.
++    task.target = Location::kSidecar;
++  } else {
++    task.target = Location::kImage;
++    task.image_xmp = *image_editor::AddImageContextToXmp(
++        image->context, image->own_xmp ? &*image->own_xmp : nullptr);
++  }
++  // The sidecar holds only the context; the image keeps its own metadata.
++  task.sidecar_xmp =
++      *image_editor::AddImageContextToXmp(image->context, nullptr);
++
++  image->ready = false;
++  base::ThreadPool::PostTaskAndReplyWithResult(
++      FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
++      base::BindOnce(&Store, std::move(task)),
++      base::BindOnce(&Stored, std::move(image), std::move(done)));
 +}
 +
 +}  // namespace sharing_hub
 --- /dev/null
 +++ b/chrome/browser/ui/views/sharing_hub/screenshot/image_context_save.h
-@@ -0,0 +1,31 @@
+@@ -0,0 +1,83 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -2260,6 +2981,15 @@
 +#define CHROME_BROWSER_UI_VIEWS_SHARING_HUB_SCREENSHOT_IMAGE_CONTEXT_SAVE_H_
 +
 +#include <memory>
++#include <optional>
++#include <string>
++
++#include "base/files/file_path.h"
++#include "base/functional/callback_forward.h"
++#include "base/memory/ref_counted.h"
++#include "base/values.h"
++#include "chrome/browser/image_editor/image_context_metadata.h"
++#include "chrome/browser/ui/views/sharing_hub/screenshot/screenshot_documentation.h"
 +
 +namespace content {
 +class WebContents;
@@ -2271,14 +3001,57 @@
 +
 +namespace sharing_hub {
 +
++// An image saved with its context, which the metadata panel edits.
++struct SavedImageContext : public base::RefCounted<SavedImageContext> {
++  enum class Location { kNowhere, kImage, kSidecar };
++
++  SavedImageContext();
++  SavedImageContext(const SavedImageContext&) = delete;
++  SavedImageContext& operator=(const SavedImageContext&) = delete;
++
++  base::FilePath path;
++  std::string download_guid;
++  image_editor::ImageContext context;
++  image_editor::ImageMetadataInfo info;
++  // The image's own XMP, parsed, if it has XMP that could be read.
++  std::optional<base::Value> own_xmp;
++  // The platform or host the image was saved from, if any.
++  std::string site;
++  ScreenshotTextLanguage language = ScreenshotTextLanguage::kEnglish;
++  // Whether images that can't hold metadata get a sidecar file.
++  bool sidecar_for_other_formats = false;
++  // Whether to add the context to images with Content Credentials.
++  bool embed_in_signed = false;
++
++  // Where the context is stored.
++  Location location = Location::kNowhere;
++  // The sidecar file Helium wrote, if any.
++  base::FilePath sidecar;
++  // The file as downloaded, kept while the context is in an image with
++  // Content Credentials, so that they can be restored.
++  std::string original_file;
++  // Whether the image has been processed and isn't being updated.
++  bool ready = false;
++
++ private:
++  friend class base::RefCounted<SavedImageContext>;
++  ~SavedImageContext();
++};
++
 +// Downloads the image `params` points to into the folder for saved images,
 +// without asking where, then records the page it was saved from and its own
 +// address in its XMP metadata. The image's own metadata is kept. Images whose
 +// format can't hold metadata, or whose Content Credentials it would break, get
-+// it in an XMP sidecar file instead, as the preferences say.
++// it in an XMP sidecar file instead, as the preferences say. The download
++// overlay then offers to edit it.
 +void SaveImageWithContext(
 +    content::WebContents* web_contents,
 +    std::unique_ptr<download::DownloadUrlParameters> params);
++
++// Stores the context of `image` where its options say, replacing what was
++// stored before, then runs `done` with whether that succeeded.
++void UpdateSavedImage(scoped_refptr<SavedImageContext> image,
++                      base::OnceCallback<void(bool)> done);
 +
 +}  // namespace sharing_hub
 +
