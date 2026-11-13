@@ -1,0 +1,132 @@
+--- a/chrome/app/generated_resources.grd
++++ b/chrome/app/generated_resources.grd
+@@ -288,6 +288,7 @@
+       <message name="IDS_HELIUM_CREATE_FOUR_PANE_SPLIT" desc="Tab context menu action creating a grid with this tab and three new tabs.">Create Four-Way Split</message>
+       <message name="IDS_HELIUM_EXPAND_FOUR_PANE_SPLIT" desc="Tab context menu action adding new tabs to fill an existing split to four panes.">Expand to Four-Way Split</message>
+       <message name="IDS_HELIUM_TAB_VIEW" desc="Tab menu submenu for individual tab preview and refresh settings.">Tab view</message>
++      <message name="IDS_HELIUM_REMOVE_FROM_SPLIT" desc="Tab context menu action taking this tab out of its split view without closing it; the other panes fill its space.">Remove from Split</message>
+       <message name="IDS_HELIUM_SAVE_SPLIT_LAYOUT" desc="Split Layout submenu item that saves the arrangement of the split's panes under a name, to apply to other splits.">Save Current Layout…</message>
+       <message name="IDS_HELIUM_REMOVE_SPLIT_LAYOUT" desc="Split Layout submenu listing saved layouts to delete.">Remove Saved Layout</message>
+       <message name="IDS_HELIUM_SAVE_SPLIT_LAYOUT_TITLE" desc="Title of the dialog naming a split layout to save.">Save Split Layout</message>
+--- a/chrome/browser/ui/tabs/tab_menu_model.cc
++++ b/chrome/browser/ui/tabs/tab_menu_model.cc
+@@ -635,6 +635,8 @@ void TabMenuModel::Build(int index) {
+                                            : kSplitSceneOldIcon,
+                                        ui::kColorMenuIcon, kTabMenuIconSize));
+     SetElementIdentifierAt(GetItemCount() - 1, kArrangeSplitTabsMenuItem);
++    AddItemWithStringId(TabStripModel::CommandRemoveFromSplit,
++                        IDS_HELIUM_REMOVE_FROM_SPLIT);
+   }
+ 
+   pane_layout_submenu_ = std::make_unique<PaneLayoutMenuModel>(
+--- a/chrome/browser/ui/tabs/tab_strip_model.cc
++++ b/chrome/browser/ui/tabs/tab_strip_model.cc
+@@ -2863,6 +2863,9 @@ bool TabStripModel::IsContextMenuCommandEnabled(
+               GetGroupsDestroyedFromRemovingIndices({context_index}).empty());
+     }
+ 
++    case CommandRemoveFromSplit:
++      return GetTabAtIndex(context_index)->IsSplit();
++
+     case CommandAddToSplit:
+     case CommandSwapWithActiveSplit:
+     case CommandArrangeSplit:
+@@ -3028,6 +3031,24 @@ void TabStripModel::ExecuteContextMenuCommand(int context_index,
+                                    selection_model_.size());
+       base::RecordAction(UserMetricsAction("TabContextMenu_CloseTab"));
+ 
++      // A tab of a split stands for the whole split in commands, but closing
++      // it closes only its pane, unless other tabs are selected too.
++      const std::optional<split_tabs::SplitTabId> split =
++          GetSplitForTab(context_index);
++      if (split && std::ranges::is_permutation(
++                       GetTabsForCommand(context_index),
++                       GetSplitData(*split)->ListTabs())) {
++        ExecuteCloseTabsCommand(
++            base::BindRepeating(
++                [](tabs::TabHandle tab) {
++                  return tab.Get()
++                             ? std::vector<tabs::TabInterface*>{tab.Get()}
++                             : std::vector<tabs::TabInterface*>();
++                },
++                GetTabAtIndex(context_index)->GetHandle()),
++            /*delete_groups=*/true);
++        break;
++      }
+       ExecuteCloseTabsCommand(
+           base::BindRepeating(&TabStripModel::GetTabsForCommand,
+                               base::Unretained(this), context_index),
+@@ -3220,6 +3241,11 @@ void TabStripModel::ExecuteContextMenuCommand(int context_index,
+       break;
+     }
+ 
++    case CommandRemoveFromSplit: {
++      RemoveTabFromSplit(context_index);
++      break;
++    }
++
+     case CommandAddToActiveSplit: {
+       if (!IsContextMenuCommandEnabled(context_index, command_id)) {
+         break;
+@@ -3615,6 +3641,37 @@ bool TabStripModel::InsertTabIntoSplit(split_tabs::SplitTabId split_id,
+   return SetSplitPanes(split_id, tabs, std::move(tree));
+ }
+ 
++void TabStripModel::RemoveTabFromSplit(int index) {
++  if (!ContainsIndex(index)) {
++    return;
++  }
++  tabs::TabInterface* const tab = GetTabAtIndex(index);
++  const std::optional<split_tabs::SplitTabId> split = tab->GetSplit();
++  if (!split) {
++    return;
++  }
++  const split_tabs::SplitTabData* data = GetSplitData(*split);
++  std::vector<tabs::TabInterface*> panes = data->ListTabs();
++  const size_t pane = index - data->GetIndexRange().start();
++  const int last_index = data->GetIndexRange().end() - 1;
++  split_tabs::SplitLayoutTree tree =
++      data->visual_data()->GetTree(panes.size());
++  const bool was_active = index == active_index();
++
++  RemoveSplit(*split);
++  MoveWebContentsAt(GetIndexOfTab(tab), last_index,
++                    /*select_after_move=*/false);
++  panes.erase(panes.begin() + pane);
++  if (panes.size() >= 2) {
++    tree.RemovePane(pane);
++    SetSplitPanes(*split, panes, std::move(tree));
++  }
++  // Keep showing the rest of the split.
++  if (was_active) {
++    ActivateTabAt(GetIndexOfTab(panes[std::min(pane, panes.size() - 1)]));
++  }
++}
++
+ void TabStripModel::CreateOrUpdatePaneSplit(
+     int context_index,
+     size_t pane_count,
+--- a/chrome/browser/ui/tabs/tab_strip_model.h
++++ b/chrome/browser/ui/tabs/tab_strip_model.h
+@@ -753,6 +753,11 @@ class TabStripModel {
+                           std::optional<size_t> pane,
+                           split_tabs::SplitEdge edge);
+ 
++  // Takes the tab at `index` out of its split and places it after the split.
++  // The neighbouring panes fill its space, and the split ends if one pane is
++  // left.
++  void RemoveTabFromSplit(int index);
++
+   TabGroupModel* group_model() const { return group_model_.get(); }
+ 
+   bool SupportsTabGroups() const { return group_model_.get() != nullptr; }
+--- a/components/tabs/public/tab_context_menu_command.h
++++ b/components/tabs/public/tab_context_menu_command.h
+@@ -44,6 +44,7 @@ enum TabContextMenuCommand {
+   CommandToggleTabMuted,
+   CommandCreateFourPaneSplit,
+   CommandAddToActiveSplit,
++  CommandRemoveFromSplit,
+ };
+ // LINT.ThenChange(//tools/metrics/histograms/metadata/tab/histograms.xml:TabContextMenuCommand)
+ 
