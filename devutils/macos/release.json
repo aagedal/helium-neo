@@ -1,7 +1,7 @@
 {
-  "version": "0.21.2.2",
-  "build": "20261112.1",
-  "tag": "v0.21.2.2-neo",
+  "version": "0.21.3.1",
+  "build": "20261113.1",
+  "tag": "v0.21.3.1-neo",
   "architecture": "arm64",
   "minimum_macos": "13.0.0",
   "sparkle_public_key": "z3Cw9w6Pym6DR6ObaYyDO/Mpj4NC/ulrSKIssfC57LE=",
