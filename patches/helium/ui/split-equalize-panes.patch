@@ -1,0 +1,270 @@
+--- a/chrome/app/generated_resources.grd
++++ b/chrome/app/generated_resources.grd
+@@ -288,6 +288,7 @@
+       <message name="IDS_HELIUM_CREATE_FOUR_PANE_SPLIT" desc="Tab context menu action creating a grid with this tab and three new tabs.">Create Four-Way Split</message>
+       <message name="IDS_HELIUM_EXPAND_FOUR_PANE_SPLIT" desc="Tab context menu action adding new tabs to fill an existing split to four panes.">Expand to Four-Way Split</message>
+       <message name="IDS_HELIUM_TAB_VIEW" desc="Tab menu submenu for individual tab preview and refresh settings.">Tab view</message>
++      <message name="IDS_HELIUM_EQUALIZE_SPLIT_PANES" desc="Split view menu item giving the panes even sizes: panes in the same row get the same width and panes in the same column the same height.">Make All Panes the Same Size</message>
+       <message name="IDS_HELIUM_REMOVE_FROM_SPLIT" desc="Tab context menu action taking this tab out of its split view without closing it; the other panes fill its space.">Remove from Split</message>
+       <message name="IDS_HELIUM_SAVE_SPLIT_LAYOUT" desc="Split Layout submenu item that saves the arrangement of the split's panes under a name, to apply to other splits.">Save Current Layout…</message>
+       <message name="IDS_HELIUM_REMOVE_SPLIT_LAYOUT" desc="Split Layout submenu listing saved layouts to delete.">Remove Saved Layout</message>
+--- a/chrome/browser/ui/tabs/split_tab_menu_model.cc
++++ b/chrome/browser/ui/tabs/split_tab_menu_model.cc
+@@ -79,6 +79,8 @@ std::string_view GetMetricsSuffixForCommand(
+       return "ExitSplit";
+     case SplitTabMenuModel::CommandId::kToggleOrientation:
+       return "ToggleOrientation";
++    case SplitTabMenuModel::CommandId::kEqualizePanes:
++      return "EqualizePanes";
+   }
+ }
+ 
+@@ -151,6 +153,8 @@ SplitTabMenuModel::SplitTabMenuModel(TabStripModel* tab_strip_model,
+   }
+ 
+   AddItem(GetCommandIdInt(CommandId::kReversePosition), std::u16string());
++  AddItemWithStringId(GetCommandIdInt(CommandId::kEqualizePanes),
++                      IDS_HELIUM_EQUALIZE_SPLIT_PANES);
+ 
+   SetElementIdentifierAt(
+       GetIndexOfCommandId(GetCommandIdInt(CommandId::kReversePosition)).value(),
+@@ -179,6 +183,9 @@ bool SplitTabMenuModel::IsCommandIdEnabled(int command_id) const {
+     return false;
+   }
+   const auto id = GetCommandIdEnum(command_id);
++  if (id == CommandId::kEqualizePanes) {
++    return !PanesAreEqual();
++  }
+   if (tab_strip_model_->GetSplitData(GetSplitTabId())->ListTabs().size() > 2) {
+     return id != CommandId::kReversePosition && id != CommandId::kCloseStartTab &&
+            id != CommandId::kCloseEndTab;
+@@ -291,6 +298,13 @@ void SplitTabMenuModel::ExecuteCommand(int command_id, int event_flags) {
+     case CommandId::kExitSplit:
+       tab_strip_model_->RemoveSplit(split_id);
+       break;
++    case CommandId::kEqualizePanes: {
++      split_tabs::SplitLayoutTree tree =
++          split_tab_data->visual_data()->GetTree(tabs_in_split.size());
++      tree.EqualizeAll();
++      tab_strip_model_->UpdateSplitLayoutTree(split_id, tree);
++      break;
++    }
+     case CommandId::kToggleOrientation: {
+       split_tabs::SplitTabLayout new_layout =
+           GetSplitLayout() == split_tabs::SplitTabLayout::kSideBySide
+@@ -324,6 +338,16 @@ void SplitTabMenuModel::ExecuteCommand(int command_id, int event_flags) {
+           .c_str()));
+ }
+ 
++bool SplitTabMenuModel::PanesAreEqual() const {
++  const split_tabs::SplitTabData* data =
++      tab_strip_model_->GetSplitData(GetSplitTabId());
++  const split_tabs::SplitLayoutTree tree =
++      data->visual_data()->GetTree(data->ListTabs().size());
++  split_tabs::SplitLayoutTree equal = tree;
++  equal.EqualizeAll();
++  return equal == tree;
++}
++
+ split_tabs::SplitTabId SplitTabMenuModel::GetSplitTabId() const {
+   return GetTargetTab()->GetSplit().value();
+ }
+--- a/chrome/browser/ui/tabs/split_tab_menu_model.h
++++ b/chrome/browser/ui/tabs/split_tab_menu_model.h
+@@ -59,7 +59,8 @@ class SplitTabMenuModel : public ui::SimpleMenuModel,
+     kCloseEndTab,
+     kExitSplit,
+     kToggleOrientation = 6,
+-    kMaxValue = kToggleOrientation,
++    kEqualizePanes = 7,
++    kMaxValue = kEqualizePanes,
+   };
+   // LINT.ThenChange(//tools/metrics/histograms/metadata/tab/enums.xml:SplitViewMenuEntry)
+ 
+@@ -91,6 +92,8 @@ class SplitTabMenuModel : public ui::SimpleMenuModel,
+   const gfx::VectorIcon& GetReversePositionIcon(
+       split_tabs::SplitTabActiveLocation active_split_tab_location) const;
+   split_tabs::SplitTabLayout GetSplitLayout() const;
++  // Whether the panes already have the sizes kEqualizePanes gives them.
++  bool PanesAreEqual() const;
+   void CloseWebContents(content::WebContents* contents);
+ 
+   raw_ptr<TabStripModel> tab_strip_model_ = nullptr;
+--- a/chrome/browser/ui/views/frame/multi_contents_resize_area.cc
++++ b/chrome/browser/ui/views/frame/multi_contents_resize_area.cc
+@@ -109,9 +109,12 @@ MultiContentsResizeArea::~MultiContentsResizeArea() {
+ }
+ 
+ void MultiContentsResizeArea::OnResize(int resize_amount, bool done_resizing) {
+-  multi_contents_view_->OnDividerResize(
+-      pane_boundary_ ? *pane_boundary_ + 1 : 0, resize_amount, done_resizing,
+-      scale_sides_);
++  multi_contents_view_->OnDividerResize(GetDividerIndex(), resize_amount,
++                                        done_resizing, scale_sides_);
++}
++
++size_t MultiContentsResizeArea::GetDividerIndex() const {
++  return pane_boundary_ ? *pane_boundary_ + 1 : 0;
+ }
+ 
+ bool MultiContentsResizeArea::OnMousePressed(const ui::MouseEvent& event) {
+@@ -148,10 +151,11 @@ void MultiContentsResizeArea::SetLayout(split_tabs::SplitTabLayout layout) {
+ 
+ void MultiContentsResizeArea::OnGestureEvent(ui::GestureEvent* event) {
+   // If the gesture event was a double tap and was not part of a resizing event,
+-  // swap the contents views.
++  // give the panes on both sides the same size.
+   if (!is_resizing() && event->type() == ui::EventType::kGestureTap &&
+       event->details().tap_count() == 2) {
+-    multi_contents_view_->OnSwap();
++    multi_contents_view_->EqualizeDivider(GetDividerIndex(),
++                                          /*whole_container=*/false);
+   }
+   ResizeArea::OnGestureEvent(event);
+ }
+@@ -159,10 +163,12 @@ void MultiContentsResizeArea::OnGestureEvent(ui::GestureEvent* event) {
+ void MultiContentsResizeArea::OnMouseReleased(const ui::MouseEvent& event) {
+   scale_sides_ = event.IsAltDown();
+   // If the mouse event was a left double click and was not part of a resizing
+-  // event, swap the contents views.
++  // event, give the panes on both sides the same size, or with Option every
++  // pane in the divider's row or column.
+   if (!is_resizing() && event.IsOnlyLeftMouseButton() &&
+       event.GetClickCount() == 2) {
+-    multi_contents_view_->OnSwap();
++    multi_contents_view_->EqualizeDivider(GetDividerIndex(),
++                                          event.IsAltDown());
+   }
+   ResizeArea::OnMouseReleased(event);
+ }
+--- a/chrome/browser/ui/views/frame/multi_contents_resize_area.h
++++ b/chrome/browser/ui/views/frame/multi_contents_resize_area.h
+@@ -101,6 +101,8 @@ class MultiContentsResizeArea : public views::ResizeArea,
+       ui::mojom::MenuSourceType source_type) override;
+ 
+  private:
++  // Index of this divider in MultiContentsView::GetDividers().
++  size_t GetDividerIndex() const;
+   void CancelMenu();
+ 
+   // Sets the layout manager orientation and preferred size according to the
+--- a/chrome/browser/ui/views/frame/multi_contents_view.cc
++++ b/chrome/browser/ui/views/frame/multi_contents_view.cc
+@@ -523,6 +523,24 @@ double MultiContentsView::GetPaneResizeRatio(size_t divider) const {
+                                       dividers[divider].index);
+ }
+ 
++void MultiContentsView::EqualizeDivider(size_t divider, bool whole_container) {
++  if (!IsInSplitView()) {
++    return;
++  }
++  const std::vector<split_tabs::SplitDivider> dividers =
++      layout_tree_.Calculate({}, 0).dividers;
++  if (divider >= dividers.size()) {
++    return;
++  }
++  split_tabs::SplitLayoutTree tree = layout_tree_;
++  if (whole_container) {
++    tree.EqualizeContainer(dividers[divider].node);
++  } else {
++    tree.EqualizeDivider(dividers[divider].node, dividers[divider].index);
++  }
++  delegate_->ResizeSplitLayout(tree, /*done_resizing=*/true);
++}
++
+ void MultiContentsView::OnPaneResize(size_t boundary,
+                                     int resize_amount,
+                                     bool done_resizing) {
+--- a/chrome/browser/ui/views/frame/multi_contents_view.h
++++ b/chrome/browser/ui/views/frame/multi_contents_view.h
+@@ -183,6 +183,9 @@ class MultiContentsView
+                        bool scale_sides);
+   // Share of the first side of divider `divider`; 0 is the main handle.
+   double GetPaneResizeRatio(size_t divider) const;
++  // Gives the two panes beside divider `divider` equal sizes, or with
++  // `whole_container` every pane in its row or column.
++  void EqualizeDivider(size_t divider, bool whole_container);
+ 
+   // views::View:
+   void OnThemeChanged() override;
+--- a/components/split_tabs/split_layout_tree.cc
++++ b/components/split_tabs/split_layout_tree.cc
+@@ -109,6 +109,24 @@ Node* FindNode(Node& node, size_t& remaining) {
+   return nullptr;
+ }
+ 
++// Number of panes `node` places side by side along `axis`.
++size_t CountTracks(const SplitLayoutNode& node, SplitAxis axis) {
++  size_t tracks = node.is_pane() ? 1 : 0;
++  for (const auto& child : node.children) {
++    const size_t child_tracks = CountTracks(child, axis);
++    tracks = node.axis == axis ? tracks + child_tracks
++                               : std::max(tracks, child_tracks);
++  }
++  return tracks;
++}
++
++void EqualizeTracks(SplitLayoutNode& node) {
++  for (auto& child : node.children) {
++    child.weight = CountTracks(child, node.axis);
++    EqualizeTracks(child);
++  }
++}
++
+ void TransposeNode(SplitLayoutNode& node) {
+   if (node.is_pane()) {
+     return;
+@@ -482,6 +500,33 @@ void SplitLayoutTree::EqualizeSiblings(size_t pane) {
+   }
+ }
+ 
++void SplitLayoutTree::EqualizeDivider(size_t node, size_t index) {
++  size_t remaining = node;
++  SplitLayoutNode* container = FindNode(root_, remaining);
++  if (!container || index + 1 >= container->children.size()) {
++    return;
++  }
++  SplitLayoutNode& first = container->children[index];
++  SplitLayoutNode& second = container->children[index + 1];
++  first.weight = second.weight = (first.weight + second.weight) / 2;
++}
++
++void SplitLayoutTree::EqualizeContainer(size_t node) {
++  size_t remaining = node;
++  SplitLayoutNode* container = FindNode(root_, remaining);
++  if (!container) {
++    return;
++  }
++  for (auto& child : container->children) {
++    child.weight = 1;
++  }
++}
++
++void SplitLayoutTree::EqualizeAll() {
++  EqualizeTracks(root_);
++  Normalize();
++}
++
+ void SplitLayoutTree::RemovePane(size_t pane) {
+   if (pane >= pane_count() || root_.is_pane()) {
+     return;
+--- a/components/split_tabs/split_layout_tree.h
++++ b/components/split_tabs/split_layout_tree.h
+@@ -139,6 +139,17 @@ class SplitLayoutTree {
+   // Gives pane `pane` and its siblings equal sizes.
+   void EqualizeSiblings(size_t pane);
+ 
++  // Gives the two children beside divider `index` of container `node` equal
++  // sizes in the space they share.
++  void EqualizeDivider(size_t node, size_t index);
++  // Gives all children of container `node` equal sizes.
++  void EqualizeContainer(size_t node);
++  // Makes panes as even as the layout allows: every container shares its
++  // space in proportion to the number of panes each child places side by side
++  // along its axis, so panes in the same row get the same width and panes in
++  // the same column the same height.
++  void EqualizeAll();
++
+   // Removes pane `pane`, giving its space to its siblings.
+   void RemovePane(size_t pane);
+ 

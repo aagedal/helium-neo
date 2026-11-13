@@ -420,3 +420,6 @@ helium/ui/split-scale-sides.patch
 helium/ui/split-active-pane-outline.patch
 helium/ui/split-layout-templates.patch
 helium/ui/split-pane-close.patch
+helium/ui/split-equalize-panes.patch
+helium/ui/split-layout-presets.patch
+helium/ui/split-pane-edge-moves.patch
