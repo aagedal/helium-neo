@@ -1,0 +1,14 @@
+--- a/chrome/browser/ui/views/frame/multi_contents_view.cc
++++ b/chrome/browser/ui/views/frame/multi_contents_view.cc
+@@ -1175,6 +1175,11 @@ bool MultiContentsView::IsDragAndDropEnabled() const {
+     return true;
+   }
+ 
++  // Drops into a split land beside its panes, so they work whatever the
++  // active pane shows, including the page a new pane starts with.
++  if (IsInSplitView()) {
++    return true;
++  }
+   const auto* web_contents = active_contents_view->web_contents();
+   return !web_contents ||
+          web_contents->GetLastCommittedURL() ==
