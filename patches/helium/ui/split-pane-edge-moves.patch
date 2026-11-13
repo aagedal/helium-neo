@@ -1,0 +1,306 @@
+--- a/chrome/browser/ui/views/frame/split_pane_mover.cc
++++ b/chrome/browser/ui/views/frame/split_pane_mover.cc
+@@ -15,6 +15,7 @@
+ #include "chrome/app/vector_icons/vector_icons.h"
+ #include "chrome/browser/ui/tabs/tab_strip_model.h"
+ #include "chrome/browser/ui/views/frame/contents_container_view.h"
++#include "chrome/browser/ui/views/frame/multi_contents_resize_area.h"
+ #include "chrome/browser/ui/views/frame/multi_contents_view.h"
+ #include "components/split_tabs/split_tab_visual_data.h"
+ #include "components/tabs/public/split_tab_data.h"
+@@ -50,6 +51,9 @@ constexpr int kCornerRadius = 8;
+ // rather than placing the dragged one beside it.
+ constexpr float kSwapAreaStart = 0.3f;
+ constexpr float kSwapAreaEnd = 0.7f;
++// Width of the band along the border of the split where a pane is dropped
++// along that whole side.
++constexpr int kSplitEdgeZone = 24;
+ constexpr int kModifiers = ui::EF_SHIFT_DOWN | ui::EF_CONTROL_DOWN |
+                            ui::EF_ALT_DOWN | ui::EF_COMMAND_DOWN;
+ constexpr int kRevealModifiers = ui::EF_COMMAND_DOWN | ui::EF_SHIFT_DOWN;
+@@ -277,8 +281,44 @@ gfx::Rect SplitPaneMover::PaneBoundsInScreen(size_t pane) const {
+       ->GetBoundsInScreen();
+ }
+ 
++gfx::Rect SplitPaneMover::SplitBoundsInScreen() const {
++  const tabs::TabInterface* active = tab_strip_model_->GetActiveTab();
++  if (!active || !active->GetSplit()) {
++    return gfx::Rect();
++  }
++  const size_t count = std::min(
++      tab_strip_model_->GetSplitData(*active->GetSplit())->ListTabs().size(),
++      multi_contents_view_->contents_container_views().size());
++  gfx::Rect bounds;
++  for (size_t pane = 0; pane < count; ++pane) {
++    bounds.Union(PaneBoundsInScreen(pane));
++  }
++  return bounds;
++}
++
+ std::optional<SplitPaneMover::Target> SplitPaneMover::TargetAt(
+     const gfx::Point& point_in_screen) const {
++  const bool rtl = base::i18n::IsRTL();
++  // Close to the border of the split, the pane goes along that whole side,
++  // unless it is there already.
++  const gfx::Rect split = SplitBoundsInScreen();
++  if (handle_pane_ && split.Contains(point_in_screen)) {
++    const std::pair<int, split_tabs::SplitEdge> sides[] = {
++        {point_in_screen.x() - split.x(),
++         rtl ? split_tabs::SplitEdge::kRight : split_tabs::SplitEdge::kLeft},
++        {split.right() - 1 - point_in_screen.x(),
++         rtl ? split_tabs::SplitEdge::kLeft : split_tabs::SplitEdge::kRight},
++        {point_in_screen.y() - split.y(), split_tabs::SplitEdge::kTop},
++        {split.bottom() - 1 - point_in_screen.y(),
++         split_tabs::SplitEdge::kBottom},
++    };
++    const auto& nearest = std::ranges::min(
++        sides, {}, [](const auto& side) { return side.first; });
++    const Target target{.edge = nearest.second, .split_edge = true};
++    if (nearest.first < kSplitEdgeZone && Rearrange(*handle_pane_, target)) {
++      return target;
++    }
++  }
+   const std::optional<size_t> pane = PaneAt(point_in_screen);
+   if (!pane || pane == handle_pane_) {
+     return std::nullopt;
+@@ -297,7 +337,6 @@ std::optional<SplitPaneMover::Target> SplitPaneMover::TargetAt(
+   }
+   // The nearest edge. Like the panes, left and right follow the text
+   // direction.
+-  const bool rtl = base::i18n::IsRTL();
+   const std::pair<float, split_tabs::SplitEdge> edges[] = {
+       {x, rtl ? split_tabs::SplitEdge::kRight : split_tabs::SplitEdge::kLeft},
+       {1 - x, rtl ? split_tabs::SplitEdge::kLeft : split_tabs::SplitEdge::kRight},
+@@ -327,6 +366,28 @@ void SplitPaneMover::OnDragged(const gfx::Point& point_in_screen) {
+     HideIndicator();
+     return;
+   }
++  if (target_->split_edge) {
++    // Show where the pane ends up.
++    const std::optional<Rearrangement> result =
++        Rearrange(*handle_pane_, *target_);
++    const gfx::Rect split = SplitBoundsInScreen();
++    if (!result) {
++      HideIndicator();
++      return;
++    }
++    const split_tabs::SplitRect pane =
++        result->tree
++            .Calculate({split.x(), split.y(), split.width(), split.height()},
++                       MultiContentsResizeArea::kHandleResizeAxisSize +
++                           MultiContentsResizeArea::kHandleResizeAxisPadding)
++            .panes[result->moved];
++    gfx::Rect bounds(pane.x, pane.y, pane.width, pane.height);
++    if (base::i18n::IsRTL()) {
++      bounds.set_x(split.x() + split.right() - bounds.right());
++    }
++    ShowIndicator(bounds);
++    return;
++  }
+   gfx::Rect bounds = PaneBoundsInScreen(target_->pane);
+   if (target_->edge) {
+     const bool rtl = base::i18n::IsRTL();
+@@ -393,31 +454,74 @@ void SplitPaneMover::HideIndicator() {
+   }
+ }
+ 
+-void SplitPaneMover::Apply(size_t pane, const Target& target) {
++std::optional<SplitPaneMover::Rearrangement> SplitPaneMover::Rearrange(
++    size_t pane,
++    const Target& target) const {
+   const tabs::TabInterface* active = tab_strip_model_->GetActiveTab();
+   if (!active || !active->GetSplit()) {
+-    return;
++    return std::nullopt;
+   }
+-  const split_tabs::SplitTabId split = *active->GetSplit();
+-  const split_tabs::SplitTabData* data = tab_strip_model_->GetSplitData(split);
+-  std::vector<tabs::TabInterface*> tabs = data->ListTabs();
+-  if (pane >= tabs.size() || target.pane >= tabs.size() ||
+-      pane == target.pane) {
+-    return;
++  const split_tabs::SplitTabData* data =
++      tab_strip_model_->GetSplitData(*active->GetSplit());
++  const std::vector<tabs::TabInterface*> tabs = data->ListTabs();
++  if (pane >= tabs.size() ||
++      (!target.split_edge &&
++       (target.pane >= tabs.size() || target.pane == pane))) {
++    return std::nullopt;
+   }
+-  split_tabs::SplitLayoutTree tree = data->visual_data()->GetTree(tabs.size());
++  const split_tabs::SplitLayoutTree tree =
++      data->visual_data()->GetTree(tabs.size());
++  Rearrangement result{tabs, tree};
+   tabs::TabInterface* const moved = tabs[pane];
+-  if (!target.edge) {
++  if (target.split_edge) {
++    if (!target.edge) {
++      return std::nullopt;
++    }
++    // Keep the pane's width, or height, along the side it moves to.
++    const gfx::Rect bounds = PaneBoundsInScreen(pane);
++    const gfx::Rect split = SplitBoundsInScreen();
++    if (split.IsEmpty()) {
++      return std::nullopt;
++    }
++    const bool across_width = *target.edge == split_tabs::SplitEdge::kLeft ||
++                              *target.edge == split_tabs::SplitEdge::kRight;
++    const double share =
++        across_width
++            ? static_cast<double>(bounds.width()) / split.width()
++            : static_cast<double>(bounds.height()) / split.height();
++    result.tree.RemovePane(pane);
++    result.tabs.erase(result.tabs.begin() + pane);
++    const size_t position = result.tree.InsertPaneAtEdge(
++        *target.edge, std::clamp(share, 0.1, 0.9));
++    result.tabs.insert(result.tabs.begin() + position, moved);
++    // The pane already spans that side.
++    if (result.tabs == tabs && result.tree.HasSameShape(tree)) {
++      return std::nullopt;
++    }
++  } else if (!target.edge) {
+     // Swap places; the layout stays.
+-    std::swap(tabs[pane], tabs[target.pane]);
++    std::swap(result.tabs[pane], result.tabs[target.pane]);
+   } else {
+-    tree.RemovePane(pane);
+-    tabs.erase(tabs.begin() + pane);
++    result.tree.RemovePane(pane);
++    result.tabs.erase(result.tabs.begin() + pane);
+     const size_t beside = target.pane > pane ? target.pane - 1 : target.pane;
+-    const size_t position = tree.InsertPane(beside, *target.edge);
+-    tabs.insert(tabs.begin() + position, moved);
++    const size_t position = result.tree.InsertPane(beside, *target.edge);
++    result.tabs.insert(result.tabs.begin() + position, moved);
++  }
++  result.moved = std::ranges::find(result.tabs, moved) - result.tabs.begin();
++  return result;
++}
++
++void SplitPaneMover::Apply(size_t pane, const Target& target) {
++  std::optional<Rearrangement> result = Rearrange(pane, target);
++  if (!result) {
++    return;
+   }
+-  if (tab_strip_model_->SetSplitPanes(split, tabs, std::move(tree))) {
++  const split_tabs::SplitTabId split =
++      *tab_strip_model_->GetActiveTab()->GetSplit();
++  tabs::TabInterface* const moved = result->tabs[result->moved];
++  if (tab_strip_model_->SetSplitPanes(split, result->tabs,
++                                      std::move(result->tree))) {
+     tab_strip_model_->ActivateTabAt(tab_strip_model_->GetIndexOfTab(moved));
+   }
+ }
+--- a/chrome/browser/ui/views/frame/split_pane_mover.h
++++ b/chrome/browser/ui/views/frame/split_pane_mover.h
+@@ -7,6 +7,7 @@
+ 
+ #include <memory>
+ #include <optional>
++#include <vector>
+ 
+ #include "base/memory/raw_ptr.h"
+ #include "base/memory/weak_ptr.h"
+@@ -18,6 +19,10 @@
+ class MultiContentsView;
+ class TabStripModel;
+ 
++namespace tabs {
++class TabInterface;
++}
++
+ namespace views {
+ class EventMonitor;
+ class Widget;
+@@ -26,7 +31,8 @@ class Widget;
+ // Lets the user rearrange the panes of a split with the pointer. While Cmd+Shift
+ // is held, the pane under the pointer shows a handle in its top-left corner.
+ // Dragging the handle onto the edge of another pane moves the pane to that side
+-// of it; dropping it in the middle of a pane swaps the two.
++// of it; dropping it in the middle of a pane swaps the two. Dropping it close
++// to the border of the split moves it along that whole side.
+ class SplitPaneMover : public ui::EventObserver {
+  public:
+   SplitPaneMover(MultiContentsView* multi_contents_view,
+@@ -45,19 +51,30 @@ class SplitPaneMover : public ui::EventObserver {
+   class Handle;
+ 
+   // Where a dragged pane goes: beside `pane`, or in its place if `edge` is
+-  // nullopt.
++  // nullopt. With `split_edge`, it goes along `edge` of the whole split
++  // instead, and `pane` is unused.
+   struct Target {
+     size_t pane = 0;
+     std::optional<split_tabs::SplitEdge> edge;
++    bool split_edge = false;
+ 
+     friend bool operator==(const Target&, const Target&) = default;
+   };
+ 
++  // The panes of the split after a move, and the position of the moved one.
++  struct Rearrangement {
++    std::vector<tabs::TabInterface*> tabs;
++    split_tabs::SplitLayoutTree tree;
++    size_t moved = 0;
++  };
++
+   void StartMonitoring();
+   // Shows or hides the handle for the pane under the pointer.
+   void UpdateHandle(bool modifiers_down);
+   std::optional<size_t> PaneAt(const gfx::Point& point_in_screen) const;
+   gfx::Rect PaneBoundsInScreen(size_t pane) const;
++  // The area the panes share.
++  gfx::Rect SplitBoundsInScreen() const;
+   std::optional<Target> TargetAt(const gfx::Point& point_in_screen) const;
+ 
+   // Called by the handle.
+@@ -67,6 +84,10 @@ class SplitPaneMover : public ui::EventObserver {
+ 
+   void ShowIndicator(const gfx::Rect& bounds_in_screen);
+   void HideIndicator();
++  // The split after moving `pane` to `target`, or nullopt if that is not
++  // possible or changes nothing.
++  std::optional<Rearrangement> Rearrange(size_t pane,
++                                         const Target& target) const;
+   // Moves or swaps the dragged pane.
+   void Apply(size_t pane, const Target& target);
+ 
+--- a/components/split_tabs/split_layout_tree.cc
++++ b/components/split_tabs/split_layout_tree.cc
+@@ -447,7 +447,7 @@ size_t SplitLayoutTree::InsertPane(size_t pane, SplitEdge edge) {
+   return before ? pane : pane + 1;
+ }
+ 
+-size_t SplitLayoutTree::InsertPaneAtEdge(SplitEdge edge) {
++size_t SplitLayoutTree::InsertPaneAtEdge(SplitEdge edge, double share) {
+   const SplitAxis axis = edge == SplitEdge::kLeft || edge == SplitEdge::kRight
+                              ? SplitAxis::kRow
+                              : SplitAxis::kColumn;
+@@ -471,6 +471,12 @@ size_t SplitLayoutTree::InsertPaneAtEdge(SplitEdge edge) {
+     }
+     root_ = std::move(root);
+   }
++  if (share > 0 && share < 1) {
++    SplitLayoutNode& inserted =
++        before ? root_.children.front() : root_.children.back();
++    inserted.weight =
++        (TotalWeight(root_) - inserted.weight) * share / (1 - share);
++  }
+   Normalize();
+   return before ? 0 : count;
+ }
+--- a/components/split_tabs/split_layout_tree.h
++++ b/components/split_tabs/split_layout_tree.h
+@@ -128,9 +128,10 @@ class SplitLayoutTree {
+   size_t InsertPane(size_t pane, SplitEdge edge);
+ 
+   // Places a new pane along `edge` of the whole layout, and returns its index:
+-  // the first or the last. It gets an equal share of the outermost row or
++  // the first or the last. It gets `share` of the space along `edge`'s axis if
++  // that is between 0 and 1, or else an equal share of the outermost row or
+   // column, or, across it, the space of one pane.
+-  size_t InsertPaneAtEdge(SplitEdge edge);
++  size_t InsertPaneAtEdge(SplitEdge edge, double share = 0);
+ 
+   // The edge of pane `pane` on which InsertPane() adds a sibling in the pane's
+   // container, rather than nesting a new container.
