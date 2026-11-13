@@ -1,0 +1,213 @@
+--- a/chrome/app/chrome_command_ids.h
++++ b/chrome/app/chrome_command_ids.h
+@@ -300,6 +300,10 @@
+ #define IDC_HELIUM_SERVICES_OPEN 40700
+ #define IDC_HELIUM_ARCHIVE_PAGE 40701
+ #define IDC_HELIUM_NEW_SPLIT_PANE_ON_RIGHT 40702
++#define IDC_HELIUM_FOCUS_SPLIT_PANE_LEFT 40703
++#define IDC_HELIUM_FOCUS_SPLIT_PANE_RIGHT 40704
++#define IDC_HELIUM_FOCUS_SPLIT_PANE_UP 40705
++#define IDC_HELIUM_FOCUS_SPLIT_PANE_DOWN 40706
+ 
+ // Spell-check
+ #define IDC_SPELLCHECK_SUGGESTION_0     41000
+--- a/chrome/app/generated_resources.grd
++++ b/chrome/app/generated_resources.grd
+@@ -277,6 +277,10 @@
+       <message name="IDS_HELIUM_CREATE_FOUR_PANE_SPLIT" desc="Tab context menu action creating a grid with this tab and three new tabs.">Create Four-Way Split</message>
+       <message name="IDS_HELIUM_EXPAND_FOUR_PANE_SPLIT" desc="Tab context menu action adding new tabs to fill an existing split to four panes.">Expand to Four-Way Split</message>
+       <message name="IDS_HELIUM_TAB_VIEW" desc="Tab menu submenu for individual tab preview and refresh settings.">Tab view</message>
++      <message name="IDS_HELIUM_FOCUS_SPLIT_PANE_LEFT" desc="Keyboard shortcut command activating the split view pane to the left of the active one.">Go to Pane on the Left</message>
++      <message name="IDS_HELIUM_FOCUS_SPLIT_PANE_RIGHT" desc="Keyboard shortcut command activating the split view pane to the right of the active one.">Go to Pane on the Right</message>
++      <message name="IDS_HELIUM_FOCUS_SPLIT_PANE_UP" desc="Keyboard shortcut command activating the split view pane above the active one.">Go to Pane Above</message>
++      <message name="IDS_HELIUM_FOCUS_SPLIT_PANE_DOWN" desc="Keyboard shortcut command activating the split view pane below the active one.">Go to Pane Below</message>
+       <message name="IDS_HELIUM_NEW_SPLIT_PANE_ON_RIGHT" desc="Command adding a new tab as a pane along the whole right side of the split view, or starting a split view with it.">Add Pane on the Right</message>
+       <message name="IDS_HELIUM_EQUALIZE_SPLIT_PANES" desc="Split view menu item giving the panes even sizes: panes in the same row get the same width and panes in the same column the same height.">Make All Panes the Same Size</message>
+       <message name="IDS_HELIUM_REMOVE_FROM_SPLIT" desc="Tab context menu action taking this tab out of its split view without closing it; the other panes fill its space.">Remove from Split</message>
+--- a/chrome/browser/global_keyboard_shortcuts_mac.mm
++++ b/chrome/browser/global_keyboard_shortcuts_mac.mm
+@@ -154,6 +154,10 @@ const std::vector<KeyboardShortcutData>& GetShortcutsNotPresentInMainMenu() {
+       {true,  false, false, true,  kVK_ANSI_C,            IDC_DEV_TOOLS_INSPECT},
+       {true,  false, false, true,  kVK_DownArrow,         IDC_FOCUS_NEXT_PANE},
+       {true,  false, false, true,  kVK_UpArrow,           IDC_FOCUS_PREVIOUS_PANE},
++      {true,  false, true,  false, kVK_LeftArrow,         IDC_HELIUM_FOCUS_SPLIT_PANE_LEFT},
++      {true,  false, true,  false, kVK_RightArrow,        IDC_HELIUM_FOCUS_SPLIT_PANE_RIGHT},
++      {true,  false, true,  false, kVK_UpArrow,           IDC_HELIUM_FOCUS_SPLIT_PANE_UP},
++      {true,  false, true,  false, kVK_DownArrow,         IDC_HELIUM_FOCUS_SPLIT_PANE_DOWN},
+       {true,  true,  false, true,  kVK_ANSI_A,            IDC_FOCUS_INACTIVE_POPUP_FOR_ACCESSIBILITY},
+       {true,  false, false, true,  kVK_ANSI_R,            IDC_SHOW_READING_MODE_KEYBOARD},
+     });
+--- a/chrome/browser/ui/browser_command_controller.cc
++++ b/chrome/browser/ui/browser_command_controller.cc
+@@ -907,6 +907,18 @@ void BrowserCommandController::HandleCommandWithDisposition(
+                   split_tabs::SplitTabCreatedSource::kKeyboardShortcut,
+                   /*along_split_end=*/true);
+       break;
++    case IDC_HELIUM_FOCUS_SPLIT_PANE_LEFT:
++      FocusSplitPane(browser_, split_tabs::SplitEdge::kLeft);
++      break;
++    case IDC_HELIUM_FOCUS_SPLIT_PANE_RIGHT:
++      FocusSplitPane(browser_, split_tabs::SplitEdge::kRight);
++      break;
++    case IDC_HELIUM_FOCUS_SPLIT_PANE_UP:
++      FocusSplitPane(browser_, split_tabs::SplitEdge::kTop);
++      break;
++    case IDC_HELIUM_FOCUS_SPLIT_PANE_DOWN:
++      FocusSplitPane(browser_, split_tabs::SplitEdge::kBottom);
++      break;
+     case IDC_NAME_WINDOW:
+       PromptToNameWindow(browser_);
+       break;
+@@ -2987,6 +2999,13 @@ void BrowserCommandController::UpdateCommandsForTabStripStateChanged() {
+   command_updater_->UpdateCommandEnabled(
+       IDC_HELIUM_NEW_SPLIT_PANE_ON_RIGHT,
+       browser_->GetType() == BrowserWindowInterface::Type::TYPE_NORMAL);
++  for (int command :
++       {IDC_HELIUM_FOCUS_SPLIT_PANE_LEFT, IDC_HELIUM_FOCUS_SPLIT_PANE_RIGHT,
++        IDC_HELIUM_FOCUS_SPLIT_PANE_UP, IDC_HELIUM_FOCUS_SPLIT_PANE_DOWN}) {
++    command_updater_->UpdateCommandEnabled(
++        command,
++        browser_->GetType() == BrowserWindowInterface::Type::TYPE_NORMAL);
++  }
+   command_updater_->UpdateCommandEnabled(IDC_GROUP_UNGROUPED_TABS,
+                                          CanGroupAllUngroupedTabs(browser_));
+ 
+--- a/chrome/browser/ui/browser_commands.cc
++++ b/chrome/browser/ui/browser_commands.cc
+@@ -1940,6 +1940,33 @@ void NewSplitTab(BrowserWindowInterface* browser,
+   tab_strip_model->ActivateTabAt(active_index + 1);
+ }
+ 
++void FocusSplitPane(BrowserWindowInterface* browser,
++                    split_tabs::SplitEdge edge) {
++  TabStripModel* const tab_strip_model = browser->GetTabStripModel();
++  const tabs::TabInterface* const active = tab_strip_model->GetActiveTab();
++  if (!active || !active->GetSplit()) {
++    return;
++  }
++  const split_tabs::SplitTabData* data =
++      tab_strip_model->GetSplitData(*active->GetSplit());
++  const std::vector<tabs::TabInterface*> panes = data->ListTabs();
++  const size_t pane =
++      tab_strip_model->active_index() - data->GetIndexRange().start();
++  // Panes are laid out in reading order, so right to left text mirrors them.
++  if (base::i18n::IsRTL() && edge == split_tabs::SplitEdge::kLeft) {
++    edge = split_tabs::SplitEdge::kRight;
++  } else if (base::i18n::IsRTL() && edge == split_tabs::SplitEdge::kRight) {
++    edge = split_tabs::SplitEdge::kLeft;
++  }
++  if (const std::optional<size_t> next =
++          data->visual_data()->GetTree(panes.size()).PaneBeside(pane, edge)) {
++    tab_strip_model->ActivateTabAt(
++        tab_strip_model->GetIndexOfTab(panes[*next]),
++        TabStripUserGestureDetails(
++            TabStripUserGestureDetails::GestureType::kKeyboard));
++  }
++}
++
+ void AddNewTabToGroup(BrowserWindowInterface* browser) {
+   if (!browser->GetTabStripModel()->SupportsTabGroups()) {
+     return;
+--- a/chrome/browser/ui/browser_commands.h
++++ b/chrome/browser/ui/browser_commands.h
+@@ -51,6 +51,7 @@ enum ChromeAimEntryPoint : int;
+ }  // namespace omnibox
+ 
+ namespace split_tabs {
++enum class SplitEdge;
+ enum class SplitTabCreatedSource;
+ }
+ 
+@@ -206,6 +207,11 @@ void NewSplitTab(BrowserWindowInterface* browser,
+                  split_tabs::SplitTabCreatedSource source,
+                  bool along_split_end = false);
+ 
++// Activates the pane of the active split next to the active one on `edge`,
++// where left and right are as seen on screen.
++void FocusSplitPane(BrowserWindowInterface* browser,
++                    split_tabs::SplitEdge edge);
++
+ // Tab group commands
+ // These values are persisted to logs. Entries should not be renumbered
+ // and  numeric values should never be reused.
+--- a/chrome/browser/ui/browser_shortcuts/browser_shortcut_metadata.cc
++++ b/chrome/browser/ui/browser_shortcuts/browser_shortcut_metadata.cc
+@@ -104,6 +104,14 @@ std::optional<BrowserShortcutCommandLabel> GetBrowserShortcutCommandLabel(
+       return Label(IDS_SHORTCUT_COMMAND_NEW_SPLIT_TAB);
+     case IDC_HELIUM_NEW_SPLIT_PANE_ON_RIGHT:
+       return Label(IDS_HELIUM_NEW_SPLIT_PANE_ON_RIGHT);
++    case IDC_HELIUM_FOCUS_SPLIT_PANE_LEFT:
++      return Label(IDS_HELIUM_FOCUS_SPLIT_PANE_LEFT);
++    case IDC_HELIUM_FOCUS_SPLIT_PANE_RIGHT:
++      return Label(IDS_HELIUM_FOCUS_SPLIT_PANE_RIGHT);
++    case IDC_HELIUM_FOCUS_SPLIT_PANE_UP:
++      return Label(IDS_HELIUM_FOCUS_SPLIT_PANE_UP);
++    case IDC_HELIUM_FOCUS_SPLIT_PANE_DOWN:
++      return Label(IDS_HELIUM_FOCUS_SPLIT_PANE_DOWN);
+     case IDC_DUPLICATE_TAB:
+       return Label(IDS_SHORTCUT_COMMAND_DUPLICATE_TAB);
+     case IDC_EXIT:
+--- a/components/split_tabs/split_layout_tree.cc
++++ b/components/split_tabs/split_layout_tree.cc
+@@ -553,6 +553,48 @@ SplitLayoutBounds SplitLayoutTree::Calculate(SplitRect bounds,
+   return result;
+ }
+ 
++std::optional<size_t> SplitLayoutTree::PaneBeside(size_t pane,
++                                                  SplitEdge edge) const {
++  constexpr int kSize = 1 << 16;
++  const std::vector<SplitRect> panes =
++      Calculate({.width = kSize, .height = kSize}, 0).panes;
++  if (pane >= panes.size()) {
++    return std::nullopt;
++  }
++  const SplitRect& from = panes[pane];
++  const bool across_x = edge == SplitEdge::kLeft || edge == SplitEdge::kRight;
++  std::optional<size_t> best;
++  int best_shared = 0;
++  for (size_t i = 0; i < panes.size(); ++i) {
++    const SplitRect& to = panes[i];
++    bool touches = false;
++    switch (edge) {
++      case SplitEdge::kLeft:
++        touches = to.x + to.width == from.x;
++        break;
++      case SplitEdge::kRight:
++        touches = to.x == from.x + from.width;
++        break;
++      case SplitEdge::kTop:
++        touches = to.y + to.height == from.y;
++        break;
++      case SplitEdge::kBottom:
++        touches = to.y == from.y + from.height;
++        break;
++    }
++    const int shared =
++        across_x ? std::min(from.y + from.height, to.y + to.height) -
++                       std::max(from.y, to.y)
++                 : std::min(from.x + from.width, to.x + to.width) -
++                       std::max(from.x, to.x);
++    if (touches && shared > best_shared) {
++      best = i;
++      best_shared = shared;
++    }
++  }
++  return best;
++}
++
+ double SplitLayoutTree::DividerFraction(size_t node, size_t index) const {
+   size_t remaining = node;
+   const SplitLayoutNode* container = FindNode(root_, remaining);
+--- a/components/split_tabs/split_layout_tree.h
++++ b/components/split_tabs/split_layout_tree.h
+@@ -158,6 +158,10 @@ class SplitLayoutTree {
+   // is the gap left between neighbouring children.
+   SplitLayoutBounds Calculate(SplitRect bounds, int divider_size) const;
+ 
++  // The pane next to `pane` on its `edge`: of the panes touching that edge,
++  // the one sharing most of its side. nullopt at the edge of the layout.
++  std::optional<size_t> PaneBeside(size_t pane, SplitEdge edge) const;
++
+   // Share of child `index` of container `node` in the space it shares with
+   // the next child.
+   double DividerFraction(size_t node, size_t index) const;

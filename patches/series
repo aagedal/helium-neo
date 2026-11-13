@@ -426,3 +426,5 @@ helium/ui/split-pane-edge-moves.patch
 helium/ui/split-pane-on-right-shortcut.patch
 helium/ui/split-sixteen-panes.patch
 helium/ui/split-drops-over-webui.patch
+helium/ui/split-pane-focus-shortcuts.patch
+helium/ui/split-pane-mover-windows.patch
