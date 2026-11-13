@@ -1,6 +1,6 @@
 {
   "version": "0.21.3.1",
-  "build": "20261113.1",
+  "build": "20261114.1",
   "tag": "v0.21.3.1-neo",
   "architecture": "arm64",
   "minimum_macos": "13.0.0",
