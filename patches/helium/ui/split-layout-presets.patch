@@ -1,0 +1,113 @@
+--- a/chrome/app/generated_resources.grd
++++ b/chrome/app/generated_resources.grd
+@@ -270,21 +270,10 @@
+     <messages fallback_to_english="true">
+       <message name="IDS_HELIUM_SPLIT_LAYOUTS" desc="Submenu choosing the number and arrangement of split panes.">Split Layout</message>
+       <message name="IDS_HELIUM_SPLIT_PANE_ACCESSIBLE" desc="Accessible title with pane index, total pane count, and page title.">Pane <ph name="INDEX">$1<ex>2</ex></ph> of <ph name="COUNT">$2<ex>4</ex></ph>: <ph name="TITLE">$3<ex>Page title</ex></ph></message>
+-      <message name="IDS_HELIUM_LAYOUT_THREE_COLUMNS" desc="Split pane arrangement with 3 pages.">Three Columns</message>
+-      <message name="IDS_HELIUM_LAYOUT_THREE_ROWS" desc="Split pane arrangement with 3 pages.">Three Rows</message>
+-      <message name="IDS_HELIUM_LAYOUT_FOUR_COLUMNS" desc="Split pane arrangement with 4 pages.">Four Columns</message>
+-      <message name="IDS_HELIUM_LAYOUT_FOUR_ROWS" desc="Split pane arrangement with 4 pages.">Four Rows</message>
++      <message name="IDS_HELIUM_LAYOUT_SIDE_BY_SIDE" desc="Split pane arrangement with 2 pages next to each other.">Side by Side</message>
+       <message name="IDS_HELIUM_LAYOUT_GRID" desc="Split pane arrangement with 4 pages.">2 × 2 Grid</message>
+       <message name="IDS_HELIUM_LAYOUT_LEFT_TWO" desc="Split pane arrangement with 3 pages.">One Left, Two Right</message>
+-      <message name="IDS_HELIUM_LAYOUT_TWO_LEFT" desc="Split pane arrangement with 3 pages.">Two Left, One Right</message>
+-      <message name="IDS_HELIUM_LAYOUT_TOP_TWO" desc="Split pane arrangement with 3 pages.">One Above, Two Below</message>
+-      <message name="IDS_HELIUM_LAYOUT_TWO_TOP" desc="Split pane arrangement with 3 pages.">Two Above, One Below</message>
+-      <message name="IDS_HELIUM_LAYOUT_LEFT_THREE" desc="Split pane arrangement with 4 pages.">One Left, Three Right</message>
+-      <message name="IDS_HELIUM_LAYOUT_THREE_LEFT" desc="Split pane arrangement with 4 pages.">Three Left, One Right</message>
+-      <message name="IDS_HELIUM_LAYOUT_TOP_THREE" desc="Split pane arrangement with 4 pages.">One Above, Three Below</message>
+       <message name="IDS_HELIUM_LAYOUT_GRID_THREE_TWO" desc="Split arrangement with six pages in three columns and two rows.">3 × 2 Grid</message>
+-      <message name="IDS_HELIUM_LAYOUT_TWO_LEFT_THREE_COLUMNS" desc="Five pages: two stacked in the leftmost column and three full-height columns to their right.">Two Stacked Left + Three Columns</message>
+-      <message name="IDS_HELIUM_LAYOUT_THREE_TOP" desc="Split pane arrangement with 4 pages.">Three Above, One Below</message>
+       <message name="IDS_HELIUM_CREATE_FOUR_PANE_SPLIT" desc="Tab context menu action creating a grid with this tab and three new tabs.">Create Four-Way Split</message>
+       <message name="IDS_HELIUM_EXPAND_FOUR_PANE_SPLIT" desc="Tab context menu action adding new tabs to fill an existing split to four panes.">Expand to Four-Way Split</message>
+       <message name="IDS_HELIUM_TAB_VIEW" desc="Tab menu submenu for individual tab preview and refresh settings.">Tab view</message>
+--- a/chrome/browser/ui/tabs/tab_menu_model.cc
++++ b/chrome/browser/ui/tabs/tab_menu_model.cc
+@@ -105,37 +105,16 @@ struct PaneLayoutOption {
+   split_tabs::SplitTabArrangement arrangement;
+   int label;
+ };
++// A few layouts to start from; users save their own for anything else.
+ constexpr PaneLayoutOption kPaneLayouts[] = {
+-    {3, split_tabs::SplitTabLayout::kSideBySide,
+-     split_tabs::SplitTabArrangement::kLinear, IDS_HELIUM_LAYOUT_THREE_COLUMNS},
+-    {3, split_tabs::SplitTabLayout::kStacked,
+-     split_tabs::SplitTabArrangement::kLinear, IDS_HELIUM_LAYOUT_THREE_ROWS},
+-    {4, split_tabs::SplitTabLayout::kSideBySide,
+-     split_tabs::SplitTabArrangement::kLinear, IDS_HELIUM_LAYOUT_FOUR_COLUMNS},
+-    {4, split_tabs::SplitTabLayout::kStacked,
+-     split_tabs::SplitTabArrangement::kLinear, IDS_HELIUM_LAYOUT_FOUR_ROWS},
+-    {4, split_tabs::SplitTabLayout::kSideBySide,
+-     split_tabs::SplitTabArrangement::kGrid, IDS_HELIUM_LAYOUT_GRID},
++    {2, split_tabs::SplitTabLayout::kSideBySide,
++     split_tabs::SplitTabArrangement::kLinear, IDS_HELIUM_LAYOUT_SIDE_BY_SIDE},
+     {3, split_tabs::SplitTabLayout::kSideBySide,
+      split_tabs::SplitTabArrangement::kLeadingSingle, IDS_HELIUM_LAYOUT_LEFT_TWO},
+-    {3, split_tabs::SplitTabLayout::kSideBySide,
+-     split_tabs::SplitTabArrangement::kTrailingSingle, IDS_HELIUM_LAYOUT_TWO_LEFT},
+-    {3, split_tabs::SplitTabLayout::kStacked,
+-     split_tabs::SplitTabArrangement::kLeadingSingle, IDS_HELIUM_LAYOUT_TOP_TWO},
+-    {3, split_tabs::SplitTabLayout::kStacked,
+-     split_tabs::SplitTabArrangement::kTrailingSingle, IDS_HELIUM_LAYOUT_TWO_TOP},
+-    {4, split_tabs::SplitTabLayout::kSideBySide,
+-     split_tabs::SplitTabArrangement::kLeadingSingle, IDS_HELIUM_LAYOUT_LEFT_THREE},
+     {4, split_tabs::SplitTabLayout::kSideBySide,
+-     split_tabs::SplitTabArrangement::kTrailingSingle, IDS_HELIUM_LAYOUT_THREE_LEFT},
+-    {4, split_tabs::SplitTabLayout::kStacked,
+-     split_tabs::SplitTabArrangement::kLeadingSingle, IDS_HELIUM_LAYOUT_TOP_THREE},
+-    {4, split_tabs::SplitTabLayout::kStacked,
+-     split_tabs::SplitTabArrangement::kTrailingSingle, IDS_HELIUM_LAYOUT_THREE_TOP},
++     split_tabs::SplitTabArrangement::kGrid, IDS_HELIUM_LAYOUT_GRID},
+     {6, split_tabs::SplitTabLayout::kStacked,
+      split_tabs::SplitTabArrangement::kGrid, IDS_HELIUM_LAYOUT_GRID_THREE_TWO},
+-    {5, split_tabs::SplitTabLayout::kSideBySide,
+-     split_tabs::SplitTabArrangement::kLeadingStacked, IDS_HELIUM_LAYOUT_TWO_LEFT_THREE_COLUMNS},
+ };
+ constexpr int kFirstPaneLayoutCommand = 2050;
+ // Commands for layouts the user saved follow the built-in layouts.
+@@ -190,9 +169,6 @@ class PaneLayoutMenuModel : public ui::SimpleMenuModel,
+         tab_(tab->GetWeakPtr()),
+         templates_(GetSplitLayoutTemplates(*model->profile()->GetPrefs())) {
+     for (size_t i = 0; i < std::size(kPaneLayouts); ++i) {
+-      if (i == 5 || i == 9 || i == 13) {
+-        AddSeparator(ui::MenuSeparatorType::NORMAL_SEPARATOR);
+-      }
+       AddCheckItem(kFirstPaneLayoutCommand + i,
+                    l10n_util::GetStringUTF16(kPaneLayouts[i].label));
+       SetIcon(GetItemCount() - 1,
+--- a/chrome/browser/ui/tabs/tab_menu_model_browsertest.cc
++++ b/chrome/browser/ui/tabs/tab_menu_model_browsertest.cc
+@@ -1267,20 +1267,22 @@ IN_PROC_BROWSER_TEST_F(TabMenuModelBrowserTest, SplitLayoutSubmenu) {
+   ASSERT_TRUE(index);
+   auto* layouts = static_cast<ui::SimpleMenuModel*>(
+       menu.GetSubmenuModelAt(*index));
+-  // Choose Four Columns, then Four Rows using the actual menu delegates.
++  // Choose the 2 x 2 grid, then the 3 x 2 grid using the actual menu
++  // delegates.
+   layouts->ActivatedAt(*layouts->GetIndexOfCommandId(2052));
+   const auto split = model->GetActiveTab()->GetSplit().value();
+-  auto* data = model->GetSplitData(split);
+-  EXPECT_EQ(4u, data->ListTabs().size());
+-  EXPECT_EQ("R(1000:P,1000:P,1000:P,1000:P)",
+-            data->visual_data()->GetTree(4).Serialize());
+-  EXPECT_EQ(split_tabs::SplitTabLayout::kSideBySide,
+-            data->visual_data()->split_layout());
++  EXPECT_EQ(4u, model->GetSplitData(split)->ListTabs().size());
++  EXPECT_EQ("R(1000:C(1000:P,1000:P),1000:C(1000:P,1000:P))",
++            model->GetSplitData(split)->visual_data()->GetTree(4).Serialize());
++  EXPECT_TRUE(layouts->IsItemCheckedAt(*layouts->GetIndexOfCommandId(2052)));
+   layouts->ActivatedAt(*layouts->GetIndexOfCommandId(2053));
+-  EXPECT_EQ(split, model->GetActiveTab()->GetSplit());
++  const auto grown = model->GetActiveTab()->GetSplit().value();
++  EXPECT_EQ(6u, model->GetSplitData(grown)->ListTabs().size());
+   EXPECT_EQ(split_tabs::SplitTabLayout::kStacked,
+-            data->visual_data()->split_layout());
++            model->GetSplitData(grown)->visual_data()->split_layout());
++  // Layouts with fewer panes than the split are not offered.
+   EXPECT_FALSE(layouts->IsEnabledAt(*layouts->GetIndexOfCommandId(2050)));
++  EXPECT_FALSE(layouts->IsEnabledAt(*layouts->GetIndexOfCommandId(2052)));
+ }
+ 
+ IN_PROC_BROWSER_TEST_F(TabMenuModelBrowserTest, SplitMenuSurvivesRemovedSplit) {
