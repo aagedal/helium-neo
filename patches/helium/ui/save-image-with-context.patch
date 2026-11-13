@@ -392,7 +392,7 @@
      "//ui/strings:ui_strings",
 --- /dev/null
 +++ b/chrome/browser/image_editor/image_context_metadata.cc
-@@ -0,0 +1,883 @@
+@@ -0,0 +1,904 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -850,6 +850,7 @@
 +constexpr char kXmpMetaNamespace[] = "adobe:ns:meta/";
 +constexpr char kRdfNamespace[] = "http://www.w3.org/1999/02/22-rdf-syntax-ns#";
 +constexpr char kDcNamespace[] = "http://purl.org/dc/elements/1.1/";
++constexpr char kPhotoshopNamespace[] = "http://ns.adobe.com/photoshop/1.0/";
 +constexpr char kXmpMMNamespace[] = "http://ns.adobe.com/xap/1.0/mm/";
 +constexpr char kResourceEventNamespace[] =
 +    "http://ns.adobe.com/xap/1.0/sType/ResourceEvent#";
@@ -1185,6 +1186,8 @@
 +
 +  // Look for the properties in every description, as XMP may split them.
 +  Property source;
++  Property description_property;
++  Property supplier;
 +  Property history;
 +  Property saved_from;
 +  std::string about;
@@ -1208,6 +1211,9 @@
 +        }
 +      }
 +      FindProperty(description, kDcNamespace, "source", scope, source);
++      FindProperty(description, kDcNamespace, "description", scope,
++                   description_property);
++      FindProperty(description, kPhotoshopNamespace, "Source", scope, supplier);
 +      FindProperty(description, kXmpMMNamespace, "History", scope, history);
 +      FindProperty(description, kHeliumNamespace, "SavedFrom", scope,
 +                   saved_from);
@@ -1230,6 +1236,21 @@
 +  if (!source.found && !context.page_url.empty()) {
 +    AddTextProperty(properties, "dc:source", context.page_url);
 +    namespaces.Set("dc", kDcNamespace);
++  }
++  if (!description_property.found && !context.description.empty()) {
++    // A text in alternative languages, of which this is the default.
++    properties.Append(Element(
++        "dc:description", {}, {},
++        base::ListValue().Append(Element(
++            "rdf:Alt", {}, {},
++            base::ListValue().Append(Element(
++                "rdf:li", base::DictValue().Set("xml:lang", "x-default"), {},
++                base::ListValue().Append(Text(context.description))))))));
++    namespaces.Set("dc", kDcNamespace);
++  }
++  if (!supplier.found && !context.source.empty()) {
++    AddTextProperty(properties, "photoshop:Source", context.source);
++    namespaces.Set("photoshop", kPhotoshopNamespace);
 +  }
 +  if (!history.found) {
 +    properties.Append(Element(
@@ -1278,7 +1299,7 @@
 +}  // namespace image_editor
 --- /dev/null
 +++ b/chrome/browser/image_editor/image_context_metadata.h
-@@ -0,0 +1,65 @@
+@@ -0,0 +1,69 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -1306,6 +1327,10 @@
 +  std::string saved_at;
 +  // The browser and its version.
 +  std::string software;
++  // For the IPTC Source and the description, which photo apps show, when the
++  // image has neither.
++  std::string source;
++  std::string description;
 +};
 +
 +// The image formats whose XMP metadata can be read and rewritten without
@@ -1330,8 +1355,8 @@
 +// `existing` is the image's XMP packet as parsed by data_decoder's XmlParser,
 +// or nullptr when the image has none. Nothing in it is changed or removed: the
 +// save is appended to the xmpMM:History and helium:SavedFrom lists, and
-+// dc:source is only filled in when the image has none. Returns nullopt when
-+// `existing` isn't XMP.
++// dc:source, dc:description and photoshop:Source are only filled in when the
++// image has none. Returns nullopt when `existing` isn't XMP.
 +std::optional<std::string> AddImageContextToXmp(const ImageContext& context,
 +                                                const base::Value* existing);
 +
@@ -1346,7 +1371,7 @@
 +#endif  // CHROME_BROWSER_IMAGE_EDITOR_IMAGE_CONTEXT_METADATA_H_
 --- /dev/null
 +++ b/chrome/browser/image_editor/image_context_metadata_unittest.cc
-@@ -0,0 +1,468 @@
+@@ -0,0 +1,512 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -1387,7 +1412,9 @@
 +          .page_title = "An <article>",
 +          .image_url = "https://cdn.example.com/photo.jpg",
 +          .saved_at = "2026-11-13T18:00:00Z",
-+          .software = "Helium Neo 0.21.3.1"};
++          .software = "Helium Neo 0.21.3.1",
++          .source = "example.com / https://example.com/article?a=1&b=2",
++          .description = "Saved from example.com"};
 +}
 +
 +SkBitmap Bitmap() {
@@ -1421,10 +1448,15 @@
 +          "<rdf:Description "
 +          "xmlns:dc=\"http://purl.org/dc/elements/1.1/\" "
 +          "xmlns:helium=\"https://github.com/aagedal/helium/ns/capture/1.0/\" "
++          "xmlns:photoshop=\"http://ns.adobe.com/photoshop/1.0/\" "
 +          "xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\" "
 +          "xmlns:stEvt=\"http://ns.adobe.com/xap/1.0/sType/ResourceEvent#\" "
 +          "xmlns:xmpMM=\"http://ns.adobe.com/xap/1.0/mm/\" rdf:about=\"\">"
 +          "<dc:source>https://example.com/article?a=1&amp;b=2</dc:source>"
++          "<dc:description><rdf:Alt><rdf:li xml:lang=\"x-default\">"
++          "Saved from example.com</rdf:li></rdf:Alt></dc:description>"
++          "<photoshop:Source>example.com / "
++          "https://example.com/article?a=1&amp;b=2</photoshop:Source>"
 +          "<xmpMM:History><rdf:Seq><rdf:li rdf:parseType=\"Resource\">"
 +          "<stEvt:action>saved</stEvt:action>"
 +          "<stEvt:when>2026-11-13T18:00:00Z</stEvt:when>"
@@ -1499,9 +1531,15 @@
 +          "</rdf:li></R:Seq></mm:History></R:Description>"
 +          // The rest goes in a description of its own, with the same subject.
 +          "<rdf:Description "
++          "xmlns:dc=\"http://purl.org/dc/elements/1.1/\" "
 +          "xmlns:helium=\"https://github.com/aagedal/helium/ns/capture/1.0/\" "
++          "xmlns:photoshop=\"http://ns.adobe.com/photoshop/1.0/\" "
 +          "xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\" "
 +          "rdf:about=\"uuid:1\">"
++          "<dc:description><rdf:Alt><rdf:li xml:lang=\"x-default\">"
++          "Saved from example.com</rdf:li></rdf:Alt></dc:description>"
++          "<photoshop:Source>example.com / "
++          "https://example.com/article?a=1&amp;b=2</photoshop:Source>"
 +          "<helium:SavedFrom><rdf:Seq><rdf:li rdf:parseType=\"Resource\">"
 +          "<helium:PageURL>https://example.com/article?a=1&amp;b=2"
 +          "</helium:PageURL>"
@@ -1533,6 +1571,35 @@
 +            std::string::npos);
 +  EXPECT_EQ(xmp->find("stEvt"), std::string::npos);
 +  EXPECT_NE(xmp->find("<helium:SavedFrom>"), std::string::npos);
++}
++
++TEST(ImageContextMetadataTest, KeepsTheImagesSourceAndDescription) {
++  // An agency photo with its caption and supplier.
++  const base::Value existing = ParsedXmp(R"({
++    "type": "element", "tag": "rdf:RDF",
++    "namespaces": {"rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#"},
++    "children": [{
++      "type": "element", "tag": "rdf:Description",
++      "namespaces": {
++        "dc": "http://purl.org/dc/elements/1.1/",
++        "photoshop": "http://ns.adobe.com/photoshop/1.0/"
++      },
++      "attributes": {"photoshop:Source": "NTB"},
++      "children": [{"type": "element", "tag": "dc:description", "children": [
++        {"type": "element", "tag": "rdf:Alt", "children": [
++          {"type": "element", "tag": "rdf:li",
++           "attributes": {"xml:lang": "x-default"},
++           "children": [{"type": "text", "text": "A caption"}]}]}]}]
++    }]
++  })");
++  const std::optional<std::string> xmp =
++      AddImageContextToXmp(Context(), &existing);
++  ASSERT_TRUE(xmp);
++  EXPECT_NE(xmp->find("photoshop:Source=\"NTB\""), std::string::npos);
++  EXPECT_NE(xmp->find(">A caption<"), std::string::npos);
++  EXPECT_EQ(xmp->find("Saved from example.com"), std::string::npos);
++  EXPECT_EQ(xmp->find("<photoshop:Source>"), std::string::npos);
++  EXPECT_NE(xmp->find("<dc:source>"), std::string::npos);
 +}
 +
 +TEST(ImageContextMetadataTest, RejectsOtherXml) {
@@ -1643,12 +1710,14 @@
 +            *reparsed->GetDict().FindDict("attributes"));
 +  EXPECT_EQ("rdf:li", *added.GetDict().FindString("tag"));
 +
-+  // The source and the saved image record go in a new description, as the
-+  // credit, title, creator and rights stay untouched.
++  // The source, description and saved image record go in a new description,
++  // as the credit, title, creator and rights stay untouched.
 +  const base::ListValue& description = Children(*reparsed, {0, 1});
-+  ASSERT_EQ(2u, description.size());
++  ASSERT_EQ(4u, description.size());
 +  EXPECT_EQ("dc:source", *description[0].GetDict().FindString("tag"));
-+  EXPECT_EQ("helium:SavedFrom", *description[1].GetDict().FindString("tag"));
++  EXPECT_EQ("dc:description", *description[1].GetDict().FindString("tag"));
++  EXPECT_EQ("photoshop:Source", *description[2].GetDict().FindString("tag"));
++  EXPECT_EQ("helium:SavedFrom", *description[3].GetDict().FindString("tag"));
 +}
 +
 +TEST(ImageContextMetadataTest, AddsAndReplacesXmpInJpeg) {
@@ -1817,7 +1886,7 @@
 +}  // namespace image_editor
 --- /dev/null
 +++ b/chrome/browser/ui/views/sharing_hub/screenshot/image_context_save.cc
-@@ -0,0 +1,315 @@
+@@ -0,0 +1,362 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -1845,6 +1914,7 @@
 +#include "chrome/browser/profiles/profile.h"
 +#include "chrome/browser/sharing_hub/sharing_hub_features.h"
 +#include "chrome/browser/ui/simple_message_box.h"
++#include "chrome/browser/ui/views/sharing_hub/screenshot/screenshot_documentation.h"
 +#include "chrome/grit/generated_resources.h"
 +#include "components/download/public/common/download_item.h"
 +#include "components/download/public/common/download_url_parameters.h"
@@ -1870,6 +1940,10 @@
 +  bool sidecar_for_other_formats = false;
 +  // Whether to add the context to images with Content Credentials.
 +  bool embed_in_signed = false;
++  // The language of the description, as for screenshots.
++  ScreenshotTextLanguage language = ScreenshotTextLanguage::kEnglish;
++  // The platform or host the image was saved from, if any.
++  std::string site;
 +};
 +
 +enum class Outcome { kEmbedded, kSidecar, kNoMetadata, kFailed };
@@ -1889,6 +1963,32 @@
 +  replacements.ClearUsername();
 +  replacements.ClearPassword();
 +  return url.ReplaceComponents(replacements).spec();
++}
++
++// A readable summary first, then the record, as screenshots have.
++std::string Describe(const ImageContext& context, const Options& options) {
++  const bool norwegian = options.language == ScreenshotTextLanguage::kNorwegian;
++  std::string description;
++  const std::string saved = ScreenshotDisplayDate(context.saved_at);
++  if (!saved.empty()) {
++    description += (norwegian ? "Lagret: " : "Saved: ") + saved + "\n";
++  }
++  if (!options.site.empty()) {
++    description += options.site + "\n";
++  }
++  if (!description.empty()) {
++    description += "\n";
++  }
++  description += "HELIUM NEO — SAVED IMAGE SOURCE RECORD\n\n";
++  const auto field = [&](std::string_view label, const std::string& value) {
++    description += std::string(label) + ": " +
++                   (value.empty() ? "Not supplied" : value) + "\n\n";
++  };
++  field("Page URL (observed)", context.page_url);
++  field("Page title (observed)", context.page_title);
++  field("Image URL (observed)", context.image_url);
++  field("Saved (UTC, computer clock)", context.saved_at);
++  return description;
 +}
 +
 +SavedImage ReadImage(const base::FilePath& path) {
@@ -2044,6 +2144,7 @@
 +        return;
 +      case download::DownloadItem::COMPLETE:
 +        context_.saved_at = base::TimeFormatAsIso8601(base::Time::Now());
++        context_.description = Describe(context_, options_);
 +        base::ThreadPool::PostTaskAndReplyWithResult(
 +            FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
 +            base::BindOnce(&ReadImage, item->GetTargetFilePath()),
@@ -2118,9 +2219,24 @@
 +  }
 +  context.software =
 +      "Helium Neo / Chromium " + std::string(version_info::GetVersionNumber());
++
++  // Name the site as screenshots do, as "Facebook" or "tv2.no".
++  const GURL& page_url = web_contents->GetLastCommittedURL();
++  std::string site = ScreenshotPlatformName(page_url);
++  if (site.empty() && page_url.SchemeIsHTTPOrHTTPS()) {
++    site = page_url.host();
++    if (site.starts_with("www.")) {
++      site.erase(0, 4);
++    }
++  }
++  context.source =
++      site.empty() ? context.page_url : site + " / " + context.page_url;
 +  const Options options = {
 +      .sidecar_for_other_formats = prefs->GetBoolean(kSavedImageSidecarPref),
-+      .embed_in_signed = prefs->GetBoolean(kSavedImageEmbedInSignedPref)};
++      .embed_in_signed = prefs->GetBoolean(kSavedImageEmbedInSignedPref),
++      .language =
++          static_cast<ScreenshotTextLanguage>(GetScreenshotTextLanguage(prefs)),
++      .site = std::move(site)};
 +
 +  const std::string guid = base::Uuid::GenerateRandomV4().AsLowercaseString();
 +  helium::SetDownloadTargetDirectory(guid, directory);
