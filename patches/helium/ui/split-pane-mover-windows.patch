@@ -1,0 +1,496 @@
+--- a/chrome/browser/ui/views/frame/BUILD.gn
++++ b/chrome/browser/ui/views/frame/BUILD.gn
+@@ -3360,6 +3360,7 @@ source_set("multi_contents_view_impl") {
+     "//chrome/browser/ui:browser_element_identifiers",
+     "//chrome/browser/ui:sad_tab",
+     "//chrome/browser/ui:view_ids",
++    "//chrome/browser/ui/browser_window",
+     "//chrome/browser/ui/color:color_headers",
+     "//chrome/browser/ui/read_anything",
+     "//chrome/browser/ui/tabs:tab_strip",
+--- a/chrome/browser/ui/views/frame/multi_contents_view.cc
++++ b/chrome/browser/ui/views/frame/multi_contents_view.cc
+@@ -434,6 +434,15 @@ void MultiContentsView::ExecuteOnEachVisibleContentsView(
+   }
+ }
+ 
++void MultiContentsView::AddedToWidget() {
++  views::View::AddedToWidget();
++  // Pages can be moved to other windows with the pointer, in a split or not.
++  if (!pane_mover_) {
++    pane_mover_ = std::make_unique<SplitPaneMover>(
++        this, browser_view_->browser()->tab_strip_model());
++  }
++}
++
+ void MultiContentsView::OnSwap() {
+   CHECK(IsInSplitView());
+   if (pane_count_ == 2) {
+--- a/chrome/browser/ui/views/frame/multi_contents_view.h
++++ b/chrome/browser/ui/views/frame/multi_contents_view.h
+@@ -188,6 +188,7 @@ class MultiContentsView
+   void EqualizeDivider(size_t divider, bool whole_container);
+ 
+   // views::View:
++  void AddedToWidget() override;
+   void OnThemeChanged() override;
+ 
+   void OnFullscreenStateChanged();
+--- a/chrome/browser/ui/views/frame/split_pane_mover.cc
++++ b/chrome/browser/ui/views/frame/split_pane_mover.cc
+@@ -5,6 +5,7 @@
+ #include "chrome/browser/ui/views/frame/split_pane_mover.h"
+ 
+ #include <algorithm>
++#include <set>
+ #include <utility>
+ #include <vector>
+ 
+@@ -13,7 +14,11 @@
+ #include "base/task/sequenced_task_runner.h"
+ #include "cc/paint/paint_flags.h"
+ #include "chrome/app/vector_icons/vector_icons.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_interface_iterator.h"
++#include "chrome/browser/ui/tabs/tab_model.h"
+ #include "chrome/browser/ui/tabs/tab_strip_model.h"
++#include "chrome/browser/ui/views/frame/browser_view.h"
+ #include "chrome/browser/ui/views/frame/contents_container_view.h"
+ #include "chrome/browser/ui/views/frame/multi_contents_resize_area.h"
+ #include "chrome/browser/ui/views/frame/multi_contents_view.h"
+@@ -54,6 +59,8 @@ constexpr float kSwapAreaEnd = 0.7f;
+ // Width of the band along the border of the split where a pane is dropped
+ // along that whole side.
+ constexpr int kSplitEdgeZone = 24;
++// How long Cmd+Shift is held before the handle shows.
++constexpr base::TimeDelta kRevealDelay = base::Milliseconds(250);
+ constexpr int kModifiers = ui::EF_SHIFT_DOWN | ui::EF_CONTROL_DOWN |
+                            ui::EF_ALT_DOWN | ui::EF_COMMAND_DOWN;
+ constexpr int kRevealModifiers = ui::EF_COMMAND_DOWN | ui::EF_SHIFT_DOWN;
+@@ -87,6 +94,116 @@ class Indicator : public views::View {
+ BEGIN_METADATA(Indicator)
+ END_METADATA
+ 
++// Number of panes `view` shows: those of the active split, or the one page.
++size_t PaneCount(MultiContentsView& view, TabStripModel& model) {
++  const tabs::TabInterface* active = model.GetActiveTab();
++  if (!active) {
++    return 0;
++  }
++  const size_t panes =
++      active->GetSplit()
++          ? model.GetSplitData(*active->GetSplit())->ListTabs().size()
++          : 1;
++  return std::min(panes, view.contents_container_views().size());
++}
++
++gfx::Rect PaneBounds(MultiContentsView& view, size_t pane) {
++  return view.contents_container_views()[pane]->GetBoundsInScreen();
++}
++
++std::optional<size_t> PaneAt(MultiContentsView& view,
++                             TabStripModel& model,
++                             const gfx::Point& point_in_screen) {
++  const size_t count = PaneCount(view, model);
++  for (size_t pane = 0; pane < count; ++pane) {
++    if (PaneBounds(view, pane).Contains(point_in_screen)) {
++      return pane;
++    }
++  }
++  return std::nullopt;
++}
++
++gfx::Rect AllPaneBounds(MultiContentsView& view, TabStripModel& model) {
++  gfx::Rect bounds;
++  const size_t count = PaneCount(view, model);
++  for (size_t pane = 0; pane < count; ++pane) {
++    bounds.Union(PaneBounds(view, pane));
++  }
++  return bounds;
++}
++
++// The edge of `bounds` nearest to the point, or nullopt in the middle, where
++// a dropped pane takes the place of the one there.
++std::optional<split_tabs::SplitEdge> EdgeAt(const gfx::Rect& bounds,
++                                            const gfx::Point& point_in_screen) {
++  const float x = static_cast<float>(point_in_screen.x() - bounds.x()) /
++                  bounds.width();
++  const float y = static_cast<float>(point_in_screen.y() - bounds.y()) /
++                  bounds.height();
++  if (x >= kSwapAreaStart && x <= kSwapAreaEnd && y >= kSwapAreaStart &&
++      y <= kSwapAreaEnd) {
++    return std::nullopt;
++  }
++  // Like the panes, left and right follow the text direction.
++  const bool rtl = base::i18n::IsRTL();
++  const std::pair<float, split_tabs::SplitEdge> edges[] = {
++      {x, rtl ? split_tabs::SplitEdge::kRight : split_tabs::SplitEdge::kLeft},
++      {1 - x, rtl ? split_tabs::SplitEdge::kLeft : split_tabs::SplitEdge::kRight},
++      {y, split_tabs::SplitEdge::kTop},
++      {1 - y, split_tabs::SplitEdge::kBottom},
++  };
++  return std::ranges::min(edges, {}, [](const auto& edge) {
++           return edge.first;
++         }).second;
++}
++
++// Adds `tab` to `model`: beside its pane `pane` on `edge`, starting a split if
++// it has none, or without an edge after the active tab or split.
++void PlaceTab(std::unique_ptr<tabs::TabModel> tab,
++              TabStripModel& model,
++              size_t pane,
++              std::optional<split_tabs::SplitEdge> edge) {
++  tabs::TabInterface* const active = model.GetActiveTab();
++  const std::optional<split_tabs::SplitTabId> split = active->GetSplit();
++  const int index =
++      split ? model.GetSplitData(*split)->GetIndexRange().end()
++            : model.active_index() + 1;
++  const int inserted = model.InsertDetachedTabAt(
++      index, std::move(tab),
++      active->IsPinned() ? AddTabTypes::ADD_PINNED : AddTabTypes::ADD_NONE,
++      active->GetGroup());
++  tabs::TabInterface* const placed = model.GetTabAtIndex(inserted);
++  if (edge && split) {
++    model.InsertTabIntoSplit(*split, inserted, pane, *edge);
++  } else if (edge) {
++    const bool before = *edge == split_tabs::SplitEdge::kLeft ||
++                        *edge == split_tabs::SplitEdge::kTop;
++    const bool across = *edge == split_tabs::SplitEdge::kLeft ||
++                        *edge == split_tabs::SplitEdge::kRight;
++    model.SetSplitPanes(
++        split_tabs::SplitTabId::GenerateNew(),
++        before ? std::vector<tabs::TabInterface*>{placed, active}
++               : std::vector<tabs::TabInterface*>{active, placed},
++        split_tabs::SplitLayoutTree::Linear(
++            2, across ? split_tabs::SplitAxis::kRow
++                      : split_tabs::SplitAxis::kColumn));
++  }
++  model.ActivateTabAt(model.GetIndexOfTab(placed));
++}
++
++bool IsRevealModifier(ui::KeyboardCode key) {
++  switch (key) {
++    case ui::VKEY_SHIFT:
++    case ui::VKEY_LSHIFT:
++    case ui::VKEY_RSHIFT:
++    case ui::VKEY_LWIN:
++    case ui::VKEY_RWIN:
++      return true;
++    default:
++      return false;
++  }
++}
++
+ std::unique_ptr<views::Widget> CreatePopup(views::Widget* parent,
+                                            bool accept_events) {
+   auto widget = std::make_unique<views::Widget>();
+@@ -172,6 +289,7 @@ SplitPaneMover::SplitPaneMover(MultiContentsView* multi_contents_view,
+ SplitPaneMover::~SplitPaneMover() = default;
+ 
+ void SplitPaneMover::Reset() {
++  reveal_timer_.Stop();
+   if (dragging_ && handle_widget_) {
+     // Ends the drag through OnDragEnded().
+     handle_widget_->ReleaseCapture();
+@@ -186,10 +304,6 @@ void SplitPaneMover::Reset() {
+ }
+ 
+ void SplitPaneMover::OnEvent(const ui::Event& event) {
+-  if (!multi_contents_view_->IsInSplitView()) {
+-    Reset();
+-    return;
+-  }
+   int flags = event.flags();
+   if (event.IsKeyEvent()) {
+     const ui::KeyEvent* key = event.AsKeyEvent();
+@@ -214,8 +328,25 @@ void SplitPaneMover::OnEvent(const ui::Event& event) {
+           break;
+       }
+     }
++    // A shortcut using these modifiers is no request for the handle.
++    if (key->type() == ui::EventType::kKeyPressed &&
++        !IsRevealModifier(key->key_code()) && !dragging_) {
++      reveal_timer_.Stop();
++      UpdateHandle(false);
++      return;
++    }
++  }
++  const bool reveal = (flags & kModifiers) == kRevealModifiers;
++  if (!reveal || dragging_ || handle_pane_) {
++    reveal_timer_.Stop();
++    UpdateHandle(reveal);
++    return;
++  }
++  if (!reveal_timer_.IsRunning()) {
++    reveal_timer_.Start(FROM_HERE, kRevealDelay,
++                        base::BindOnce(&SplitPaneMover::UpdateHandle,
++                                       base::Unretained(this), true));
+   }
+-  UpdateHandle((flags & kModifiers) == kRevealModifiers);
+ }
+ 
+ void SplitPaneMover::StartMonitoring() {
+@@ -261,43 +392,63 @@ void SplitPaneMover::UpdateHandle(bool modifiers_down) {
+ 
+ std::optional<size_t> SplitPaneMover::PaneAt(
+     const gfx::Point& point_in_screen) const {
+-  const tabs::TabInterface* active = tab_strip_model_->GetActiveTab();
+-  if (!active || !active->GetSplit()) {
+-    return std::nullopt;
+-  }
+-  const size_t count = std::min(
+-      tab_strip_model_->GetSplitData(*active->GetSplit())->ListTabs().size(),
+-      multi_contents_view_->contents_container_views().size());
+-  for (size_t pane = 0; pane < count; ++pane) {
+-    if (PaneBoundsInScreen(pane).Contains(point_in_screen)) {
+-      return pane;
+-    }
+-  }
+-  return std::nullopt;
++  return ::PaneAt(*multi_contents_view_, *tab_strip_model_, point_in_screen);
+ }
+ 
+ gfx::Rect SplitPaneMover::PaneBoundsInScreen(size_t pane) const {
+-  return multi_contents_view_->contents_container_views()[pane]
+-      ->GetBoundsInScreen();
++  return PaneBounds(*multi_contents_view_, pane);
+ }
+ 
+ gfx::Rect SplitPaneMover::SplitBoundsInScreen() const {
+-  const tabs::TabInterface* active = tab_strip_model_->GetActiveTab();
+-  if (!active || !active->GetSplit()) {
++  if (!multi_contents_view_->IsInSplitView()) {
+     return gfx::Rect();
+   }
+-  const size_t count = std::min(
+-      tab_strip_model_->GetSplitData(*active->GetSplit())->ListTabs().size(),
+-      multi_contents_view_->contents_container_views().size());
+-  gfx::Rect bounds;
+-  for (size_t pane = 0; pane < count; ++pane) {
+-    bounds.Union(PaneBoundsInScreen(pane));
++  return AllPaneBounds(*multi_contents_view_, *tab_strip_model_);
++}
++
++BrowserView* SplitPaneMover::OtherWindowAt(
++    const gfx::Point& point_in_screen) const {
++  std::set<gfx::NativeWindow> ignore;
++  for (const views::Widget* widget :
++       {handle_widget_.get(), indicator_widget_.get()}) {
++    if (widget) {
++      ignore.insert(widget->GetNativeWindow());
++    }
+   }
+-  return bounds;
++  const gfx::NativeWindow window =
++      display::Screen::Get()->GetLocalProcessWindowAtPoint(point_in_screen,
++                                                           ignore);
++  BrowserView* other =
++      window ? BrowserView::GetBrowserViewForNativeWindow(window) : nullptr;
++  if (!other || other->GetWidget() == multi_contents_view_->GetWidget() ||
++      other->GetWidget()->IsClosed() || !other->GetIsNormalType() ||
++      other->GetProfile() != tab_strip_model_->profile() ||
++      !other->browser()->GetTabStripModel()->GetActiveTab()) {
++    return nullptr;
++  }
++  return other;
+ }
+ 
+ std::optional<SplitPaneMover::Target> SplitPaneMover::TargetAt(
+     const gfx::Point& point_in_screen) const {
++  if (BrowserView* other = OtherWindowAt(point_in_screen)) {
++    MultiContentsView& view = *other->multi_contents_view();
++    TabStripModel& model = *other->browser()->GetTabStripModel();
++    const std::optional<size_t> pane = ::PaneAt(view, model, point_in_screen);
++    if (!pane) {
++      return std::nullopt;
++    }
++    std::optional<split_tabs::SplitEdge> edge =
++        EdgeAt(PaneBounds(view, *pane), point_in_screen);
++    // A full split takes it as a tab of its own.
++    if (PaneCount(view, model) >= split_tabs::kMaxSplitPanes) {
++      edge.reset();
++    }
++    return Target{.pane = *pane, .edge = edge, .window = other};
++  }
++  if (!multi_contents_view_->IsInSplitView()) {
++    return std::nullopt;
++  }
+   const bool rtl = base::i18n::IsRTL();
+   // Close to the border of the split, the pane goes along that whole side,
+   // unless it is there already.
+@@ -327,25 +478,7 @@ std::optional<SplitPaneMover::Target> SplitPaneMover::TargetAt(
+   if (bounds.IsEmpty()) {
+     return std::nullopt;
+   }
+-  const float x = static_cast<float>(point_in_screen.x() - bounds.x()) /
+-                  bounds.width();
+-  const float y = static_cast<float>(point_in_screen.y() - bounds.y()) /
+-                  bounds.height();
+-  if (x >= kSwapAreaStart && x <= kSwapAreaEnd && y >= kSwapAreaStart &&
+-      y <= kSwapAreaEnd) {
+-    return Target{*pane, std::nullopt};
+-  }
+-  // The nearest edge. Like the panes, left and right follow the text
+-  // direction.
+-  const std::pair<float, split_tabs::SplitEdge> edges[] = {
+-      {x, rtl ? split_tabs::SplitEdge::kRight : split_tabs::SplitEdge::kLeft},
+-      {1 - x, rtl ? split_tabs::SplitEdge::kLeft : split_tabs::SplitEdge::kRight},
+-      {y, split_tabs::SplitEdge::kTop},
+-      {1 - y, split_tabs::SplitEdge::kBottom},
+-  };
+-  return Target{*pane, std::ranges::min(edges, {}, [](const auto& edge) {
+-                         return edge.first;
+-                       }).second};
++  return Target{*pane, EdgeAt(bounds, point_in_screen)};
+ }
+ 
+ void SplitPaneMover::OnDragStarted() {
+@@ -388,7 +521,17 @@ void SplitPaneMover::OnDragged(const gfx::Point& point_in_screen) {
+     ShowIndicator(bounds);
+     return;
+   }
+-  gfx::Rect bounds = PaneBoundsInScreen(target_->pane);
++  gfx::Rect bounds;
++  if (target_->window) {
++    MultiContentsView& view = *target_->window->multi_contents_view();
++    // Without an edge, the tab joins the window's tabs.
++    bounds = target_->edge
++                 ? PaneBounds(view, target_->pane)
++                 : AllPaneBounds(
++                       view, *target_->window->browser()->GetTabStripModel());
++  } else {
++    bounds = PaneBoundsInScreen(target_->pane);
++  }
+   if (target_->edge) {
+     const bool rtl = base::i18n::IsRTL();
+     switch (*target_->edge) {
+@@ -513,6 +656,10 @@ std::optional<SplitPaneMover::Rearrangement> SplitPaneMover::Rearrange(
+ }
+ 
+ void SplitPaneMover::Apply(size_t pane, const Target& target) {
++  if (target.window) {
++    MoveToWindow(pane, target);
++    return;
++  }
+   std::optional<Rearrangement> result = Rearrange(pane, target);
+   if (!result) {
+     return;
+@@ -525,3 +672,41 @@ void SplitPaneMover::Apply(size_t pane, const Target& target) {
+     tab_strip_model_->ActivateTabAt(tab_strip_model_->GetIndexOfTab(moved));
+   }
+ }
++
++void SplitPaneMover::MoveToWindow(size_t pane, const Target& target) {
++  // The window may have closed since the drop.
++  BrowserView* const other = target.window.get();
++  const std::vector<BrowserWindowInterface*> windows =
++      GetAllBrowserWindowInterfaces();
++  if (std::ranges::none_of(windows, [other](BrowserWindowInterface* window) {
++        return BrowserView::GetBrowserViewForBrowser(window) == other;
++      })) {
++    return;
++  }
++  TabStripModel* const model = other->browser()->GetTabStripModel();
++  if (!model->GetActiveTab() ||
++      target.pane >= PaneCount(*other->multi_contents_view(), *model)) {
++    return;
++  }
++  tabs::TabInterface* tab = tab_strip_model_->GetActiveTab();
++  if (!tab) {
++    return;
++  }
++  if (const std::optional<split_tabs::SplitTabId> split = tab->GetSplit()) {
++    const std::vector<tabs::TabInterface*> panes =
++        tab_strip_model_->GetSplitData(*split)->ListTabs();
++    if (pane >= panes.size()) {
++      return;
++    }
++    tab = panes[pane];
++  }
++  if (tab->IsSplit()) {
++    tab_strip_model_->RemoveTabFromSplit(tab_strip_model_->GetIndexOfTab(tab));
++  }
++  std::unique_ptr<tabs::TabModel> detached =
++      tab_strip_model_->DetachTabAtForInsertion(
++          tab_strip_model_->GetIndexOfTab(tab));
++  // Moving the window's last tab closes it, along with this object.
++  PlaceTab(std::move(detached), *model, target.pane, target.edge);
++  other->GetWidget()->Activate();
++}
+--- a/chrome/browser/ui/views/frame/split_pane_mover.h
++++ b/chrome/browser/ui/views/frame/split_pane_mover.h
+@@ -11,11 +11,13 @@
+ 
+ #include "base/memory/raw_ptr.h"
+ #include "base/memory/weak_ptr.h"
++#include "base/timer/timer.h"
+ #include "components/split_tabs/split_layout_tree.h"
+ #include "ui/events/event_observer.h"
+ #include "ui/gfx/geometry/point.h"
+ #include "ui/gfx/geometry/rect.h"
+ 
++class BrowserView;
+ class MultiContentsView;
+ class TabStripModel;
+ 
+@@ -28,11 +30,13 @@ class EventMonitor;
+ class Widget;
+ }  // namespace views
+ 
+-// Lets the user rearrange the panes of a split with the pointer. While Cmd+Shift
+-// is held, the pane under the pointer shows a handle in its top-left corner.
+-// Dragging the handle onto the edge of another pane moves the pane to that side
+-// of it; dropping it in the middle of a pane swaps the two. Dropping it close
+-// to the border of the split moves it along that whole side.
++// Lets the user move pages with the pointer. While Cmd+Shift is held, the page
++// under the pointer, or the pane of a split, shows a handle in its top-left
++// corner. In a split, dragging the handle onto the edge of another pane moves
++// the pane to that side of it; dropping it in the middle of a pane swaps the
++// two, and dropping it close to the border of the split moves it along that
++// whole side. Dropped on another window, the tab moves there: beside the pane
++// whose edge it is dropped on, or in the middle, as a tab of its own.
+ class SplitPaneMover : public ui::EventObserver {
+  public:
+   SplitPaneMover(MultiContentsView* multi_contents_view,
+@@ -52,11 +56,13 @@ class SplitPaneMover : public ui::EventObserver {
+ 
+   // Where a dragged pane goes: beside `pane`, or in its place if `edge` is
+   // nullopt. With `split_edge`, it goes along `edge` of the whole split
+-  // instead, and `pane` is unused.
++  // instead, and `pane` is unused. With `window`, it moves to that window,
++  // beside its pane `pane`, or with no `edge` next to its tabs.
+   struct Target {
+     size_t pane = 0;
+     std::optional<split_tabs::SplitEdge> edge;
+     bool split_edge = false;
++    raw_ptr<BrowserView> window = nullptr;
+ 
+     friend bool operator==(const Target&, const Target&) = default;
+   };
+@@ -76,6 +82,9 @@ class SplitPaneMover : public ui::EventObserver {
+   // The area the panes share.
+   gfx::Rect SplitBoundsInScreen() const;
+   std::optional<Target> TargetAt(const gfx::Point& point_in_screen) const;
++  // Another window of the same profile under the pointer, which the tab can
++  // move to.
++  BrowserView* OtherWindowAt(const gfx::Point& point_in_screen) const;
+ 
+   // Called by the handle.
+   void OnDragStarted();
+@@ -90,12 +99,16 @@ class SplitPaneMover : public ui::EventObserver {
+                                          const Target& target) const;
+   // Moves or swaps the dragged pane.
+   void Apply(size_t pane, const Target& target);
++  // Moves the tab of `pane` to `target.window`.
++  void MoveToWindow(size_t pane, const Target& target);
+ 
+   const raw_ptr<MultiContentsView> multi_contents_view_;
+   const raw_ptr<TabStripModel> tab_strip_model_;
+   std::unique_ptr<views::EventMonitor> event_monitor_;
+   std::unique_ptr<views::Widget> handle_widget_;
+   std::unique_ptr<views::Widget> indicator_widget_;
++  // Delays the handle, so that it doesn't flash while typing shortcuts.
++  base::OneShotTimer reveal_timer_;
+   // The pane showing the handle.
+   std::optional<size_t> handle_pane_;
+   bool dragging_ = false;
