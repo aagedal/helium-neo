@@ -305,6 +305,7 @@ helium/ui/generic-translate-icon.patch
 helium/ui/remove-dead-profile-actions.patch
 helium/ui/clean-up-installed-extension-bubble.patch
 helium/ui/add-specific-error-for-disabled-extension-downloads.patch
+helium/ui/add-copy-download-link-context-menu.patch
 helium/ui/selected-keyword-view.patch
 helium/ui/bookmark-button-bg-fix.patch
 helium/ui/restyle-ntp-tiles.patch
@@ -410,3 +411,10 @@ helium/ui/screenshot-quick-save.patch
 helium/ui/macos-webkit-marker-header.patch
 helium/ui/pinned-tab-startup.patch
 helium/ui/macos-webkit-declared-favicon.patch
+helium/ui/multi-pane-split-menus.patch
+helium/ui/split-layout-tree.patch
+helium/ui/frameless-progress-bar.patch
+helium/ui/split-edge-drops.patch
+helium/ui/split-pane-mover.patch
+helium/ui/split-scale-sides.patch
+helium/ui/split-active-pane-outline.patch

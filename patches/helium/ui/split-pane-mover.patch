@@ -1,0 +1,599 @@
+--- a/chrome/browser/ui/views/frame/BUILD.gn
++++ b/chrome/browser/ui/views/frame/BUILD.gn
+@@ -3328,7 +3328,11 @@ source_set("multi_contents_view") {
+ }
+ 
+ source_set("multi_contents_view_impl") {
+-  sources = [ "multi_contents_view.cc" ]
++  sources = [
++    "multi_contents_view.cc",
++    "split_pane_mover.cc",
++    "split_pane_mover.h",
++  ]
+   public_deps = [
+     ":multi_contents_view",
+     "//chrome/browser:browser_public_dependencies",
+@@ -3349,6 +3353,7 @@ source_set("multi_contents_view_impl") {
+     ":scrim_view",
+     ":themed_background",
+     "//base",
++    "//chrome/app/vector_icons",
+     "//chrome/browser:browser_process",
+     "//chrome/browser/actor/ui:actor_overlay_web_view",
+     "//chrome/browser/profiles:profile",
+--- a/chrome/browser/ui/views/frame/multi_contents_view.cc
++++ b/chrome/browser/ui/views/frame/multi_contents_view.cc
+@@ -29,6 +29,7 @@
+ #include "chrome/browser/ui/views/frame/multi_contents_resize_area.h"
+ #include "chrome/browser/ui/views/frame/multi_contents_view_delegate.h"
+ #include "chrome/browser/ui/views/frame/multi_contents_view_drop_target_controller.h"
++#include "chrome/browser/ui/views/frame/split_pane_mover.h"
+ #include "chrome/browser/ui/views/frame/safe_invoke/safe_invoke.h"
+ #include "chrome/browser/ui/views/frame/scrim_view.h"
+ #include "chrome/browser/ui/views/frame/themed_background.h"
+@@ -211,6 +212,7 @@ MultiContentsView::MultiContentsView(
+ }
+ 
+ MultiContentsView::~MultiContentsView() {
++  pane_mover_.reset();
+   // Clear the map and vectors before `RemoveAllChildViews()` to avoid having
+   // dangling pointers.
+   container_focusable_map_.clear();
+@@ -331,6 +333,12 @@ void MultiContentsView::ShowSplitView(
+   layout_tree_ = visual_data.GetTree(pane_count_);
+   resize_area_->SetVisible(true);
+   UpdatePaneResizeAreas();
++  if (pane_mover_) {
++    pane_mover_->Reset();
++  } else if (GetWidget()) {
++    pane_mover_ = std::make_unique<SplitPaneMover>(
++        this, browser_view_->browser()->tab_strip_model());
++  }
+   UpdateContentsBorderAndOverlay();
+   InvalidateLayout();
+ }
+@@ -354,6 +362,9 @@ void MultiContentsView::CloseSplitView() {
+   UpdatePaneResizeAreas();
+   divider_resize_state_.reset();
+   resize_area_->SetVisible(false);
++  if (pane_mover_) {
++    pane_mover_->Reset();
++  }
+   UpdateContentsBorderAndOverlay();
+ 
+   SafeInvoke(GetActiveContentsView()->web_contents())
+--- a/chrome/browser/ui/views/frame/multi_contents_view.h
++++ b/chrome/browser/ui/views/frame/multi_contents_view.h
+@@ -31,6 +31,7 @@ class MultiContentsDropTargetView;
+ class MultiContentsResizeArea;
+ class MultiContentsViewDelegate;
+ class MultiContentsViewDropTargetController;
++class SplitPaneMover;
+ 
+ namespace content {
+ class WebContents;
+@@ -380,6 +381,10 @@ class MultiContentsView
+   // `visual_data_` for `pane_count_` panes.
+   split_tabs::SplitLayoutTree layout_tree_;
+ 
++  // Moves panes with the pointer while Cmd+Shift is held. Created with the
++  // first split.
++  std::unique_ptr<SplitPaneMover> pane_mover_;
++
+   // See `SetTargetContentBounds()`.
+   std::optional<TargetContentBounds> target_content_bounds_;
+ 
+--- /dev/null
++++ b/chrome/browser/ui/views/frame/split_pane_mover.cc
+@@ -0,0 +1,423 @@
++// Copyright 2026 The Helium Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#include "chrome/browser/ui/views/frame/split_pane_mover.h"
++
++#include <algorithm>
++#include <utility>
++#include <vector>
++
++#include "base/functional/bind.h"
++#include "base/i18n/rtl.h"
++#include "base/task/sequenced_task_runner.h"
++#include "cc/paint/paint_flags.h"
++#include "chrome/app/vector_icons/vector_icons.h"
++#include "chrome/browser/ui/tabs/tab_strip_model.h"
++#include "chrome/browser/ui/views/frame/contents_container_view.h"
++#include "chrome/browser/ui/views/frame/multi_contents_view.h"
++#include "components/split_tabs/split_tab_visual_data.h"
++#include "components/tabs/public/split_tab_data.h"
++#include "components/tabs/public/tab_interface.h"
++#include "third_party/skia/include/core/SkColor.h"
++#include "ui/base/cursor/cursor.h"
++#include "ui/base/cursor/mojom/cursor_type.mojom-shared.h"
++#include "ui/base/metadata/metadata_header_macros.h"
++#include "ui/base/metadata/metadata_impl_macros.h"
++#include "ui/base/models/image_model.h"
++#include "ui/color/color_id.h"
++#include "ui/color/color_provider.h"
++#include "ui/display/screen.h"
++#include "ui/events/event.h"
++#include "ui/events/keycodes/keyboard_codes.h"
++#include "ui/gfx/canvas.h"
++#include "ui/gfx/geometry/rect_f.h"
++#include "ui/views/accessibility/view_accessibility.h"
++#include "ui/views/background.h"
++#include "ui/views/border.h"
++#include "ui/views/controls/image_view.h"
++#include "ui/views/event_monitor.h"
++#include "ui/views/layout/fill_layout.h"
++#include "ui/views/widget/widget.h"
++
++namespace {
++
++constexpr int kHandleSize = 28;
++constexpr int kHandleIconSize = 16;
++constexpr int kHandleInset = 8;
++constexpr int kCornerRadius = 8;
++// Share of a pane's width and height, around its center, that swaps panes
++// rather than placing the dragged one beside it.
++constexpr float kSwapAreaStart = 0.3f;
++constexpr float kSwapAreaEnd = 0.7f;
++constexpr int kModifiers = ui::EF_SHIFT_DOWN | ui::EF_CONTROL_DOWN |
++                           ui::EF_ALT_DOWN | ui::EF_COMMAND_DOWN;
++constexpr int kRevealModifiers = ui::EF_COMMAND_DOWN | ui::EF_SHIFT_DOWN;
++
++// Marks where the dragged pane will go.
++class Indicator : public views::View {
++  METADATA_HEADER(Indicator, views::View)
++
++ public:
++  Indicator() = default;
++  Indicator(const Indicator&) = delete;
++  Indicator& operator=(const Indicator&) = delete;
++  ~Indicator() override = default;
++
++  // views::View:
++  void OnPaint(gfx::Canvas* canvas) override {
++    const SkColor color = GetColorProvider()->GetColor(ui::kColorSysPrimary);
++    gfx::RectF bounds(GetLocalBounds());
++    bounds.Inset(1);
++    cc::PaintFlags flags;
++    flags.setAntiAlias(true);
++    flags.setColor(SkColorSetA(color, 0x40));
++    canvas->DrawRoundRect(bounds, kCornerRadius, flags);
++    flags.setStyle(cc::PaintFlags::kStroke_Style);
++    flags.setStrokeWidth(2);
++    flags.setColor(color);
++    canvas->DrawRoundRect(bounds, kCornerRadius, flags);
++  }
++};
++
++BEGIN_METADATA(Indicator)
++END_METADATA
++
++std::unique_ptr<views::Widget> CreatePopup(views::Widget* parent,
++                                           bool accept_events) {
++  auto widget = std::make_unique<views::Widget>();
++  views::Widget::InitParams params(
++      views::Widget::InitParams::CLIENT_OWNS_WIDGET,
++      views::Widget::InitParams::TYPE_POPUP);
++  params.opacity = views::Widget::InitParams::WindowOpacity::kTranslucent;
++  params.activatable = views::Widget::InitParams::Activatable::kNo;
++  params.accept_events = accept_events;
++  params.shadow_type = views::Widget::InitParams::ShadowType::kNone;
++  params.parent = parent->GetNativeView();
++  params.name = "SplitPaneMover";
++  widget->Init(std::move(params));
++  return widget;
++}
++
++}  // namespace
++
++// The grip shown in the corner of the pane under the pointer.
++class SplitPaneMover::Handle : public views::View {
++  METADATA_HEADER(Handle, views::View)
++
++ public:
++  explicit Handle(SplitPaneMover* mover) : mover_(mover) {
++    SetLayoutManager(std::make_unique<views::FillLayout>());
++    AddChildView(std::make_unique<views::ImageView>(ui::ImageModel::FromVectorIcon(
++        kHeliumDragIndicatorIcon, ui::kColorIcon, kHandleIconSize)));
++    SetBackground(views::CreateRoundedRectBackground(ui::kColorSysSurface,
++                                                     kCornerRadius));
++    SetBorder(views::CreateRoundedRectBorder(1, kCornerRadius,
++                                             ui::kColorSysDivider));
++    SetPreferredSize(gfx::Size(kHandleSize, kHandleSize));
++    // Only reachable with the pointer, so keep it out of the accessibility
++    // tree.
++    GetViewAccessibility().SetIsIgnored(true);
++  }
++  Handle(const Handle&) = delete;
++  Handle& operator=(const Handle&) = delete;
++  ~Handle() override = default;
++
++  // views::View:
++  ui::Cursor GetCursor(const ui::MouseEvent& event) override {
++    return ui::Cursor(ui::mojom::CursorType::kGrab);
++  }
++
++  bool OnMousePressed(const ui::MouseEvent& event) override {
++    if (!event.IsOnlyLeftMouseButton()) {
++      return false;
++    }
++    mover_->OnDragStarted();
++    return true;
++  }
++
++  bool OnMouseDragged(const ui::MouseEvent& event) override {
++    gfx::Point point = event.location();
++    views::View::ConvertPointToScreen(this, &point);
++    mover_->OnDragged(point);
++    return true;
++  }
++
++  void OnMouseReleased(const ui::MouseEvent& event) override {
++    mover_->OnDragEnded(/*cancelled=*/false);
++  }
++
++  void OnMouseCaptureLost() override {
++    mover_->OnDragEnded(/*cancelled=*/true);
++  }
++
++ private:
++  const raw_ptr<SplitPaneMover> mover_;
++};
++
++BEGIN_METADATA(SplitPaneMover, Handle)
++END_METADATA
++
++SplitPaneMover::SplitPaneMover(MultiContentsView* multi_contents_view,
++                               TabStripModel* tab_strip_model)
++    : multi_contents_view_(multi_contents_view),
++      tab_strip_model_(tab_strip_model) {
++  StartMonitoring();
++}
++
++SplitPaneMover::~SplitPaneMover() = default;
++
++void SplitPaneMover::Reset() {
++  if (dragging_ && handle_widget_) {
++    // Ends the drag through OnDragEnded().
++    handle_widget_->ReleaseCapture();
++  }
++  dragging_ = false;
++  target_.reset();
++  HideIndicator();
++  handle_pane_.reset();
++  if (handle_widget_) {
++    handle_widget_->Hide();
++  }
++}
++
++void SplitPaneMover::OnEvent(const ui::Event& event) {
++  if (!multi_contents_view_->IsInSplitView()) {
++    Reset();
++    return;
++  }
++  int flags = event.flags();
++  if (event.IsKeyEvent()) {
++    const ui::KeyEvent* key = event.AsKeyEvent();
++    if (dragging_ && key->type() == ui::EventType::kKeyPressed &&
++        key->key_code() == ui::VKEY_ESCAPE) {
++      Reset();
++      return;
++    }
++    // The flags of a modifier's release may still include it.
++    if (key->type() == ui::EventType::kKeyReleased) {
++      switch (key->key_code()) {
++        case ui::VKEY_SHIFT:
++        case ui::VKEY_LSHIFT:
++        case ui::VKEY_RSHIFT:
++          flags &= ~ui::EF_SHIFT_DOWN;
++          break;
++        case ui::VKEY_LWIN:
++        case ui::VKEY_RWIN:
++          flags &= ~ui::EF_COMMAND_DOWN;
++          break;
++        default:
++          break;
++      }
++    }
++  }
++  UpdateHandle((flags & kModifiers) == kRevealModifiers);
++}
++
++void SplitPaneMover::StartMonitoring() {
++  views::Widget* widget = multi_contents_view_->GetWidget();
++  if (!widget || !widget->GetNativeWindow()) {
++    return;
++  }
++  event_monitor_ = views::EventMonitor::CreateWindowMonitor(
++      this, widget->GetNativeWindow(),
++      {ui::EventType::kMouseMoved, ui::EventType::kKeyPressed,
++       ui::EventType::kKeyReleased});
++}
++
++void SplitPaneMover::UpdateHandle(bool modifiers_down) {
++  if (dragging_) {
++    return;
++  }
++  handle_pane_ =
++      modifiers_down
++          ? PaneAt(display::Screen::Get()->GetCursorScreenPoint())
++          : std::nullopt;
++  if (!handle_pane_) {
++    if (handle_widget_) {
++      handle_widget_->Hide();
++    }
++    return;
++  }
++  if (!handle_widget_) {
++    handle_widget_ = CreatePopup(multi_contents_view_->GetWidget(),
++                                 /*accept_events=*/true);
++    handle_widget_->SetContentsView(std::make_unique<Handle>(this));
++  }
++  const gfx::Rect pane = PaneBoundsInScreen(*handle_pane_);
++  const int x = base::i18n::IsRTL()
++                    ? pane.right() - kHandleInset - kHandleSize
++                    : pane.x() + kHandleInset;
++  handle_widget_->SetBounds(
++      gfx::Rect(x, pane.y() + kHandleInset, kHandleSize, kHandleSize));
++  if (!handle_widget_->IsVisible()) {
++    handle_widget_->ShowInactive();
++  }
++}
++
++std::optional<size_t> SplitPaneMover::PaneAt(
++    const gfx::Point& point_in_screen) const {
++  const tabs::TabInterface* active = tab_strip_model_->GetActiveTab();
++  if (!active || !active->GetSplit()) {
++    return std::nullopt;
++  }
++  const size_t count = std::min(
++      tab_strip_model_->GetSplitData(*active->GetSplit())->ListTabs().size(),
++      multi_contents_view_->contents_container_views().size());
++  for (size_t pane = 0; pane < count; ++pane) {
++    if (PaneBoundsInScreen(pane).Contains(point_in_screen)) {
++      return pane;
++    }
++  }
++  return std::nullopt;
++}
++
++gfx::Rect SplitPaneMover::PaneBoundsInScreen(size_t pane) const {
++  return multi_contents_view_->contents_container_views()[pane]
++      ->GetBoundsInScreen();
++}
++
++std::optional<SplitPaneMover::Target> SplitPaneMover::TargetAt(
++    const gfx::Point& point_in_screen) const {
++  const std::optional<size_t> pane = PaneAt(point_in_screen);
++  if (!pane || pane == handle_pane_) {
++    return std::nullopt;
++  }
++  const gfx::Rect bounds = PaneBoundsInScreen(*pane);
++  if (bounds.IsEmpty()) {
++    return std::nullopt;
++  }
++  const float x = static_cast<float>(point_in_screen.x() - bounds.x()) /
++                  bounds.width();
++  const float y = static_cast<float>(point_in_screen.y() - bounds.y()) /
++                  bounds.height();
++  if (x >= kSwapAreaStart && x <= kSwapAreaEnd && y >= kSwapAreaStart &&
++      y <= kSwapAreaEnd) {
++    return Target{*pane, std::nullopt};
++  }
++  // The nearest edge. Like the panes, left and right follow the text
++  // direction.
++  const bool rtl = base::i18n::IsRTL();
++  const std::pair<float, split_tabs::SplitEdge> edges[] = {
++      {x, rtl ? split_tabs::SplitEdge::kRight : split_tabs::SplitEdge::kLeft},
++      {1 - x, rtl ? split_tabs::SplitEdge::kLeft : split_tabs::SplitEdge::kRight},
++      {y, split_tabs::SplitEdge::kTop},
++      {1 - y, split_tabs::SplitEdge::kBottom},
++  };
++  return Target{*pane, std::ranges::min(edges, {}, [](const auto& edge) {
++                         return edge.first;
++                       }).second};
++}
++
++void SplitPaneMover::OnDragStarted() {
++  dragging_ = handle_pane_.has_value();
++  target_.reset();
++}
++
++void SplitPaneMover::OnDragged(const gfx::Point& point_in_screen) {
++  if (!dragging_) {
++    return;
++  }
++  const std::optional<Target> target = TargetAt(point_in_screen);
++  if (target == target_) {
++    return;
++  }
++  target_ = target;
++  if (!target_) {
++    HideIndicator();
++    return;
++  }
++  gfx::Rect bounds = PaneBoundsInScreen(target_->pane);
++  if (target_->edge) {
++    const bool rtl = base::i18n::IsRTL();
++    switch (*target_->edge) {
++      case split_tabs::SplitEdge::kLeft:
++      case split_tabs::SplitEdge::kRight: {
++        const bool physical_left =
++            (*target_->edge == split_tabs::SplitEdge::kLeft) != rtl;
++        const int half = bounds.width() / 2;
++        bounds = gfx::Rect(physical_left ? bounds.x() : bounds.right() - half,
++                           bounds.y(), half, bounds.height());
++        break;
++      }
++      case split_tabs::SplitEdge::kTop:
++        bounds.set_height(bounds.height() / 2);
++        break;
++      case split_tabs::SplitEdge::kBottom:
++        bounds = gfx::Rect(bounds.x(), bounds.bottom() - bounds.height() / 2,
++                           bounds.width(), bounds.height() / 2);
++        break;
++    }
++  }
++  ShowIndicator(bounds);
++}
++
++void SplitPaneMover::OnDragEnded(bool cancelled) {
++  if (!dragging_) {
++    return;
++  }
++  dragging_ = false;
++  const std::optional<size_t> pane = handle_pane_;
++  const std::optional<Target> target = target_;
++  target_.reset();
++  HideIndicator();
++  handle_pane_.reset();
++  if (handle_widget_) {
++    handle_widget_->Hide();
++  }
++  if (cancelled || !pane || !target) {
++    return;
++  }
++  // Rearranging recreates the split, which resets this object; leave the
++  // handle's event first.
++  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
++      FROM_HERE, base::BindOnce(&SplitPaneMover::Apply,
++                                weak_factory_.GetWeakPtr(), *pane, *target));
++}
++
++void SplitPaneMover::ShowIndicator(const gfx::Rect& bounds_in_screen) {
++  if (!indicator_widget_) {
++    indicator_widget_ = CreatePopup(multi_contents_view_->GetWidget(),
++                                    /*accept_events=*/false);
++    indicator_widget_->SetContentsView(std::make_unique<Indicator>());
++  }
++  indicator_widget_->SetBounds(bounds_in_screen);
++  if (!indicator_widget_->IsVisible()) {
++    indicator_widget_->ShowInactive();
++  }
++}
++
++void SplitPaneMover::HideIndicator() {
++  if (indicator_widget_) {
++    indicator_widget_->Hide();
++  }
++}
++
++void SplitPaneMover::Apply(size_t pane, const Target& target) {
++  const tabs::TabInterface* active = tab_strip_model_->GetActiveTab();
++  if (!active || !active->GetSplit()) {
++    return;
++  }
++  const split_tabs::SplitTabId split = *active->GetSplit();
++  const split_tabs::SplitTabData* data = tab_strip_model_->GetSplitData(split);
++  std::vector<tabs::TabInterface*> tabs = data->ListTabs();
++  if (pane >= tabs.size() || target.pane >= tabs.size() ||
++      pane == target.pane) {
++    return;
++  }
++  split_tabs::SplitLayoutTree tree = data->visual_data()->GetTree(tabs.size());
++  tabs::TabInterface* const moved = tabs[pane];
++  if (!target.edge) {
++    // Swap places; the layout stays.
++    std::swap(tabs[pane], tabs[target.pane]);
++  } else {
++    tree.RemovePane(pane);
++    tabs.erase(tabs.begin() + pane);
++    const size_t beside = target.pane > pane ? target.pane - 1 : target.pane;
++    const size_t position = tree.InsertPane(beside, *target.edge);
++    tabs.insert(tabs.begin() + position, moved);
++  }
++  if (tab_strip_model_->SetSplitPanes(split, tabs, std::move(tree))) {
++    tab_strip_model_->ActivateTabAt(tab_strip_model_->GetIndexOfTab(moved));
++  }
++}
+--- /dev/null
++++ b/chrome/browser/ui/views/frame/split_pane_mover.h
+@@ -0,0 +1,85 @@
++// Copyright 2026 The Helium Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_VIEWS_FRAME_SPLIT_PANE_MOVER_H_
++#define CHROME_BROWSER_UI_VIEWS_FRAME_SPLIT_PANE_MOVER_H_
++
++#include <memory>
++#include <optional>
++
++#include "base/memory/raw_ptr.h"
++#include "base/memory/weak_ptr.h"
++#include "components/split_tabs/split_layout_tree.h"
++#include "ui/events/event_observer.h"
++#include "ui/gfx/geometry/point.h"
++#include "ui/gfx/geometry/rect.h"
++
++class MultiContentsView;
++class TabStripModel;
++
++namespace views {
++class EventMonitor;
++class Widget;
++}  // namespace views
++
++// Lets the user rearrange the panes of a split with the pointer. While Cmd+Shift
++// is held, the pane under the pointer shows a handle in its top-left corner.
++// Dragging the handle onto the edge of another pane moves the pane to that side
++// of it; dropping it in the middle of a pane swaps the two.
++class SplitPaneMover : public ui::EventObserver {
++ public:
++  SplitPaneMover(MultiContentsView* multi_contents_view,
++                 TabStripModel* tab_strip_model);
++  SplitPaneMover(const SplitPaneMover&) = delete;
++  SplitPaneMover& operator=(const SplitPaneMover&) = delete;
++  ~SplitPaneMover() override;
++
++  // Hides the handle, for example when the split ends.
++  void Reset();
++
++  // ui::EventObserver:
++  void OnEvent(const ui::Event& event) override;
++
++ private:
++  class Handle;
++
++  // Where a dragged pane goes: beside `pane`, or in its place if `edge` is
++  // nullopt.
++  struct Target {
++    size_t pane = 0;
++    std::optional<split_tabs::SplitEdge> edge;
++
++    friend bool operator==(const Target&, const Target&) = default;
++  };
++
++  void StartMonitoring();
++  // Shows or hides the handle for the pane under the pointer.
++  void UpdateHandle(bool modifiers_down);
++  std::optional<size_t> PaneAt(const gfx::Point& point_in_screen) const;
++  gfx::Rect PaneBoundsInScreen(size_t pane) const;
++  std::optional<Target> TargetAt(const gfx::Point& point_in_screen) const;
++
++  // Called by the handle.
++  void OnDragStarted();
++  void OnDragged(const gfx::Point& point_in_screen);
++  void OnDragEnded(bool cancelled);
++
++  void ShowIndicator(const gfx::Rect& bounds_in_screen);
++  void HideIndicator();
++  // Moves or swaps the dragged pane.
++  void Apply(size_t pane, const Target& target);
++
++  const raw_ptr<MultiContentsView> multi_contents_view_;
++  const raw_ptr<TabStripModel> tab_strip_model_;
++  std::unique_ptr<views::EventMonitor> event_monitor_;
++  std::unique_ptr<views::Widget> handle_widget_;
++  std::unique_ptr<views::Widget> indicator_widget_;
++  // The pane showing the handle.
++  std::optional<size_t> handle_pane_;
++  bool dragging_ = false;
++  std::optional<Target> target_;
++  base::WeakPtrFactory<SplitPaneMover> weak_factory_{this};
++};
++
++#endif  // CHROME_BROWSER_UI_VIEWS_FRAME_SPLIT_PANE_MOVER_H_
