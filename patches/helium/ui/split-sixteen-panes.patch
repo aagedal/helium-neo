@@ -1,0 +1,121 @@
+--- a/chrome/browser/ui/tabs/pinned_tab_codec.cc
++++ b/chrome/browser/ui/tabs/pinned_tab_codec.cc
+@@ -114,8 +114,8 @@ std::optional<StartupTab> DecodeTab(const base::DictValue& value) {
+     if (id && !id->empty() && layout && *layout >= 0 && *layout <= 1 &&
+         arrangement && *arrangement >= 0 && *arrangement <= 4 && ratio &&
+         std::isfinite(*ratio) && *ratio > 0 && *ratio < 1 && weights &&
+-        weights->size() == split_tabs::kMaxSplitPanes) {
+-      std::array<double, split_tabs::kMaxSplitPanes> sizes;
++        weights->size() == split_tabs::kLegacySplitPaneWeights) {
++      std::array<double, split_tabs::kLegacySplitPaneWeights> sizes;
+       for (size_t i = 0; i < sizes.size(); ++i) {
+         if (!(*weights)[i].is_double() && !(*weights)[i].is_int()) {
+           return tab;
+--- a/components/sessions/core/session_service_commands.cc
++++ b/components/sessions/core/session_service_commands.cc
+@@ -856,8 +856,8 @@ bool CreateTabsAndWindows(
+         int arrangement = 0;
+         if (iter.ReadInt(&arrangement) && arrangement >= 0 && arrangement <= 4) {
+           // Optional tail: older commands keep equal subdivisions.
+-          std::array<double, split_tabs::kMaxSplitPanes> weights = {1, 1, 1,
+-                                                                    1, 1, 1};
++          std::array<double, split_tabs::kLegacySplitPaneWeights> weights = {
++              1, 1, 1, 1, 1, 1};
+           // Older custom sessions contain four weights; the extra two are an
+           // optional tail so existing sessions continue to restore unchanged.
+           bool complete = true;
+--- a/components/split_tabs/split_tab_visual_data.cc
++++ b/components/split_tabs/split_tab_visual_data.cc
+@@ -14,7 +14,7 @@ SplitLayoutTree SplitLayoutTreeFromArrangement(
+     SplitTabLayout layout,
+     SplitTabArrangement arrangement,
+     double ratio,
+-    const std::array<double, kMaxSplitPanes>& weights) {
++    const std::array<double, kLegacySplitPaneWeights>& weights) {
+   count = std::min(count, kMaxSplitPanes);
+   if (count < 2) {
+     return SplitLayoutTree::Linear(count, SplitAxisForLayout(layout));
+@@ -34,7 +34,8 @@ SplitLayoutTree SplitLayoutTreeFromArrangement(
+                     ? SplitAxis::kColumn
+                     : SplitAxis::kRow;
+     for (size_t i = first; i < first + size; ++i) {
+-      node.children.push_back(SplitLayoutNode{.weight = weights[i]});
++      node.children.push_back(
++          SplitLayoutNode{.weight = i < weights.size() ? weights[i] : 1});
+     }
+     return node;
+   };
+@@ -75,7 +76,7 @@ SplitTabVisualData SplitTabVisualData::FromArrangement(
+     SplitTabLayout split_layout,
+     double split_ratio,
+     SplitTabArrangement arrangement,
+-    const std::array<double, kMaxSplitPanes>& weights) {
++    const std::array<double, kLegacySplitPaneWeights>& weights) {
+   SplitTabVisualData data(split_layout, split_ratio);
+   data.arrangement_ =
+       Arrangement{split_layout, split_ratio, arrangement, weights};
+@@ -134,9 +135,11 @@ SplitTabArrangement SplitTabVisualData::arrangement() const {
+   return arrangement_ ? arrangement_->arrangement : SplitTabArrangement::kGrid;
+ }
+ 
+-std::array<double, kMaxSplitPanes> SplitTabVisualData::pane_weights() const {
++std::array<double, kLegacySplitPaneWeights> SplitTabVisualData::pane_weights()
++    const {
+   return arrangement_ ? arrangement_->weights
+-                      : std::array<double, kMaxSplitPanes>{1, 1, 1, 1, 1, 1};
++                      : std::array<double, kLegacySplitPaneWeights>{
++                            1, 1, 1, 1, 1, 1};
+ }
+ 
+ }  // namespace split_tabs
+--- a/components/split_tabs/split_tab_visual_data.h
++++ b/components/split_tabs/split_tab_visual_data.h
+@@ -15,7 +15,10 @@
+ 
+ namespace split_tabs {
+ 
+-inline constexpr size_t kMaxSplitPanes = 6;
++inline constexpr size_t kMaxSplitPanes = 16;
++// Number of pane sizes layouts of earlier versions saved, which are still in
++// the session and pinned tab formats.
++inline constexpr size_t kLegacySplitPaneWeights = 6;
+ 
+ // Orientation of a split view. Needs to be kept in sync with
+ // tab_search::mojom::SplitTabLayout in
+@@ -88,7 +91,8 @@ SplitLayoutTree SplitLayoutTreeFromArrangement(
+     SplitTabLayout layout,
+     SplitTabArrangement arrangement,
+     double ratio,
+-    const std::array<double, kMaxSplitPanes>& weights = {1, 1, 1, 1, 1, 1});
++    const std::array<double, kLegacySplitPaneWeights>& weights = {1, 1, 1, 1,
++                                                                  1, 1});
+ 
+ // Represents the visual state of a split tab: how its panes are arranged and
+ // sized.
+@@ -113,7 +117,7 @@ class SplitTabVisualData {
+       SplitTabLayout split_layout,
+       double split_ratio,
+       SplitTabArrangement arrangement,
+-      const std::array<double, kMaxSplitPanes>& weights);
++      const std::array<double, kLegacySplitPaneWeights>& weights);
+ 
+   // The axis of the outermost divider. Setting another one swaps rows and
+   // columns throughout the layout.
+@@ -134,7 +138,7 @@ class SplitTabVisualData {
+   std::string SerializedTree() const;
+   // The fields earlier versions saved, for the session format they read.
+   SplitTabArrangement arrangement() const;
+-  std::array<double, kMaxSplitPanes> pane_weights() const;
++  std::array<double, kLegacySplitPaneWeights> pane_weights() const;
+ 
+   // Checks whether two instances are visually equivalent.
+   friend bool operator==(const SplitTabVisualData&,
+@@ -145,7 +149,7 @@ class SplitTabVisualData {
+     SplitTabLayout layout = SplitTabLayout::kSideBySide;
+     double ratio = 0.5;
+     SplitTabArrangement arrangement = SplitTabArrangement::kGrid;
+-    std::array<double, kMaxSplitPanes> weights = {1, 1, 1, 1, 1, 1};
++    std::array<double, kLegacySplitPaneWeights> weights = {1, 1, 1, 1, 1, 1};
+ 
+     friend bool operator==(const Arrangement&, const Arrangement&) = default;
+   };
