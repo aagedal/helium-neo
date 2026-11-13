@@ -1,0 +1,516 @@
+--- a/chrome/app/generated_resources.grd
++++ b/chrome/app/generated_resources.grd
+@@ -288,6 +288,12 @@
+       <message name="IDS_HELIUM_CREATE_FOUR_PANE_SPLIT" desc="Tab context menu action creating a grid with this tab and three new tabs.">Create Four-Way Split</message>
+       <message name="IDS_HELIUM_EXPAND_FOUR_PANE_SPLIT" desc="Tab context menu action adding new tabs to fill an existing split to four panes.">Expand to Four-Way Split</message>
+       <message name="IDS_HELIUM_TAB_VIEW" desc="Tab menu submenu for individual tab preview and refresh settings.">Tab view</message>
++      <message name="IDS_HELIUM_SAVE_SPLIT_LAYOUT" desc="Split Layout submenu item that saves the arrangement of the split's panes under a name, to apply to other splits.">Save Current Layout…</message>
++      <message name="IDS_HELIUM_REMOVE_SPLIT_LAYOUT" desc="Split Layout submenu listing saved layouts to delete.">Remove Saved Layout</message>
++      <message name="IDS_HELIUM_SAVE_SPLIT_LAYOUT_TITLE" desc="Title of the dialog naming a split layout to save.">Save Split Layout</message>
++      <message name="IDS_HELIUM_SAVE_SPLIT_LAYOUT_NAME" desc="Accessible name of the text field for the name of a saved split layout.">Layout name</message>
++      <message name="IDS_HELIUM_SAVE_SPLIT_LAYOUT_BUTTON" desc="Button saving a split layout under the entered name.">Save</message>
++      <message name="IDS_HELIUM_SPLIT_LAYOUT_DEFAULT_NAME" desc="Suggested name for a saved split layout.">Layout <ph name="NUMBER">$1<ex>2</ex></ph></message>
+       <message name="IDS_HELIUM_ADD_TO_CURRENT_SPLIT" desc="Tab context menu action adding this tab as a new pane of the split shown in the window.">Add to Current Split</message>
+       <message name="IDS_HELIUM_TAB_SWITCHER_TITLE" desc="Accessible title of the overlay listing the tabs Ctrl+Tab cycles through.">Tab switcher</message>
+       <message name="IDS_HELIUM_TAB_SWITCHER_POSITION" desc="Shown in the tab switcher overlay below the tabs: the position of the selected tab in the cycle, and the number of tabs in it."><ph name="POSITION">$1<ex>3</ex></ph> of <ph name="COUNT">$2<ex>12</ex></ph></message>
+--- a/chrome/browser/ui/tabs/BUILD.gn
++++ b/chrome/browser/ui/tabs/BUILD.gn
+@@ -232,6 +232,8 @@ if (!is_android) {
+ 
+     sources = [
+       "glic_tab_sub_menu_model.cc",
++      "split_layout_templates.cc",
++      "split_layout_templates.h",
+       "tab_menu_model.cc",
+     ]
+ 
+@@ -249,6 +251,7 @@ if (!is_android) {
+       "//chrome/browser/profiles:profile",
+       "//chrome/browser/send_tab_to_self",
+       "//chrome/browser/ui:ui_features",
++      "//chrome/browser/ui/dialogs:browser_dialogs",
+       "//chrome/browser/ui/immersive:immersive_mode_controller",
+       "//chrome/browser/ui/send_tab_to_self",
+       "//chrome/browser/ui/web_applications",
+--- a/chrome/browser/ui/tabs/tab_menu_model.cc
++++ b/chrome/browser/ui/tabs/tab_menu_model.cc
+@@ -37,6 +37,7 @@
+ #include "chrome/browser/ui/tabs/features.h"
+ #include "chrome/browser/ui/tabs/glic_tab_sub_menu_model.h"
+ #include "chrome/browser/ui/tabs/pane_settings_menu_model.h"
++#include "chrome/browser/ui/tabs/split_layout_templates.h"
+ #include "chrome/browser/ui/tabs/split_tab_menu_model.h"
+ #include "chrome/browser/ui/tabs/split_tab_mute_menu_model.h"
+ #include "chrome/browser/ui/tabs/split_tab_swap_menu_model.h"
+@@ -137,6 +138,17 @@ constexpr PaneLayoutOption kPaneLayouts[] = {
+      split_tabs::SplitTabArrangement::kLeadingStacked, IDS_HELIUM_LAYOUT_TWO_LEFT_THREE_COLUMNS},
+ };
+ constexpr int kFirstPaneLayoutCommand = 2050;
++// Commands for layouts the user saved follow the built-in layouts.
++constexpr int kSaveSplitLayoutCommand = 2066;
++constexpr int kRemoveSplitLayoutCommand = 2067;
++constexpr int kFirstSavedLayoutCommand = 2068;
++constexpr int kFirstRemoveSavedLayoutCommand =
++    kFirstSavedLayoutCommand + kMaxSplitLayoutTemplates;
++static_assert(kFirstPaneLayoutCommand + std::size(kPaneLayouts) <=
++              kSaveSplitLayoutCommand);
++// Pane commands end before 2100.
++static_assert(kFirstRemoveSavedLayoutCommand + kMaxSplitLayoutTemplates <=
++              2100);
+ 
+ split_tabs::SplitLayoutTree PaneLayoutTree(const PaneLayoutOption& option) {
+   return split_tabs::SplitLayoutTreeFromArrangement(
+@@ -144,55 +156,136 @@ split_tabs::SplitLayoutTree PaneLayoutTree(const PaneLayoutOption& option) {
+       split_tabs::DefaultSplitPaneRatio(option.count, option.arrangement));
+ }
+ 
++class RemoveSplitLayoutMenuModel : public ui::SimpleMenuModel,
++                                   public ui::SimpleMenuModel::Delegate {
++ public:
++  RemoveSplitLayoutMenuModel(Profile* profile,
++                             const std::vector<SplitLayoutTemplate>& templates)
++      : ui::SimpleMenuModel(this), profile_(profile->GetWeakPtr()) {
++    for (size_t i = 0; i < templates.size(); ++i) {
++      names_.push_back(templates[i].name);
++      AddItem(kFirstRemoveSavedLayoutCommand + i, templates[i].name);
++      SetIcon(GetItemCount() - 1, SplitLayoutIcon(templates[i].tree));
++    }
++  }
++
++  void ExecuteCommand(int command, int event_flags) override {
++    const size_t index = command - kFirstRemoveSavedLayoutCommand;
++    if (profile_ && index < names_.size()) {
++      RemoveSplitLayoutTemplate(*profile_->GetPrefs(), names_[index]);
++    }
++  }
++
++ private:
++  base::WeakPtr<Profile> profile_;
++  std::vector<std::u16string> names_;
++};
++
+ class PaneLayoutMenuModel : public ui::SimpleMenuModel,
+                             public ui::SimpleMenuModel::Delegate {
+  public:
+   PaneLayoutMenuModel(TabStripModel* model, tabs::TabInterface* tab)
+-      : ui::SimpleMenuModel(this), model_(model), tab_(tab->GetWeakPtr()) {
++      : ui::SimpleMenuModel(this),
++        model_(model),
++        tab_(tab->GetWeakPtr()),
++        templates_(GetSplitLayoutTemplates(*model->profile()->GetPrefs())) {
+     for (size_t i = 0; i < std::size(kPaneLayouts); ++i) {
+       if (i == 5 || i == 9 || i == 13) {
+         AddSeparator(ui::MenuSeparatorType::NORMAL_SEPARATOR);
+       }
+       AddCheckItem(kFirstPaneLayoutCommand + i,
+                    l10n_util::GetStringUTF16(kPaneLayouts[i].label));
++      SetIcon(GetItemCount() - 1,
++              SplitLayoutIcon(PaneLayoutTree(kPaneLayouts[i])));
++    }
++    AddSeparator(ui::MenuSeparatorType::NORMAL_SEPARATOR);
++    for (size_t i = 0; i < templates_.size(); ++i) {
++      AddCheckItem(kFirstSavedLayoutCommand + i, templates_[i].name);
++      SetIcon(GetItemCount() - 1, SplitLayoutIcon(templates_[i].tree));
++    }
++    if (!templates_.empty()) {
++      AddSeparator(ui::MenuSeparatorType::NORMAL_SEPARATOR);
++    }
++    AddItemWithStringId(kSaveSplitLayoutCommand, IDS_HELIUM_SAVE_SPLIT_LAYOUT);
++    if (!templates_.empty()) {
++      remove_submenu_ = std::make_unique<RemoveSplitLayoutMenuModel>(
++          model->profile(), templates_);
++      AddSubMenuWithStringId(kRemoveSplitLayoutCommand,
++                             IDS_HELIUM_REMOVE_SPLIT_LAYOUT,
++                             remove_submenu_.get());
+     }
+   }
+ 
+   bool IsCommandIdEnabled(int command) const override {
+-    const int option = command - kFirstPaneLayoutCommand;
+-    if (!tab_ || model_->GetIndexOfTab(tab_.get()) == TabStripModel::kNoTab ||
+-        option < 0 || static_cast<size_t>(option) >= std::size(kPaneLayouts)) {
++    if (!tab_ || model_->GetIndexOfTab(tab_.get()) == TabStripModel::kNoTab) {
+       return false;
+     }
+-    return !tab_->GetSplit() ||
+-           model_->GetSplitData(*tab_->GetSplit())->ListTabs().size() <=
+-               kPaneLayouts[option].count;
++    if (command == kSaveSplitLayoutCommand) {
++      return tab_->GetSplit() && templates_.size() < kMaxSplitLayoutTemplates;
++    }
++    if (command == kRemoveSplitLayoutCommand) {
++      return true;
++    }
++    const std::optional<split_tabs::SplitLayoutTree> tree =
++        TreeForCommand(command);
++    return tree && (!tab_->GetSplit() ||
++                    model_->GetSplitData(*tab_->GetSplit())->ListTabs().size() <=
++                        tree->pane_count());
+   }
+ 
+   bool IsCommandIdChecked(int command) const override {
+     if (!IsCommandIdEnabled(command) || !tab_->GetSplit()) {
+       return false;
+     }
+-    const auto& option = kPaneLayouts[command - kFirstPaneLayoutCommand];
++    const std::optional<split_tabs::SplitLayoutTree> tree =
++        TreeForCommand(command);
++    if (!tree) {
++      return false;
++    }
+     const auto* data = model_->GetSplitData(*tab_->GetSplit());
+-    return data->ListTabs().size() == option.count &&
+-           data->visual_data()->GetTree(option.count).HasSameShape(
+-               PaneLayoutTree(option));
++    return data->ListTabs().size() == tree->pane_count() &&
++           data->visual_data()->GetTree(tree->pane_count()).HasSameShape(*tree);
+   }
+ 
+   void ExecuteCommand(int command, int event_flags) override {
+     if (!IsCommandIdEnabled(command)) {
+       return;
+     }
+-    const auto& option = kPaneLayouts[command - kFirstPaneLayoutCommand];
+-    const split_tabs::SplitTabVisualData visual_data(PaneLayoutTree(option));
+-    model_->CreateOrUpdatePaneSplit(model_->GetIndexOfTab(tab_.get()),
+-                                    option.count, visual_data);
++    if (command == kSaveSplitLayoutCommand) {
++      const auto* data = model_->GetSplitData(*tab_->GetSplit());
++      ShowSaveSplitLayoutDialog(
++          tab_->GetBrowserWindowInterface(),
++          data->visual_data()->GetTree(data->ListTabs().size()));
++      return;
++    }
++    std::optional<split_tabs::SplitLayoutTree> tree = TreeForCommand(command);
++    if (!tree) {
++      return;
++    }
++    const size_t pane_count = tree->pane_count();
++    model_->CreateOrUpdatePaneSplit(
++        model_->GetIndexOfTab(tab_.get()), pane_count,
++        split_tabs::SplitTabVisualData(std::move(*tree)));
+   }
+ 
+  private:
++  // The layout a built-in or saved layout command applies.
++  std::optional<split_tabs::SplitLayoutTree> TreeForCommand(int command) const {
++    const size_t option = command - kFirstPaneLayoutCommand;
++    if (command >= kFirstPaneLayoutCommand && option < std::size(kPaneLayouts)) {
++      return PaneLayoutTree(kPaneLayouts[option]);
++    }
++    const size_t saved = command - kFirstSavedLayoutCommand;
++    if (command >= kFirstSavedLayoutCommand && saved < templates_.size()) {
++      return templates_[saved].tree;
++    }
++    return std::nullopt;
++  }
++
+   raw_ptr<TabStripModel> model_;
+   base::WeakPtr<tabs::TabInterface> tab_;
++  const std::vector<SplitLayoutTemplate> templates_;
++  std::unique_ptr<RemoveSplitLayoutMenuModel> remove_submenu_;
+ };
+ 
+ }
+--- a/chrome/browser/ui/tabs/tab_strip_prefs.cc
++++ b/chrome/browser/ui/tabs/tab_strip_prefs.cc
+@@ -40,6 +40,7 @@ void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry) {
+   registry->RegisterBooleanPref(prefs::kHeliumZenMode, false);
+   registry->RegisterBooleanPref(prefs::kHeliumZenModeSidebarPinned, false);
+   registry->RegisterBooleanPref(prefs::kHeliumZenModeTopChromePinned, false);
++  registry->RegisterListPref(prefs::kHeliumSplitLayoutTemplates);
+ }
+ 
+ void MigrateHoverCardMemoryPref(PrefService* local_prefs) {
+--- a/chrome/common/pref_names.h
++++ b/chrome/common/pref_names.h
+@@ -671,6 +671,11 @@ inline constexpr char kHeliumArchiveDirectory[] = "helium.archive.directory";
+ inline constexpr char kHeliumShowProgressBar[] =
+     "helium.browser.show_progress_bar";
+ 
++// A list pref of the split layouts the user saved, each a dictionary with the
++// layout's name and its serialized split_tabs::SplitLayoutTree.
++inline constexpr char kHeliumSplitLayoutTemplates[] =
++    "helium.browser.split_layout_templates";
++
+ // A boolean pref set to true if a Home button to open the Home pages should be
+ // visible on the toolbar.
+ inline constexpr char kShowHomeButton[] = "browser.show_home_button";
+--- a/ui/menus/cocoa/menu_controller.mm
++++ b/ui/menus/cocoa/menu_controller.mm
+@@ -111,11 +111,18 @@ void SetMenuItemIcon(NSMenuItem* menu_item,
+     }
+   } else if (icon.IsEmpty()) {
+     menu_item_image = nil;
++  } else if (icon.IsImageGenerator()) {
++    // Generated icons are drawn black without a color provider and tinted by
++    // the menu, like vector icons.
++    if (should_use_vector_icons) {
++      menu_item_image =
++          gfx::Image(icon.GetImageGenerator().Run(nullptr)).ToNSImage();
++      [menu_item_image setTemplate:YES];
++    } else {
++      menu_item_image = nil;
++    }
+   } else {
+-    // A non-empty ui::ImageModel can be one of three types. The "image
+-    // generator" type isn't currently used for any menu items shown on the Mac,
+-    // so die if it is encountered. Implement handling it if that changes.
+-    CHECK(icon.IsImageGenerator());
++    // A non-empty ui::ImageModel can only be one of the three types above.
+     NOTREACHED();
+   }
+ 
+--- /dev/null
++++ b/chrome/browser/ui/tabs/split_layout_templates.cc
+@@ -0,0 +1,200 @@
++// Copyright 2026 The Helium Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#include "chrome/browser/ui/tabs/split_layout_templates.h"
++
++#include <algorithm>
++#include <memory>
++#include <utility>
++
++#include "base/functional/bind.h"
++#include "base/functional/callback_helpers.h"
++#include "base/memory/weak_ptr.h"
++#include "base/strings/string_number_conversions.h"
++#include "base/strings/string_util.h"
++#include "base/strings/utf_string_conversions.h"
++#include "base/values.h"
++#include "cc/paint/paint_flags.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
++#include "chrome/browser/ui/dialogs/browser_dialogs.h"
++#include "chrome/common/pref_names.h"
++#include "chrome/grit/generated_resources.h"
++#include "components/prefs/pref_service.h"
++#include "components/prefs/scoped_user_pref_update.h"
++#include "components/split_tabs/split_tab_visual_data.h"
++#include "ui/base/interaction/element_identifier.h"
++#include "ui/base/l10n/l10n_util.h"
++#include "ui/base/models/dialog_model.h"
++#include "ui/base/models/image_model.h"
++#include "ui/color/color_id.h"
++#include "ui/color/color_provider.h"
++#include "ui/gfx/canvas.h"
++#include "ui/gfx/geometry/rect_f.h"
++#include "ui/gfx/image/canvas_image_source.h"
++
++namespace {
++
++constexpr char kNameKey[] = "name";
++constexpr char kLayoutKey[] = "layout";
++constexpr int kIconSize = 16;
++
++DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kSplitLayoutNameFieldId);
++
++class SplitLayoutIconSource : public gfx::CanvasImageSource {
++ public:
++  SplitLayoutIconSource(split_tabs::SplitLayoutTree tree, SkColor color)
++      : gfx::CanvasImageSource(gfx::Size(kIconSize, kIconSize)),
++        tree_(std::move(tree)),
++        color_(color) {}
++
++  void Draw(gfx::Canvas* canvas) override {
++    // Lay the panes out at four times the size, so that narrow ones keep their
++    // proportions, and draw them scaled down.
++    constexpr int kScale = 4;
++    const gfx::RectF frame(1, 2, 14, 12);
++    const split_tabs::SplitLayoutBounds bounds = tree_.Calculate(
++        {.width = static_cast<int>(frame.width()) * kScale,
++         .height = static_cast<int>(frame.height()) * kScale},
++        kScale);
++    cc::PaintFlags flags;
++    flags.setAntiAlias(true);
++    flags.setColor(color_);
++    for (const split_tabs::SplitRect& pane : bounds.panes) {
++      gfx::RectF rect(pane.x, pane.y, pane.width, pane.height);
++      rect.Scale(1.0f / kScale);
++      rect.Offset(frame.OffsetFromOrigin());
++      canvas->DrawRoundRect(rect, 1, flags);
++    }
++  }
++
++ private:
++  const split_tabs::SplitLayoutTree tree_;
++  const SkColor color_;
++};
++
++std::u16string DefaultTemplateName(const PrefService& prefs) {
++  std::vector<std::u16string> names;
++  for (const SplitLayoutTemplate& saved : GetSplitLayoutTemplates(prefs)) {
++    names.push_back(saved.name);
++  }
++  for (int number = names.size() + 1;; ++number) {
++    std::u16string name = l10n_util::GetStringFUTF16(
++        IDS_HELIUM_SPLIT_LAYOUT_DEFAULT_NAME, base::NumberToString16(number));
++    if (!std::ranges::contains(names, name)) {
++      return name;
++    }
++  }
++}
++
++void SaveFromDialog(base::WeakPtr<Profile> profile,
++                    ui::DialogModel* dialog_model,
++                    const split_tabs::SplitLayoutTree& tree,
++                    const std::u16string& default_name) {
++  if (!profile) {
++    return;
++  }
++  std::u16string name;
++  base::TrimWhitespace(
++      dialog_model->GetTextfieldByUniqueId(kSplitLayoutNameFieldId)->text(),
++      base::TRIM_ALL, &name);
++  SaveSplitLayoutTemplate(*profile->GetPrefs(),
++                          name.empty() ? default_name : name, tree);
++}
++
++}  // namespace
++
++std::vector<SplitLayoutTemplate> GetSplitLayoutTemplates(
++    const PrefService& prefs) {
++  std::vector<SplitLayoutTemplate> templates;
++  for (const base::Value& entry :
++       prefs.GetList(prefs::kHeliumSplitLayoutTemplates)) {
++    const base::DictValue* dict = entry.GetIfDict();
++    const std::string* name = dict ? dict->FindString(kNameKey) : nullptr;
++    const std::string* layout = dict ? dict->FindString(kLayoutKey) : nullptr;
++    if (!name || !layout) {
++      continue;
++    }
++    std::optional<split_tabs::SplitLayoutTree> tree =
++        split_tabs::SplitLayoutTree::Parse(*layout, split_tabs::kMaxSplitPanes);
++    if (!tree || tree->pane_count() < 2) {
++      continue;
++    }
++    templates.push_back({base::UTF8ToUTF16(*name), std::move(*tree)});
++  }
++  return templates;
++}
++
++void SaveSplitLayoutTemplate(PrefService& prefs,
++                             std::u16string_view name,
++                             const split_tabs::SplitLayoutTree& tree) {
++  const std::string utf8_name = base::UTF16ToUTF8(name);
++  ScopedListPrefUpdate update(prefs, prefs::kHeliumSplitLayoutTemplates);
++  for (base::Value& entry : *update) {
++    base::DictValue* dict = entry.GetIfDict();
++    const std::string* saved_name =
++        dict ? dict->FindString(kNameKey) : nullptr;
++    if (saved_name && *saved_name == utf8_name) {
++      dict->Set(kLayoutKey, tree.Serialize());
++      return;
++    }
++  }
++  if (update->size() >= kMaxSplitLayoutTemplates) {
++    return;
++  }
++  update->Append(base::DictValue()
++                     .Set(kNameKey, utf8_name)
++                     .Set(kLayoutKey, tree.Serialize()));
++}
++
++void RemoveSplitLayoutTemplate(PrefService& prefs, std::u16string_view name) {
++  const std::string utf8_name = base::UTF16ToUTF8(name);
++  ScopedListPrefUpdate update(prefs, prefs::kHeliumSplitLayoutTemplates);
++  update->EraseIf([&](const base::Value& entry) {
++    const base::DictValue* dict = entry.GetIfDict();
++    const std::string* saved_name =
++        dict ? dict->FindString(kNameKey) : nullptr;
++    return saved_name && *saved_name == utf8_name;
++  });
++}
++
++void ShowSaveSplitLayoutDialog(BrowserWindowInterface* browser,
++                               split_tabs::SplitLayoutTree tree) {
++  Profile* profile = browser->GetProfile();
++  const std::u16string default_name =
++      DefaultTemplateName(*profile->GetPrefs());
++  ui::DialogModel::Builder builder;
++  builder.SetInternalName("SaveSplitLayoutDialog")
++      .SetTitle(l10n_util::GetStringUTF16(IDS_HELIUM_SAVE_SPLIT_LAYOUT_TITLE))
++      .AddOkButton(
++          base::BindOnce(&SaveFromDialog, profile->GetWeakPtr(),
++                         builder.model(), std::move(tree), default_name),
++          ui::DialogModel::Button::Params().SetLabel(
++              l10n_util::GetStringUTF16(IDS_HELIUM_SAVE_SPLIT_LAYOUT_BUTTON)))
++      .AddCancelButton(base::DoNothing())
++      .AddTextfield(kSplitLayoutNameFieldId, {}, default_name,
++                    ui::DialogModelTextfield::Params().SetAccessibleName(
++                        l10n_util::GetStringUTF16(
++                            IDS_HELIUM_SAVE_SPLIT_LAYOUT_NAME)))
++      .SetInitiallyFocusedField(kSplitLayoutNameFieldId);
++  chrome::ShowBrowserModal(browser, builder.Build());
++}
++
++ui::ImageModel SplitLayoutIcon(const split_tabs::SplitLayoutTree& tree) {
++  return ui::ImageModel::FromImageGenerator(
++      base::BindRepeating(
++          [](const split_tabs::SplitLayoutTree& tree,
++             const ui::ColorProvider* color_provider) {
++            // Without a color provider the icon is drawn black, for menus that
++            // tint it themselves.
++            const SkColor color =
++                color_provider ? color_provider->GetColor(ui::kColorMenuIcon)
++                               : SK_ColorBLACK;
++            return gfx::ImageSkia(
++                std::make_unique<SplitLayoutIconSource>(tree, color),
++                gfx::Size(kIconSize, kIconSize));
++          },
++          tree),
++      gfx::Size(kIconSize, kIconSize));
++}
+--- /dev/null
++++ b/chrome/browser/ui/tabs/split_layout_templates.h
+@@ -0,0 +1,47 @@
++// Copyright 2026 The Helium Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_TABS_SPLIT_LAYOUT_TEMPLATES_H_
++#define CHROME_BROWSER_UI_TABS_SPLIT_LAYOUT_TEMPLATES_H_
++
++#include <string>
++#include <string_view>
++#include <vector>
++
++#include "components/split_tabs/split_layout_tree.h"
++
++class BrowserWindowInterface;
++class PrefService;
++
++namespace ui {
++class ImageModel;
++}
++
++// A split layout the user saved to apply to other splits. Only the arrangement
++// and sizes of the panes are kept, not their tabs.
++struct SplitLayoutTemplate {
++  std::u16string name;
++  split_tabs::SplitLayoutTree tree;
++};
++
++inline constexpr size_t kMaxSplitLayoutTemplates = 12;
++
++// The saved layouts, in the order they were saved.
++std::vector<SplitLayoutTemplate> GetSplitLayoutTemplates(
++    const PrefService& prefs);
++
++// Saves `tree` as `name`, replacing a layout saved under the same name.
++void SaveSplitLayoutTemplate(PrefService& prefs,
++                             std::u16string_view name,
++                             const split_tabs::SplitLayoutTree& tree);
++void RemoveSplitLayoutTemplate(PrefService& prefs, std::u16string_view name);
++
++// Asks for a name and saves `tree` under it.
++void ShowSaveSplitLayoutDialog(BrowserWindowInterface* browser,
++                               split_tabs::SplitLayoutTree tree);
++
++// A menu icon sketching the panes of `tree`.
++ui::ImageModel SplitLayoutIcon(const split_tabs::SplitLayoutTree& tree);
++
++#endif  // CHROME_BROWSER_UI_TABS_SPLIT_LAYOUT_TEMPLATES_H_
