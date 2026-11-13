@@ -1,0 +1,144 @@
+--- a/chrome/app/chrome_command_ids.h
++++ b/chrome/app/chrome_command_ids.h
+@@ -299,6 +299,7 @@
+ 
+ #define IDC_HELIUM_SERVICES_OPEN 40700
+ #define IDC_HELIUM_ARCHIVE_PAGE 40701
++#define IDC_HELIUM_NEW_SPLIT_PANE_ON_RIGHT 40702
+ 
+ // Spell-check
+ #define IDC_SPELLCHECK_SUGGESTION_0     41000
+--- a/chrome/app/generated_resources.grd
++++ b/chrome/app/generated_resources.grd
+@@ -277,6 +277,7 @@
+       <message name="IDS_HELIUM_CREATE_FOUR_PANE_SPLIT" desc="Tab context menu action creating a grid with this tab and three new tabs.">Create Four-Way Split</message>
+       <message name="IDS_HELIUM_EXPAND_FOUR_PANE_SPLIT" desc="Tab context menu action adding new tabs to fill an existing split to four panes.">Expand to Four-Way Split</message>
+       <message name="IDS_HELIUM_TAB_VIEW" desc="Tab menu submenu for individual tab preview and refresh settings.">Tab view</message>
++      <message name="IDS_HELIUM_NEW_SPLIT_PANE_ON_RIGHT" desc="Command adding a new tab as a pane along the whole right side of the split view, or starting a split view with it.">Add Pane on the Right</message>
+       <message name="IDS_HELIUM_EQUALIZE_SPLIT_PANES" desc="Split view menu item giving the panes even sizes: panes in the same row get the same width and panes in the same column the same height.">Make All Panes the Same Size</message>
+       <message name="IDS_HELIUM_REMOVE_FROM_SPLIT" desc="Tab context menu action taking this tab out of its split view without closing it; the other panes fill its space.">Remove from Split</message>
+       <message name="IDS_HELIUM_SAVE_SPLIT_LAYOUT" desc="Split Layout submenu item that saves the arrangement of the split's panes under a name, to apply to other splits.">Save Current Layout…</message>
+--- a/chrome/browser/ui/browser_command_controller.cc
++++ b/chrome/browser/ui/browser_command_controller.cc
+@@ -902,6 +902,11 @@ void BrowserCommandController::HandleCommandWithDisposition(
+       NewSplitTab(browser_, split_tabs::SplitTabLayout::kSideBySide,
+                   split_tabs::SplitTabCreatedSource::kKeyboardShortcut);
+       break;
++    case IDC_HELIUM_NEW_SPLIT_PANE_ON_RIGHT:
++      NewSplitTab(browser_, split_tabs::SplitTabLayout::kSideBySide,
++                  split_tabs::SplitTabCreatedSource::kKeyboardShortcut,
++                  /*along_split_end=*/true);
++      break;
+     case IDC_NAME_WINDOW:
+       PromptToNameWindow(browser_);
+       break;
+@@ -2979,6 +2984,9 @@ void BrowserCommandController::UpdateCommandsForTabStripStateChanged() {
+   command_updater_->UpdateCommandEnabled(
+       IDC_NEW_SPLIT_TAB,
+       browser_->GetType() == BrowserWindowInterface::Type::TYPE_NORMAL);
++  command_updater_->UpdateCommandEnabled(
++      IDC_HELIUM_NEW_SPLIT_PANE_ON_RIGHT,
++      browser_->GetType() == BrowserWindowInterface::Type::TYPE_NORMAL);
+   command_updater_->UpdateCommandEnabled(IDC_GROUP_UNGROUPED_TABS,
+                                          CanGroupAllUngroupedTabs(browser_));
+ 
+--- a/chrome/browser/ui/browser_commands.cc
++++ b/chrome/browser/ui/browser_commands.cc
+@@ -1887,7 +1887,8 @@ void GroupTab(BrowserWindowInterface* browser) {
+ 
+ void NewSplitTab(BrowserWindowInterface* browser,
+                  split_tabs::SplitTabLayout layout,
+-                 split_tabs::SplitTabCreatedSource source) {
++                 split_tabs::SplitTabCreatedSource source,
++                 bool along_split_end) {
+   TabStripModel* const tab_strip_model = browser->GetTabStripModel();
+   const int active_index = tab_strip_model->active_index();
+   // In Incognito or Enterprise Isolated modes, we can't show the regular Split
+@@ -1897,7 +1898,8 @@ void NewSplitTab(BrowserWindowInterface* browser,
+               tab_strip_model->count() > 1
+           ? GURL(chrome::kChromeUISplitViewNewTabPageURL)
+           : chrome::ChromeUINewTabURLAsGURL();
+-  // In a split, add a pane next to the active one.
++  // In a split, add a pane next to the active one, or along the end of the
++  // split.
+   if (const std::optional<split_tabs::SplitTabId> split =
+           tab_strip_model->GetActiveTab()->GetSplit()) {
+     const split_tabs::SplitTabData* data = tab_strip_model->GetSplitData(*split);
+@@ -1905,9 +1907,13 @@ void NewSplitTab(BrowserWindowInterface* browser,
+     if (pane_count >= split_tabs::kMaxSplitPanes) {
+       return;
+     }
+-    const size_t pane = active_index - data->GetIndexRange().start();
++    const std::optional<size_t> pane =
++        along_split_end ? std::nullopt
++                        : std::optional<size_t>(active_index -
++                                                data->GetIndexRange().start());
+     const split_tabs::SplitEdge edge =
+-        data->visual_data()->GetTree(pane_count).EdgeBesidePane(pane);
++        pane ? data->visual_data()->GetTree(pane_count).EdgeBesidePane(*pane)
++             : split_tabs::SplitEdge::kRight;
+     const int new_index = data->GetIndexRange().end();
+     const int previous_count = tab_strip_model->count();
+     tab_strip_model->delegate()->AddTabAt(
+--- a/chrome/browser/ui/browser_commands.h
++++ b/chrome/browser/ui/browser_commands.h
+@@ -199,9 +199,12 @@ void MoveGroupToExistingWindow(BrowserWindowInterface* source,
+ void MuteSite(BrowserWindowInterface* browser);
+ void PinTab(BrowserWindowInterface* browser);
+ void GroupTab(BrowserWindowInterface* browser);
++// In a split, adds a pane next to the active one, or with `along_split_end`
++// along the whole right side of the split.
+ void NewSplitTab(BrowserWindowInterface* browser,
+                  split_tabs::SplitTabLayout layout,
+-                 split_tabs::SplitTabCreatedSource source);
++                 split_tabs::SplitTabCreatedSource source,
++                 bool along_split_end = false);
+ 
+ // Tab group commands
+ // These values are persisted to logs. Entries should not be renumbered
+--- a/chrome/browser/ui/browser_shortcuts/browser_shortcut_metadata.cc
++++ b/chrome/browser/ui/browser_shortcuts/browser_shortcut_metadata.cc
+@@ -102,6 +102,8 @@ std::optional<BrowserShortcutCommandLabel> GetBrowserShortcutCommandLabel(
+       return Label(IDS_NEW_TAB);
+     case IDC_NEW_SPLIT_TAB:
+       return Label(IDS_SHORTCUT_COMMAND_NEW_SPLIT_TAB);
++    case IDC_HELIUM_NEW_SPLIT_PANE_ON_RIGHT:
++      return Label(IDS_HELIUM_NEW_SPLIT_PANE_ON_RIGHT);
+     case IDC_DUPLICATE_TAB:
+       return Label(IDS_SHORTCUT_COMMAND_DUPLICATE_TAB);
+     case IDC_EXIT:
+--- a/chrome/browser/ui/cocoa/accelerators_cocoa.mm
++++ b/chrome/browser/ui/cocoa/accelerators_cocoa.mm
+@@ -40,6 +40,8 @@ const struct AcceleratorMapping {
+     {IDC_DEV_TOOLS_INSPECT, ui::EF_COMMAND_DOWN | ui::EF_ALT_DOWN, ui::VKEY_E},
+     {IDC_COPY_OR_INSPECT_SHORTCUT, ui::EF_COMMAND_DOWN | ui::EF_SHIFT_DOWN, ui::VKEY_C},
+     {IDC_NEW_SPLIT_TAB, ui::EF_COMMAND_DOWN | ui::EF_ALT_DOWN, ui::VKEY_N},
++    {IDC_HELIUM_NEW_SPLIT_PANE_ON_RIGHT,
++     ui::EF_COMMAND_DOWN | ui::EF_ALT_DOWN | ui::EF_SHIFT_DOWN, ui::VKEY_N},
+     {IDC_FIND, ui::EF_COMMAND_DOWN, ui::VKEY_F},
+     {IDC_NEW_INCOGNITO_WINDOW, ui::EF_COMMAND_DOWN | ui::EF_SHIFT_DOWN,
+      ui::VKEY_N},
+--- a/chrome/browser/ui/cocoa/main_menu_builder.mm
++++ b/chrome/browser/ui/cocoa/main_menu_builder.mm
+@@ -518,6 +518,8 @@ NSMenuItem* BuildTabMenu(NSApplication* nsapp,
+                   .set_hidden(true),
+               Item(IDS_TAB_CXMENU_ADD_TAB_TO_NEW_SPLIT)
+                   .command_id(IDC_NEW_SPLIT_TAB),
++              Item(IDS_HELIUM_NEW_SPLIT_PANE_ON_RIGHT)
++                  .command_id(IDC_HELIUM_NEW_SPLIT_PANE_ON_RIGHT),
+               Item(IDS_NEXT_TAB_MAC)
+                   .command_id(IDC_CYCLE_TO_NEXT_TAB),
+               Item(IDS_PREV_TAB_MAC)
+--- a/chrome/browser/ui/views/helium/command_bar_commands.cc
++++ b/chrome/browser/ui/views/helium/command_bar_commands.cc
+@@ -68,6 +68,10 @@ constexpr CommandBarCommand kCommands[] = {
+      .label_id = IDS_HELIUM_COMMAND_BAR_CMD_SPLIT_VIEW,
+      .keywords = "side by side pane",
+      .icon = &kSplitSceneIcon},
++    {.command_id = IDC_HELIUM_NEW_SPLIT_PANE_ON_RIGHT,
++     .label_id = IDS_HELIUM_NEW_SPLIT_PANE_ON_RIGHT,
++     .keywords = "split view column",
++     .icon = &kSplitSceneIcon},
+ 
+     // Windows.
+     {.command_id = IDC_NEW_WINDOW,
