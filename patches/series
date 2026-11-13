@@ -423,3 +423,4 @@ helium/ui/split-pane-close.patch
 helium/ui/split-equalize-panes.patch
 helium/ui/split-layout-presets.patch
 helium/ui/split-pane-edge-moves.patch
+helium/ui/split-pane-on-right-shortcut.patch
