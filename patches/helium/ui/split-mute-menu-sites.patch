@@ -1,0 +1,289 @@
+--- a/chrome/app/generated_resources.grd
++++ b/chrome/app/generated_resources.grd
+@@ -283,6 +283,8 @@
+       <message name="IDS_HELIUM_FOCUS_SPLIT_PANE_DOWN" desc="Keyboard shortcut command activating the split view pane below the active one.">Go to Pane Below</message>
+       <message name="IDS_HELIUM_NEW_SPLIT_PANE_ON_RIGHT" desc="Command adding a new tab as a pane along the whole right side of the split view, or starting a split view with it.">Add Pane on the Right</message>
+       <message name="IDS_HELIUM_EQUALIZE_SPLIT_PANES" desc="Split view menu item giving the panes even sizes: panes in the same row get the same width and panes in the same column the same height.">Make All Panes the Same Size</message>
++      <message name="IDS_HELIUM_SPLIT_TAB_MUTE_SITE" desc="Item in the Mute Sites submenu of a split view with three or more panes, muting one of the sites shown in it.">Mute <ph name="SITE">$1<ex>example.com</ex></ph></message>
++      <message name="IDS_HELIUM_SPLIT_TAB_UNMUTE_SITE" desc="Item in the Mute Sites submenu of a split view with three or more panes, unmuting one of the sites shown in it.">Unmute <ph name="SITE">$1<ex>example.com</ex></ph></message>
+       <message name="IDS_HELIUM_REMOVE_FROM_SPLIT" desc="Tab context menu action taking this tab out of its split view without closing it; the other panes fill its space.">Remove from Split</message>
+       <message name="IDS_HELIUM_SAVE_SPLIT_LAYOUT" desc="Split Layout submenu item that saves the arrangement of the split's panes under a name, to apply to other splits.">Save Current Layout…</message>
+       <message name="IDS_HELIUM_REMOVE_SPLIT_LAYOUT" desc="Split Layout submenu listing saved layouts to delete.">Remove Saved Layout</message>
+--- a/chrome/browser/ui/tabs/BUILD.gn
++++ b/chrome/browser/ui/tabs/BUILD.gn
+@@ -411,6 +411,7 @@ if (!is_android) {
+       "//components/saved_tab_groups/public",
+       "//components/tab_groups",
+       "//components/tabs:impl",
++      "//components/url_formatter",
+     ]
+ 
+     if (is_chromeos) {
+--- a/chrome/browser/ui/tabs/split_tab_mute_menu_model.cc
++++ b/chrome/browser/ui/tabs/split_tab_mute_menu_model.cc
+@@ -4,6 +4,7 @@
+ 
+ #include "chrome/browser/ui/tabs/split_tab_mute_menu_model.h"
+ 
++#include <algorithm>
+ #include <optional>
+ #include <string>
+ #include <vector>
+@@ -19,17 +20,23 @@
+ #include "components/split_tabs/split_tab_visual_data.h"
+ #include "components/tabs/public/split_tab_data.h"
+ #include "components/tabs/public/tab_interface.h"
++#include "components/url_formatter/elide_url.h"
+ #include "components/vector_icons/vector_icons.h"
+ #include "content/public/browser/web_contents.h"
++#include "content/public/common/url_constants.h"
+ #include "ui/base/l10n/l10n_util.h"
+ #include "ui/base/models/image_model.h"
+ #include "ui/base/models/menu_separator_types.h"
+ #include "ui/base/ui_base_features.h"
+ #include "ui/color/color_id.h"
+ #include "ui/menus/simple_menu_model.h"
++#include "url/gurl.h"
+ 
+ namespace {
+ 
++constexpr int kFirstSiteCommandId =
++    static_cast<int>(SplitTabMuteMenuModel::CommandId::kToggleFirstSiteMuted);
++
+ ui::ImageModel GetMuteIcon(bool will_mute) {
+   const bool rounded = features::IsRoundedIconsEnabled();
+   const gfx::VectorIcon& icon =
+@@ -49,15 +56,44 @@ SplitTabMuteMenuModel::SplitTabMuteMenuModel(TabStripModel* tab_strip_model,
+     : ui::SimpleMenuModel(this),
+       tab_strip_model_(tab_strip_model),
+       tab_index_(tab_index),
+-      split_id_(split_id) {
++      split_id_(split_id),
++      two_panes_(tab_strip_model->GetSplitData(split_id)->ListTabs().size() ==
++                 2) {
+   AddItem(static_cast<int>(CommandId::kToggleAllSitesMuted), std::u16string());
+   AddSeparator(ui::MenuSeparatorType::NORMAL_SEPARATOR);
+-  AddItem(static_cast<int>(CommandId::kToggleStartSiteMuted), std::u16string());
+-  AddItem(static_cast<int>(CommandId::kToggleEndSiteMuted), std::u16string());
++  if (two_panes_) {
++    AddItem(static_cast<int>(CommandId::kToggleStartSiteMuted),
++            std::u16string());
++    AddItem(static_cast<int>(CommandId::kToggleEndSiteMuted), std::u16string());
++    return;
++  }
++
++  // Left, right, top and bottom don't name the panes of a larger split, so it
++  // lists the sites instead. Muting applies to a whole site anyway.
++  for (tabs::TabInterface* tab :
++       tab_strip_model->GetSplitData(split_id)->ListTabs()) {
++    const GURL& url = tab->GetContents()->GetLastCommittedURL();
++    // Browser pages, such as the one an empty pane shows, are left to the
++    // item muting every site.
++    if (url.is_empty() || url.SchemeIs(content::kChromeUIScheme)) {
++      continue;
++    }
++    url::Origin origin = url::Origin::Create(url);
++    if (!origin.opaque() && !std::ranges::contains(sites_, origin)) {
++      sites_.push_back(std::move(origin));
++    }
++  }
++  for (size_t site = 0; site < sites_.size(); ++site) {
++    AddItem(kFirstSiteCommandId + static_cast<int>(site), std::u16string());
++  }
+ }
+ 
+ SplitTabMuteMenuModel::~SplitTabMuteMenuModel() = default;
+ 
++bool SplitTabMuteMenuModel::HasSeparateSites() const {
++  return two_panes_ || sites_.size() > 1;
++}
++
+ bool SplitTabMuteMenuModel::IsItemForCommandIdDynamic(int command_id) const {
+   // Every item's label and icon depend on the current mute state.
+   return true;
+@@ -68,6 +104,15 @@ std::u16string SplitTabMuteMenuModel::GetLabelForCommandId(
+   const CommandId id = static_cast<CommandId>(command_id);
+   const bool will_mute = WillMute(id);
+ 
++  if (command_id >= kFirstSiteCommandId) {
++    return l10n_util::GetStringFUTF16(
++        will_mute ? IDS_HELIUM_SPLIT_TAB_MUTE_SITE
++                  : IDS_HELIUM_SPLIT_TAB_UNMUTE_SITE,
++        url_formatter::FormatOriginForSecurityDisplay(
++            sites_[command_id - kFirstSiteCommandId],
++            url_formatter::SchemeDisplay::OMIT_HTTP_AND_HTTPS));
++  }
++
+   switch (id) {
+     case CommandId::kToggleAllSitesMuted:
+       return l10n_util::GetPluralStringFUTF16(
+@@ -102,6 +147,8 @@ std::u16string SplitTabMuteMenuModel::GetLabelForCommandId(
+       return l10n_util::GetStringUTF16(will_mute
+                                            ? IDS_SPLIT_TAB_MUTE_BOTTOM_SITE
+                                            : IDS_SPLIT_TAB_UNMUTE_BOTTOM_SITE);
++    case CommandId::kToggleFirstSiteMuted:
++      break;
+   }
+   NOTREACHED();
+ }
+@@ -117,6 +164,9 @@ bool SplitTabMuteMenuModel::IsCommandIdEnabled(int command_id) const {
+     return tab_strip_model_->IsContextMenuCommandEnabled(
+         tab_index_, TabStripModel::CommandToggleSiteMuted);
+   }
++  if (command_id >= kFirstSiteCommandId) {
++    return !GetTabIndicesForSite(command_id - kFirstSiteCommandId).empty();
++  }
+ 
+   // A site can only be muted once its tab has committed a navigation.
+   const std::optional<int> index = GetTabIndexForCommand(id);
+@@ -138,8 +188,13 @@ void SplitTabMuteMenuModel::ExecuteCommand(int command_id, int event_flags) {
+   }
+ 
+   // The split may have been removed while the menu was open.
+-  const std::optional<int> index = GetTabIndexForCommand(id);
+-  if (!index.has_value()) {
++  std::vector<int> indices;
++  if (command_id >= kFirstSiteCommandId) {
++    indices = GetTabIndicesForSite(command_id - kFirstSiteCommandId);
++  } else if (const std::optional<int> index = GetTabIndexForCommand(id)) {
++    indices.push_back(*index);
++  }
++  if (indices.empty()) {
+     return;
+   }
+ 
+@@ -150,7 +205,24 @@ void SplitTabMuteMenuModel::ExecuteCommand(int command_id, int event_flags) {
+ 
+   // This changes the sound content setting for the view's site, so it also
+   // affects the other view when both views show the same site.
+-  tab_strip_model_->SetSitesMuted({*index}, mute);
++  tab_strip_model_->SetSitesMuted(indices, mute);
++}
++
++std::vector<int> SplitTabMuteMenuModel::GetTabIndicesForSite(
++    size_t site) const {
++  std::vector<int> indices;
++  if (!tab_strip_model_->ContainsSplit(split_id_)) {
++    return indices;
++  }
++  for (tabs::TabInterface* tab :
++       tab_strip_model_->GetSplitData(split_id_)->ListTabs()) {
++    const GURL& url = tab->GetContents()->GetLastCommittedURL();
++    if (!url.is_empty() && !url.SchemeIs(content::kChromeUIScheme) &&
++        url::Origin::Create(url).IsSameOriginWith(sites_[site])) {
++      indices.push_back(tab_strip_model_->GetIndexOfTab(tab));
++    }
++  }
++  return indices;
+ }
+ 
+ std::optional<int> SplitTabMuteMenuModel::GetTabIndexForCommand(
+@@ -182,6 +254,11 @@ bool SplitTabMuteMenuModel::WillMute(CommandId id) const {
+     return !tab_strip_model_->ContainsIndex(tab_index_) ||
+            tab_strip_model_->WillContextMenuMuteSites(tab_index_);
+   }
++  if (static_cast<int>(id) >= kFirstSiteCommandId) {
++    const std::vector<int> indices =
++        GetTabIndicesForSite(static_cast<int>(id) - kFirstSiteCommandId);
++    return indices.empty() || !IsSiteMuted(*tab_strip_model_, indices[0]);
++  }
+   const std::optional<int> index = GetTabIndexForCommand(id);
+   return !index.has_value() || !IsSiteMuted(*tab_strip_model_, *index);
+ }
+--- a/chrome/browser/ui/tabs/split_tab_mute_menu_model.h
++++ b/chrome/browser/ui/tabs/split_tab_mute_menu_model.h
+@@ -7,11 +7,13 @@
+ 
+ #include <optional>
+ #include <string>
++#include <vector>
+ 
+ #include "base/memory/raw_ptr.h"
+ #include "chrome/browser/ui/tabs/existing_base_sub_menu_model.h"
+ #include "components/split_tabs/split_tab_id.h"
+ #include "ui/menus/simple_menu_model.h"
++#include "url/origin.h"
+ 
+ class TabStripModel;
+ 
+@@ -21,7 +23,8 @@ class ImageModel;
+ 
+ // Submenu of the tab context menu shown in place of "Mute sites" when the menu
+ // targets a split. It lets the user mute or unmute both sites in the split, or
+-// only the site shown in one of the views.
++// only the site shown in one of the views. Splits of more than two panes list
++// each site shown in them instead, in pane order.
+ class SplitTabMuteMenuModel : public ui::SimpleMenuModel,
+                               public ui::SimpleMenuModel::Delegate {
+  public:
+@@ -31,6 +34,8 @@ class SplitTabMuteMenuModel : public ui::SimpleMenuModel,
+         ExistingBaseSubMenuModel::kMinSplitTabMuteMenuModelCommandId,
+     kToggleStartSiteMuted,
+     kToggleEndSiteMuted,
++    // Splits of more than two panes use one command per site from here on.
++    kToggleFirstSiteMuted,
+   };
+ 
+   // `tab_index` is the index of the tab the context menu was opened on, which
+@@ -42,6 +47,9 @@ class SplitTabMuteMenuModel : public ui::SimpleMenuModel,
+   SplitTabMuteMenuModel& operator=(const SplitTabMuteMenuModel&) = delete;
+   ~SplitTabMuteMenuModel() override;
+ 
++  // Whether the menu can mute sites separately, rather than only all at once.
++  bool HasSeparateSites() const;
++
+   // ui::SimpleMenuModel::Delegate:
+   bool IsItemForCommandIdDynamic(int command_id) const override;
+   std::u16string GetLabelForCommandId(int command_id) const override;
+@@ -54,6 +62,9 @@ class SplitTabMuteMenuModel : public ui::SimpleMenuModel,
+   // target a single view or the split no longer exists.
+   std::optional<int> GetTabIndexForCommand(CommandId id) const;
+ 
++  // Returns the tabs in the split that show `sites_[site]`.
++  std::vector<int> GetTabIndicesForSite(size_t site) const;
++
+   // Returns true if the split is laid out side by side rather than stacked.
+   bool IsSideBySide() const;
+ 
+@@ -63,6 +74,11 @@ class SplitTabMuteMenuModel : public ui::SimpleMenuModel,
+   const raw_ptr<TabStripModel> tab_strip_model_;
+   const int tab_index_;
+   const split_tabs::SplitTabId split_id_;
++
++  const bool two_panes_;
++
++  // The sites listed by a split of more than two panes. Empty for two panes.
++  std::vector<url::Origin> sites_;
+ };
+ 
+ #endif  // CHROME_BROWSER_UI_TABS_SPLIT_TAB_MUTE_MENU_MODEL_H_
+--- a/chrome/browser/ui/tabs/tab_menu_model.cc
++++ b/chrome/browser/ui/tabs/tab_menu_model.cc
+@@ -761,8 +761,8 @@ void TabMenuModel::Build(int index) {
+               num_tabs));
+ 
+   // When the menu targets a single split, "Mute sites" opens a submenu that can
+-  // also mute the site in just one of the views. The submenu only knows the two
+-  // views of a two-pane split, so larger splits get the plain item.
++  // also mute the site in just one of the views. It's left out when the split
++  // shows only one site.
+   const std::optional<split_tabs::SplitTabId> split =
+       tab_strip_->GetSplitForTab(index);
+   const bool is_single_split =
+@@ -779,9 +779,14 @@ void TabMenuModel::Build(int index) {
+       will_mute ? IDS_TAB_CXMENU_SOUND_MUTE_SITE
+                 : IDS_TAB_CXMENU_SOUND_UNMUTE_SITE,
+       num_mute_tabs);
+-  if (is_single_split && num_mute_tabs == 2) {
+-    split_mute_submenu_ =
++  if (is_single_split) {
++    auto mute_submenu =
+         std::make_unique<SplitTabMuteMenuModel>(tab_strip_, index, *split);
++    if (mute_submenu->HasSeparateSites()) {
++      split_mute_submenu_ = std::move(mute_submenu);
++    }
++  }
++  if (split_mute_submenu_) {
+     AddSubMenu(TabStripModel::CommandToggleSiteMuted, mute_label,
+                split_mute_submenu_.get());
+   } else {

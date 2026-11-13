@@ -428,3 +428,5 @@ helium/ui/split-sixteen-panes.patch
 helium/ui/split-drops-over-webui.patch
 helium/ui/split-pane-focus-shortcuts.patch
 helium/ui/split-pane-mover-windows.patch
+helium/ui/split-mute-menu-sites.patch
+helium/ui/save-image-with-context.patch

@@ -1,0 +1,3058 @@
+--- a/chrome/app/chrome_command_ids.h
++++ b/chrome/app/chrome_command_ids.h
+@@ -343,6 +343,7 @@
+ #define IDC_CONTENT_CONTEXT_OPENLINK_ISOLATED 50113
+ // Image items.
+ #define IDC_CONTENT_CONTEXT_SAVEIMAGEAS 50120
++#define IDC_CONTENT_CONTEXT_SAVEIMAGEWITHCONTEXT 50197
+ #define IDC_CONTENT_CONTEXT_COPYIMAGELOCATION 50121
+ #define IDC_CONTENT_CONTEXT_COPYIMAGE 50122
+ #define IDC_CONTENT_CONTEXT_OPENIMAGENEWTAB 50123
+--- a/chrome/app/generated_resources.grd
++++ b/chrome/app/generated_resources.grd
+@@ -285,6 +285,37 @@
+       <message name="IDS_HELIUM_EQUALIZE_SPLIT_PANES" desc="Split view menu item giving the panes even sizes: panes in the same row get the same width and panes in the same column the same height.">Make All Panes the Same Size</message>
+       <message name="IDS_HELIUM_SPLIT_TAB_MUTE_SITE" desc="Item in the Mute Sites submenu of a split view with three or more panes, muting one of the sites shown in it.">Mute <ph name="SITE">$1<ex>example.com</ex></ph></message>
+       <message name="IDS_HELIUM_SPLIT_TAB_UNMUTE_SITE" desc="Item in the Mute Sites submenu of a split view with three or more panes, unmuting one of the sites shown in it.">Unmute <ph name="SITE">$1<ex>example.com</ex></ph></message>
++      <message name="IDS_HELIUM_SAVE_IMAGE_WITH_CONTEXT" desc="Context menu item saving an image to the downloads folder without asking where, with the address of the page and of the image added to its metadata.">Save Image with Context Metadata</message>
++      <message name="IDS_HELIUM_SAVE_IMAGE_WITH_CONTEXT_UNSUPPORTED" desc="Shown after saving an image with context metadata when its format, such as GIF or SVG, can't hold metadata. The download overlay's Edit Metadata button can save it in a sidecar file instead.">The image was saved without context metadata, as its format can't hold any. To save it in a separate file next to the image, choose Edit Metadata in the download overlay.</message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_TITLE" desc="Title of the panel showing and editing the metadata of an image saved with its context.">Saved Image Metadata</message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_OWN_SECTION" desc="Heading of the metadata the saved image came with, which is never changed.">In the image</message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_OWN_TITLE" desc="The saved image's own title.">Title: <ph name="VALUE">$1<ex>Harbour at dawn</ex></ph></message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_OWN_CREATOR" desc="The saved image's own creator, such as the photographer.">Creator: <ph name="VALUE">$1<ex>A Photographer</ex></ph></message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_OWN_RIGHTS" desc="The saved image's own copyright notice.">Copyright: <ph name="VALUE">$1<ex>© 2026 A Photographer</ex></ph></message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_OWN_CREDIT" desc="The saved image's own credit line.">Credit: <ph name="VALUE">$1<ex>NTB</ex></ph></message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_OWN_SOURCE" desc="The saved image's own IPTC source.">Source: <ph name="VALUE">$1<ex>NTB</ex></ph></message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_OWN_DESCRIPTION" desc="The saved image's own description or caption.">Description: <ph name="VALUE">$1<ex>Boats in the harbour</ex></ph></message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_OWN_NONE" desc="Shown when the saved image came without a title, creator, copyright, credit, source or description.">No title, creator, copyright, credit, source or description.</message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_UNREADABLE" desc="Shown when the saved image's metadata couldn't be read, so the image file was left unchanged.">Its metadata couldn't be read, so the image file is left as it was downloaded.</message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_SIGNED" desc="Shown when the saved image carries Content Credentials (C2PA), a signature that any change to the file would break.">It has Content Credentials, which any change to the file shows as altered.</message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_ADDED_SECTION" desc="Heading of the context metadata Helium added to the saved image.">Added by Helium</message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_PAGE" desc="The address of the page the image was saved from.">Page: <ph name="URL">$1<ex>https://www.tv2.no/</ex></ph></message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_IMAGE" desc="The address of the saved image itself.">Image: <ph name="URL">$1<ex>https://www.cdn.tv2.no/images/1.webp</ex></ph></message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_SAVED" desc="When the image was saved.">Saved: <ph name="DATE">$1<ex>2026-11-13_23:06</ex></ph></message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_SOURCE_FIELD" desc="Label of the editable IPTC Source field Helium fills in for a saved image.">Source</message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_DESCRIPTION_FIELD" desc="Label of the editable description Helium fills in for a saved image.">Description</message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_KEPT" desc="Shown when the saved image had its own source or description, which Helium keeps instead of adding its own.">The image's own source and description are kept.</message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_IN_IMAGE" desc="Says where the context metadata is stored: in the image file.">Stored in the image file.</message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_IN_SIDECAR" desc="Says where the context metadata is stored: in an XMP sidecar file next to the image.">Stored in <ph name="FILE">$1<ex>photo.xmp</ex></ph>, next to the image.</message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_NOWHERE" desc="Says the context metadata isn't stored, as the image's format can't hold metadata and no sidecar file is saved.">Not stored, as this format can't hold metadata.</message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_OPTIONS_SECTION" desc="Heading of the choices for saving images with context metadata, which apply to this image and are remembered.">Options</message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_SIDECAR_OPTION" desc="Checkbox saving the context metadata of images whose format can't hold metadata in an XMP sidecar file next to them.">Save it in an XMP file next to images that can't hold metadata, such as GIF and SVG</message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_EMBED_OPTION" desc="Checkbox adding the context metadata to images with Content Credentials, which then show as altered, instead of saving it in an XMP sidecar file.">Add it to images with Content Credentials, which then show as altered</message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_FOLDER" desc="The folder images saved with their context go to.">Images are saved in <ph name="FOLDER">$1<ex>/Users/me/Downloads</ex></ph></message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_CHANGE_FOLDER" desc="Button choosing the folder images saved with their context go to.">Change Folder…</message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_UPDATE" desc="Button storing the edited context metadata of a saved image.">Update File</message>
++      <message name="IDS_HELIUM_IMAGE_CONTEXT_UPDATE_FAILED" desc="Shown when the edited context metadata of a saved image couldn't be stored.">The file couldn't be updated.</message>
++      <message name="IDS_HELIUM_SAVE_IMAGE_WITH_CONTEXT_FAILED" desc="Shown when an image was saved but its context metadata couldn't be added.">The image was saved, but its context metadata couldn't be added.</message>
+       <message name="IDS_HELIUM_REMOVE_FROM_SPLIT" desc="Tab context menu action taking this tab out of its split view without closing it; the other panes fill its space.">Remove from Split</message>
+       <message name="IDS_HELIUM_SAVE_SPLIT_LAYOUT" desc="Split Layout submenu item that saves the arrangement of the split's panes under a name, to apply to other splits.">Save Current Layout…</message>
+       <message name="IDS_HELIUM_REMOVE_SPLIT_LAYOUT" desc="Split Layout submenu listing saved layouts to delete.">Remove Saved Layout</message>
+--- a/chrome/browser/download/download_target_determiner.cc
++++ b/chrome/browser/download/download_target_determiner.cc
+@@ -119,6 +119,24 @@ std::optional<base::FilePath> TakeHeliumTargetPath(const std::string& guid) {
+   return path;
+ }
+ 
++// Directories set with helium::SetDownloadTargetDirectory(), by download GUID.
++base::flat_map<std::string, base::FilePath>& HeliumTargetDirectories() {
++  static base::NoDestructor<base::flat_map<std::string, base::FilePath>>
++      directories;
++  return *directories;
++}
++
++std::optional<base::FilePath> TakeHeliumTargetDirectory(
++    const std::string& guid) {
++  auto it = HeliumTargetDirectories().find(guid);
++  if (it == HeliumTargetDirectories().end()) {
++    return std::nullopt;
++  }
++  base::FilePath directory = std::move(it->second);
++  HeliumTargetDirectories().erase(it);
++  return directory;
++}
++
+ // Condenses the results from HistoryService::GetVisibleVisitCountToHost() to a
+ // single bool. A host is considered visited before if prior visible visits were
+ // found in history and the first such visit was earlier than the most recent
+@@ -202,9 +220,17 @@ void SetDownloadTargetPath(const std::string& guid,
+   HeliumTargetPaths()[guid] = path;
+ }
+ 
++void SetDownloadTargetDirectory(const std::string& guid,
++                                const base::FilePath& directory) {
++  CHECK_CURRENTLY_ON(BrowserThread::UI);
++  CHECK(directory.IsAbsolute());
++  HeliumTargetDirectories()[guid] = directory;
++}
++
+ void ClearDownloadTargetPath(const std::string& guid) {
+   CHECK_CURRENTLY_ON(BrowserThread::UI);
+   HeliumTargetPaths().erase(guid);
++  HeliumTargetDirectories().erase(guid);
+ }
+ 
+ }  // namespace helium
+@@ -367,6 +393,17 @@ DownloadTargetDeterminer::Result
+     containment_directory_ = virtual_path_.DirName();
+     RecordDownloadPathGeneration(DownloadPathGenerationEvent::USE_FORCE_PATH,
+                                  false);
++  } else if (std::optional<base::FilePath> helium_directory =
++                 is_forced_path
++                     ? std::nullopt
++                     : TakeHeliumTargetDirectory(download_->GetGuid())) {
++    // Helium chose the folder, e.g. for an image saved with its context. Name
++    // the file as usual and save it there without prompting.
++    virtual_path_ = helium_directory->Append(GenerateFileName());
++    containment_directory_ = std::move(*helium_directory);
++    create_target_directory_ = true;
++    RecordDownloadPathGeneration(
++        DownloadPathGenerationEvent::USE_DEFAULTL_DOWNLOAD_DIRECTORY, false);
+   } else if (!is_forced_path) {
+     // If we don't have a forced path, we should construct a path for the
+     // download. Forced paths are only specified for programmatic downloads
+--- a/chrome/browser/download/download_target_determiner.h
++++ b/chrome/browser/download/download_target_determiner.h
+@@ -37,7 +37,13 @@ namespace helium {
+ // `path` should not exist yet. Call before starting the download.
+ void SetDownloadTargetPath(const std::string& guid, const base::FilePath& path);
+ 
+-// Forgets the path set for a download that did not start.
++// Saves the download started with `guid` in `directory` without prompting,
++// under the name it would get otherwise. Like SetDownloadTargetPath(), it stays
++// a regular download.
++void SetDownloadTargetDirectory(const std::string& guid,
++                                const base::FilePath& directory);
++
++// Forgets the path or directory set for a download that did not start.
+ void ClearDownloadTargetPath(const std::string& guid);
+ 
+ }  // namespace helium
+--- a/chrome/browser/image_editor/BUILD.gn
++++ b/chrome/browser/image_editor/BUILD.gn
+@@ -81,6 +81,29 @@ test("screenshot_source_tests") {
+   ]
+ }
+ 
++source_set("image_context_metadata") {
++  sources = [
++    "image_context_metadata.cc",
++    "image_context_metadata.h",
++  ]
++  deps = [ "//base" ]
++}
++
++test("image_context_metadata_tests") {
++  sources = [ "image_context_metadata_unittest.cc" ]
++  deps = [
++    ":image_context_metadata",
++    "//base",
++    "//base/test:test_support",
++    "//mojo/core/test:run_all_unittests",
++    "//services/data_decoder/public/cpp",
++    "//services/data_decoder/public/cpp:test_support",
++    "//skia",
++    "//testing/gtest",
++    "//ui/gfx/codec",
++  ]
++}
++
+ source_set("screenshot_color") {
+   sources = [
+     "screenshot_color.cc",
+--- a/chrome/browser/renderer_context_menu/render_view_context_menu.cc
++++ b/chrome/browser/renderer_context_menu/render_view_context_menu.cc
+@@ -1667,8 +1667,9 @@ std::u16string RenderViewContextMenu::GetImageSearchProviderName(
+ }
+ 
+ void RenderViewContextMenu::RecordUsedItem(int id) {
+-  // Neo's local capture action has no entry in Chromium's metrics enum.
+-  if (id == IDC_SHARING_HUB_SCREENSHOT) {
++  // Neo's local capture actions have no entry in Chromium's metrics enum.
++  if (id == IDC_SHARING_HUB_SCREENSHOT ||
++      id == IDC_CONTENT_CONTEXT_SAVEIMAGEWITHCONTEXT) {
+     return;
+   }
+   // Log general ID.
+@@ -1787,7 +1788,8 @@ void RenderViewContextMenu::RecordUsedItem(int id) {
+ }
+ 
+ void RenderViewContextMenu::RecordShownItem(int id, bool is_submenu) {
+-  if (id == IDC_SHARING_HUB_SCREENSHOT) {
++  if (id == IDC_SHARING_HUB_SCREENSHOT ||
++      id == IDC_CONTENT_CONTEXT_SAVEIMAGEWITHCONTEXT) {
+     return;
+   }
+   // The "RenderViewContextMenu.Shown" histogram is not recorded for submenus.
+@@ -2337,6 +2339,8 @@ void RenderViewContextMenu::AppendImageItems() {
+   }
+   menu_model_.AddItemWithStringId(IDC_CONTENT_CONTEXT_SAVEIMAGEAS,
+                                   IDS_CONTENT_CONTEXT_SAVEIMAGEAS);
++  menu_model_.AddItemWithStringId(IDC_CONTENT_CONTEXT_SAVEIMAGEWITHCONTEXT,
++                                  IDS_HELIUM_SAVE_IMAGE_WITH_CONTEXT);
+   menu_model_.AddItemWithStringId(IDC_CONTENT_CONTEXT_COPYIMAGE,
+                                   IDS_CONTENT_CONTEXT_COPYIMAGE);
+   menu_model_.AddItemWithStringId(IDC_CONTENT_CONTEXT_COPYIMAGELOCATION,
+@@ -3541,6 +3545,14 @@ bool RenderViewContextMenu::IsCommandIdEnabled(int id) const {
+     case IDC_CONTENT_CONTEXT_SAVEIMAGEAS:
+       return IsSaveImageAsEnabled();
+ 
++    // Canvases and images too large for a data: URL are saved from their
++    // pixels, which have no address to download.
++    case IDC_CONTENT_CONTEXT_SAVEIMAGEWITHCONTEXT:
++      return params_.media_type == ContextMenuDataMediaType::kImage &&
++             params_.src_url.is_valid() &&
++             !params_.src_url.SchemeIs(content::kChromeUIScheme) &&
++             IsSaveImageAsEnabled();
++
+     // The images shown in the most visited thumbnails can't be opened or
+     // searched for conventionally.
+     case IDC_CONTENT_CONTEXT_OPEN_ORIGINAL_IMAGE_NEW_TAB:
+@@ -3927,6 +3939,12 @@ void RenderViewContextMenu::ExecuteCommand(int id, int event_flags) {
+       ExecSaveAs();
+       break;
+ 
++    case IDC_CONTENT_CONTEXT_SAVEIMAGEWITHCONTEXT:
++      if (IsCommandIdEnabled(id)) {
++        ExecSaveImageWithContext();
++      }
++      break;
++
+     case IDC_CONTENT_CONTEXT_COPYLINKLOCATION:
+       WriteURLToClipboard(params_.unfiltered_link_url, id);
+       break;
+@@ -5260,6 +5278,51 @@ void RenderViewContextMenu::ExecSaveAs() {
+                                              target_frame_host, is_subresource);
+ }
+ 
++void RenderViewContextMenu::ExecSaveImageWithContext() {
++  RenderFrameHost* frame_host = GetRenderFrameHost();
++  if (!frame_host) {
++    return;
++  }
++  RecordDownloadSource(DOWNLOAD_INITIATED_BY_CONTEXT_MENU);
++  const GURL& url = params_.src_url;
++  net::NetworkTrafficAnnotationTag traffic_annotation =
++      net::DefineNetworkTrafficAnnotation("helium_save_image_with_context", R"(
++        semantics {
++          sender: "Save Image with Context Metadata"
++          description:
++            "Saves an image to the local file system, recording the page it "
++            "was saved from and its address in its metadata."
++          trigger:
++            "The user selects 'Save Image with Context Metadata' in the "
++            "context menu of an image."
++          data: "None."
++          destination: WEBSITE
++        }
++        policy {
++          cookies_allowed: YES
++          cookies_store: "user"
++          setting:
++            "This feature cannot be disabled by settings. The request is made "
++            "only when the user chooses the context menu item."
++          policy_exception_justification: "Not implemented."
++        })");
++  // As "Save Image As", but without asking where.
++  auto dl_params =
++      frame_host->CreateDownloadUrlParameters(url, traffic_annotation);
++  content::Referrer referrer = CreateReferrer(url, params_);
++  dl_params->set_referrer(referrer.url);
++  dl_params->set_referrer_policy(
++      content::Referrer::ReferrerPolicyForUrlRequest(referrer.policy));
++  dl_params->set_referrer_encoding(params_.frame_charset);
++  dl_params->add_request_header(net::HttpRequestHeaders::kAccept,
++                                blink::network_utils::ImageAcceptHeader());
++  dl_params->set_prefer_cache(true);
++  dl_params->set_suggested_name(params_.suggested_filename);
++  dl_params->set_download_source(download::DownloadSource::CONTEXT_MENU);
++  sharing_hub::ScreenshotCapturedBubbleController::Get(embedder_web_contents_)
++      ->SaveImageWithContext(std::move(dl_params));
++}
++
+ void RenderViewContextMenu::ExecGlic() {
+   // Context menus remain open across navigations on Views platforms. Bail out
+   // if the originating document is no longer the active primary page to avoid
+--- a/chrome/browser/renderer_context_menu/render_view_context_menu.h
++++ b/chrome/browser/renderer_context_menu/render_view_context_menu.h
+@@ -438,6 +438,7 @@ class RenderViewContextMenu
+   void ExecInspectBackgroundPage();
+   void ExecSaveLinkAs();
+   void ExecSaveAs();
++  void ExecSaveImageWithContext();
+   void ExecGlicShareImage();
+   void ExecExitFullscreen();
+   void ExecCopyLinkText();
+--- a/chrome/browser/sharing_hub/sharing_hub_features.cc
++++ b/chrome/browser/sharing_hub/sharing_hub_features.cc
+@@ -81,6 +81,9 @@ void RegisterProfilePrefs(PrefRegistrySimple* registry) {
+   registry->RegisterFilePathPref(kScreenshotDirectoryPref, base::FilePath());
+   registry->RegisterBooleanPref(kScreenshotPreserveHDRPref, true);
+   registry->RegisterIntegerPref(kScreenshotCopyrightLanguagePref, 0);
++  registry->RegisterFilePathPref(kSavedImageDirectoryPref, base::FilePath());
++  registry->RegisterBooleanPref(kSavedImageSidecarPref, false);
++  registry->RegisterBooleanPref(kSavedImageEmbedInSignedPref, false);
+ }
+ 
+ void RegisterLocalStatePrefs(PrefRegistrySimple* registry) {
+--- a/chrome/browser/sharing_hub/sharing_hub_features.h
++++ b/chrome/browser/sharing_hub/sharing_hub_features.h
+@@ -50,6 +50,17 @@ inline constexpr char kScreenshotDirectoryPref[] = "helium.screenshot_directory"
+ inline constexpr char kScreenshotPreserveHDRPref[] =
+     "helium.screenshot_preserve_hdr";
+ 
++// Where images saved with their context go. Empty for the download folder.
++inline constexpr char kSavedImageDirectoryPref[] =
++    "helium.saved_image_directory";
++// Whether images that can't hold metadata, such as GIF and SVG, get it in an
++// XMP sidecar file next to them.
++inline constexpr char kSavedImageSidecarPref[] = "helium.saved_image_sidecar";
++// Whether to add the context to images with Content Credentials, which then
++// show as altered, instead of putting it in a sidecar file.
++inline constexpr char kSavedImageEmbedInSignedPref[] =
++    "helium.saved_image_embed_in_signed";
++
+ // Superseded by the browser-wide preference below; read once for migration.
+ inline constexpr char kScreenshotCopyrightLanguagePref[] =
+     "helium.screenshot_copyright_language";
+--- a/chrome/browser/ui/sharing_hub/BUILD.gn
++++ b/chrome/browser/ui/sharing_hub/BUILD.gn
+@@ -54,6 +54,7 @@ source_set("impl") {
+     "//chrome/browser/ui/views/frame:toolbar_button_provider",
+     "//chrome/browser/ui/views/sharing_hub",
+     "//chrome/browser/ui/views/toolbar",
++    "//components/download/public/common:public",
+     "//ui/actions:actions_headers",
+   ]
+ 
+--- a/chrome/browser/ui/sharing_hub/screenshot/screenshot_captured_bubble_controller.cc
++++ b/chrome/browser/ui/sharing_hub/screenshot/screenshot_captured_bubble_controller.cc
+@@ -7,6 +7,8 @@
+ #include "chrome/browser/image_editor/screenshot_flow.h"
+ #include "chrome/browser/sharing_hub/sharing_hub_features.h"
+ #include "chrome/browser/ui/simple_message_box.h"
++#include "chrome/browser/ui/views/sharing_hub/screenshot/image_context_save.h"
++#include "components/download/public/common/download_url_parameters.h"
+ #include "chrome/browser/ui/views/sharing_hub/screenshot/screenshot_quick_save.h"
+ #include "chrome/grit/generated_resources.h"
+ #include "content/public/browser/web_contents.h"
+@@ -34,6 +36,11 @@ void ScreenshotCapturedBubbleController::ShowBubble(
+   QuickSaveScreenshot(&GetWebContents(), image);
+ }
+ 
++void ScreenshotCapturedBubbleController::SaveImageWithContext(
++    std::unique_ptr<download::DownloadUrlParameters> params) {
++  sharing_hub::SaveImageWithContext(&GetWebContents(), std::move(params));
++}
++
+ void ScreenshotCapturedBubbleController::HideBubble() {
+   // The review bubble owns its frozen capture and closes with its widget.
+ }
+--- a/chrome/browser/ui/sharing_hub/screenshot/screenshot_captured_bubble_controller.h
++++ b/chrome/browser/ui/sharing_hub/screenshot/screenshot_captured_bubble_controller.h
+@@ -5,12 +5,17 @@
+ #ifndef CHROME_BROWSER_UI_SHARING_HUB_SCREENSHOT_SCREENSHOT_CAPTURED_BUBBLE_CONTROLLER_H_
+ #define CHROME_BROWSER_UI_SHARING_HUB_SCREENSHOT_SCREENSHOT_CAPTURED_BUBBLE_CONTROLLER_H_
+ 
++#include <memory>
+ #include <vector>
+ 
+ #include "content/public/browser/web_contents_user_data.h"
+ 
+ class BrowserWindowInterface;
+ 
++namespace download {
++class DownloadUrlParameters;
++}  // namespace download
++
+ namespace content {
+ class WebContents;
+ }
+@@ -41,6 +46,11 @@ class ScreenshotCapturedBubbleController
+   // Start the capture flow.
+   void Capture(BrowserWindowInterface* browser);
+ 
++  // Saves the image `params` downloads with the page it was saved from in its
++  // metadata, without asking where.
++  void SaveImageWithContext(
++      std::unique_ptr<download::DownloadUrlParameters> params);
++
+   // Handler for when the bubble is dismissed.
+   void OnBubbleClosed();
+ 
+--- a/chrome/browser/ui/views/sharing_hub/BUILD.gn
++++ b/chrome/browser/ui/views/sharing_hub/BUILD.gn
+@@ -10,13 +10,17 @@ assert(toolkit_views)
+ source_set("sharing_hub") {
+   public = [
+     "preview_view.h",
++    "screenshot/image_context_bubble.h",
++    "screenshot/image_context_save.h",
+     "screenshot/screenshot_captured_bubble.h",
+     "screenshot/screenshot_quick_save.h",
+     "sharing_hub_bubble_util.h",
+   ]
+   public_deps = [
++    ":screenshot_documentation",
+     "//base",
+     "//chrome/browser/image_editor",
++    "//chrome/browser/image_editor:image_context_metadata",
+     "//chrome/browser/share",
+     "//chrome/browser/sharing_hub",
+     "//chrome/browser/ui/views/location_bar",
+@@ -37,6 +41,8 @@ source_set("sharing_hub") {
+ source_set("impl") {
+   sources = [
+     "preview_view.cc",
++    "screenshot/image_context_bubble.cc",
++    "screenshot/image_context_save.cc",
+     "screenshot/screenshot_captured_bubble.cc",
+     "screenshot/screenshot_quick_save.cc",
+     "sharing_hub_bubble_util.cc",
+@@ -48,16 +54,21 @@ source_set("impl") {
+     "//chrome/browser/download",
+     "//chrome/browser/ui/views/download",
+     "//chrome/browser/image_editor",
++    "//chrome/browser/image_editor:image_context_metadata",
+     "//chrome/browser/image_editor:image_editor_component_util",
+     "//chrome/browser/image_editor:screenshot_color",
+     "//chrome/browser/ui/qrcode_generator",
+     "//chrome/browser/ui/sharing_hub",
+     "//chrome/browser/ui/select_file_policy",
++    "//chrome/browser/ui:simple_message_box_headers",
+     "//chrome/browser/ui/views:layout_provider",
++    "//chrome/browser/ui/views/frame:browser_view_header",
++    "//chrome/browser/ui/views/frame:toolbar_button_provider",
+     "//components/omnibox/browser:vector_icons",
+     "//components/prefs",
+     "//components/url_formatter",
+     "//components/version_info",
++    "//services/data_decoder/public/cpp",
+     "//services/network/public/cpp",
+     "//storage/browser",
+     "//ui/strings:ui_strings",
+--- /dev/null
++++ b/chrome/browser/image_editor/image_context_metadata.cc
+@@ -0,0 +1,1020 @@
++// Copyright 2026 The Helium Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#include "chrome/browser/image_editor/image_context_metadata.h"
++
++#include <array>
++#include <cstdint>
++#include <optional>
++#include <string>
++#include <string_view>
++#include <utility>
++#include <vector>
++
++#include "base/memory/raw_ptr.h"
++#include "base/notreached.h"
++#include "base/values.h"
++
++namespace image_editor {
++namespace {
++
++// Byte access.
++
++uint8_t U8(std::string_view data, size_t pos) {
++  return static_cast<uint8_t>(data[pos]);
++}
++
++uint32_t BE16(std::string_view data, size_t pos) {
++  return (U8(data, pos) << 8) | U8(data, pos + 1);
++}
++
++uint32_t BE32(std::string_view data, size_t pos) {
++  return (BE16(data, pos) << 16) | BE16(data, pos + 2);
++}
++
++uint32_t LE16(std::string_view data, size_t pos) {
++  return U8(data, pos) | (U8(data, pos + 1) << 8);
++}
++
++uint32_t LE32(std::string_view data, size_t pos) {
++  return LE16(data, pos) | (LE16(data, pos + 2) << 16);
++}
++
++void AppendBE16(std::string& out, uint32_t value) {
++  out += static_cast<char>(value >> 8);
++  out += static_cast<char>(value);
++}
++
++void AppendBE32(std::string& out, uint32_t value) {
++  AppendBE16(out, value >> 16);
++  AppendBE16(out, value);
++}
++
++void AppendLE24(std::string& out, uint32_t value) {
++  out += static_cast<char>(value);
++  out += static_cast<char>(value >> 8);
++  out += static_cast<char>(value >> 16);
++}
++
++void AppendLE32(std::string& out, uint32_t value) {
++  AppendLE24(out, value);
++  out += static_cast<char>(value >> 24);
++}
++
++// JPEG: XMP is an APP1 segment starting with this namespace. Content
++// Credentials are JUMBF boxes in APP11 segments.
++
++constexpr std::string_view kJpegXmpHeader("http://ns.adobe.com/xap/1.0/\0", 29);
++constexpr std::string_view kJpegExifHeader("Exif\0\0", 6);
++constexpr uint8_t kJpegApp0 = 0xE0;
++constexpr uint8_t kJpegApp1 = 0xE1;
++constexpr uint8_t kJpegApp11 = 0xEB;
++constexpr size_t kMaxJpegSegmentPayload = 0xFFFF - 2;
++
++struct JpegSegment {
++  size_t start;
++  size_t size;
++  uint8_t marker;
++  std::string_view payload;
++};
++
++// Returns the segments before the image data.
++std::optional<std::vector<JpegSegment>> JpegSegments(std::string_view file) {
++  if (file.size() < 4 || U8(file, 0) != 0xFF || U8(file, 1) != 0xD8) {
++    return std::nullopt;
++  }
++  std::vector<JpegSegment> segments;
++  size_t pos = 2;
++  while (true) {
++    if (pos >= file.size() || U8(file, pos) != 0xFF) {
++      return std::nullopt;
++    }
++    const size_t start = pos;
++    // Markers may be padded with fill bytes.
++    while (pos < file.size() && U8(file, pos) == 0xFF) {
++      ++pos;
++    }
++    if (pos >= file.size()) {
++      return std::nullopt;
++    }
++    const uint8_t marker = U8(file, pos++);
++    if (marker == 0xDA || marker == 0xD9) {
++      return segments;
++    }
++    if (marker == 0x01 || (marker >= 0xD0 && marker <= 0xD7)) {
++      continue;
++    }
++    if (marker == 0x00 || pos + 2 > file.size()) {
++      return std::nullopt;
++    }
++    const size_t length = BE16(file, pos);
++    if (length < 2 || pos + length > file.size()) {
++      return std::nullopt;
++    }
++    segments.push_back({start, pos + length - start, marker,
++                        file.substr(pos + 2, length - 2)});
++    pos += length;
++  }
++}
++
++void InspectJpeg(std::string_view file, ImageMetadataInfo& info) {
++  const std::optional<std::vector<JpegSegment>> segments = JpegSegments(file);
++  if (!segments) {
++    info.unsupported = true;
++    return;
++  }
++  for (const JpegSegment& segment : *segments) {
++    if (segment.marker == kJpegApp1 &&
++        segment.payload.starts_with(kJpegXmpHeader)) {
++      if (info.xmp) {
++        info.unsupported = true;
++      }
++      info.xmp = std::string(segment.payload.substr(kJpegXmpHeader.size()));
++    } else if (segment.marker == kJpegApp11 &&
++               segment.payload.starts_with("JP") &&
++               segment.payload.find("c2pa") != std::string_view::npos) {
++      info.has_content_credentials = true;
++    }
++  }
++}
++
++std::optional<std::string> EmbedInJpeg(std::string_view file,
++                                       std::string_view xmp) {
++  const std::optional<std::vector<JpegSegment>> segments = JpegSegments(file);
++  if (!segments ||
++      kJpegXmpHeader.size() + xmp.size() > kMaxJpegSegmentPayload) {
++    return std::nullopt;
++  }
++  std::string segment = "\xFF\xE1";
++  AppendBE16(segment,
++             static_cast<uint32_t>(2 + kJpegXmpHeader.size() + xmp.size()));
++  segment += kJpegXmpHeader;
++  segment += xmp;
++
++  // Replace the XMP segment, or add one after the JFIF and Exif segments,
++  // which readers expect first.
++  size_t start = 2;
++  size_t end = 2;
++  bool leading = true;
++  for (const JpegSegment& existing : *segments) {
++    if (existing.marker == kJpegApp1 &&
++        existing.payload.starts_with(kJpegXmpHeader)) {
++      start = existing.start;
++      end = existing.start + existing.size;
++      break;
++    }
++    leading = leading && (existing.marker == kJpegApp0 ||
++                          (existing.marker == kJpegApp1 &&
++                           existing.payload.starts_with(kJpegExifHeader)));
++    if (leading) {
++      start = end = existing.start + existing.size;
++    }
++  }
++  std::string out(file.substr(0, start));
++  out += segment;
++  out += file.substr(end);
++  return out;
++}
++
++// PNG: XMP is an uncompressed iTXt chunk with this keyword. Content
++// Credentials are in a caBX chunk.
++
++constexpr std::string_view kPngSignature("\x89PNG\r\n\x1A\n", 8);
++constexpr std::string_view kPngXmpKeyword("XML:com.adobe.xmp\0", 18);
++constexpr uint32_t kMaxPngChunkLength = 0x7FFFFFFF;
++
++struct PngChunk {
++  size_t start;
++  size_t size;
++  std::string_view type;
++  std::string_view data;
++};
++
++std::optional<std::vector<PngChunk>> PngChunks(std::string_view file) {
++  if (!file.starts_with(kPngSignature)) {
++    return std::nullopt;
++  }
++  std::vector<PngChunk> chunks;
++  size_t pos = kPngSignature.size();
++  while (true) {
++    if (pos + 12 > file.size()) {
++      return std::nullopt;
++    }
++    const uint32_t length = BE32(file, pos);
++    if (length > kMaxPngChunkLength || length > file.size() - pos - 12) {
++      return std::nullopt;
++    }
++    chunks.push_back({pos, length + 12u, file.substr(pos + 4, 4),
++                      file.substr(pos + 8, length)});
++    pos += length + 12u;
++    if (chunks.back().type == "IEND") {
++      break;
++    }
++  }
++  if (chunks.front().type != "IHDR") {
++    return std::nullopt;
++  }
++  return chunks;
++}
++
++uint32_t Crc32(std::string_view data) {
++  static constexpr std::array<uint32_t, 256> kTable = [] {
++    std::array<uint32_t, 256> table{};
++    for (uint32_t n = 0; n < 256; ++n) {
++      uint32_t c = n;
++      for (int k = 0; k < 8; ++k) {
++        c = (c & 1) ? 0xEDB88320u ^ (c >> 1) : c >> 1;
++      }
++      table[n] = c;
++    }
++    return table;
++  }();
++  uint32_t crc = 0xFFFFFFFFu;
++  for (char c : data) {
++    crc = kTable[(crc ^ static_cast<uint8_t>(c)) & 0xFF] ^ (crc >> 8);
++  }
++  return crc ^ 0xFFFFFFFFu;
++}
++
++void InspectPng(std::string_view file, ImageMetadataInfo& info) {
++  const std::optional<std::vector<PngChunk>> chunks = PngChunks(file);
++  if (!chunks) {
++    info.unsupported = true;
++    return;
++  }
++  for (const PngChunk& chunk : *chunks) {
++    if (chunk.type == "caBX") {
++      info.has_content_credentials = true;
++    }
++    if (chunk.type != "iTXt" || !chunk.data.starts_with(kPngXmpKeyword)) {
++      continue;
++    }
++    // Compression flag and method, then the language and translated keyword.
++    std::string_view rest = chunk.data.substr(kPngXmpKeyword.size());
++    if (info.xmp || rest.size() < 2 || rest[0] != 0) {
++      info.unsupported = true;
++      continue;
++    }
++    rest.remove_prefix(2);
++    const size_t language_end = rest.find('\0');
++    const size_t keyword_end = language_end == std::string_view::npos
++                                   ? std::string_view::npos
++                                   : rest.find('\0', language_end + 1);
++    if (keyword_end == std::string_view::npos) {
++      info.unsupported = true;
++      continue;
++    }
++    info.xmp = std::string(rest.substr(keyword_end + 1));
++  }
++}
++
++std::optional<std::string> EmbedInPng(std::string_view file,
++                                      std::string_view xmp) {
++  const std::optional<std::vector<PngChunk>> chunks = PngChunks(file);
++  std::string data(kPngXmpKeyword);
++  // Uncompressed, no language and no translated keyword.
++  data.append(4, '\0');
++  data += xmp;
++  if (!chunks || data.size() > kMaxPngChunkLength) {
++    return std::nullopt;
++  }
++  std::string chunk;
++  AppendBE32(chunk, static_cast<uint32_t>(data.size()));
++  chunk += "iTXt";
++  chunk += data;
++  AppendBE32(chunk, Crc32(chunk.substr(4)));
++
++  // Replace the XMP chunk, or add one after the header, before the image data
++  // as readers expect.
++  size_t start = chunks->front().size + kPngSignature.size();
++  size_t end = start;
++  for (const PngChunk& existing : *chunks) {
++    if (existing.type == "iTXt" && existing.data.starts_with(kPngXmpKeyword)) {
++      start = existing.start;
++      end = existing.start + existing.size;
++      break;
++    }
++  }
++  std::string out(file.substr(0, start));
++  out += chunk;
++  out += file.substr(end);
++  return out;
++}
++
++// WebP: XMP is an "XMP " chunk in the extended format, which a VP8X chunk
++// announces. Content Credentials are in a C2PA chunk.
++
++constexpr uint8_t kWebPXmpFlag = 0x04;
++constexpr uint8_t kWebPAlphaFlag = 0x10;
++constexpr size_t kWebPHeaderSize = 12;
++
++struct WebPChunk {
++  std::string_view fourcc;
++  std::string_view data;
++};
++
++std::optional<std::vector<WebPChunk>> WebPChunks(std::string_view file) {
++  if (file.size() < kWebPHeaderSize || !file.starts_with("RIFF") ||
++      file.substr(8, 4) != "WEBP") {
++    return std::nullopt;
++  }
++  const size_t end = static_cast<size_t>(LE32(file, 4)) + 8;
++  if (end > file.size()) {
++    return std::nullopt;
++  }
++  std::vector<WebPChunk> chunks;
++  size_t pos = kWebPHeaderSize;
++  while (pos < end) {
++    if (pos + 8 > end) {
++      return std::nullopt;
++    }
++    const size_t size = LE32(file, pos + 4);
++    if (size > end - pos - 8) {
++      return std::nullopt;
++    }
++    chunks.push_back({file.substr(pos, 4), file.substr(pos + 8, size)});
++    pos += 8 + size + (size & 1);
++  }
++  if (chunks.empty()) {
++    return std::nullopt;
++  }
++  return chunks;
++}
++
++void AppendWebPChunk(std::string& out,
++                     std::string_view fourcc,
++                     std::string_view data) {
++  out += fourcc;
++  AppendLE32(out, static_cast<uint32_t>(data.size()));
++  out += data;
++  if (data.size() & 1) {
++    out += '\0';
++  }
++}
++
++// Returns the VP8X chunk data a simple WebP needs to hold metadata.
++std::optional<std::string> WebPExtendedHeader(const WebPChunk& image) {
++  uint32_t width = 0;
++  uint32_t height = 0;
++  uint8_t flags = kWebPXmpFlag;
++  if (image.fourcc == "VP8 ") {
++    // Frame tag, then the start code and the 14-bit dimensions.
++    if (image.data.size() < 10 || image.data.substr(3, 3) != "\x9D\x01\x2A") {
++      return std::nullopt;
++    }
++    width = LE16(image.data, 6) & 0x3FFF;
++    height = LE16(image.data, 8) & 0x3FFF;
++  } else if (image.fourcc == "VP8L") {
++    // Signature, then the 14-bit dimensions minus one and the alpha hint.
++    if (image.data.size() < 5 || U8(image.data, 0) != 0x2F) {
++      return std::nullopt;
++    }
++    const uint32_t bits = LE32(image.data, 1);
++    width = (bits & 0x3FFF) + 1;
++    height = ((bits >> 14) & 0x3FFF) + 1;
++    if ((bits >> 28) & 1) {
++      flags |= kWebPAlphaFlag;
++    }
++  } else {
++    return std::nullopt;
++  }
++  if (width == 0 || height == 0) {
++    return std::nullopt;
++  }
++  std::string header(1, static_cast<char>(flags));
++  header.append(3, '\0');
++  AppendLE24(header, width - 1);
++  AppendLE24(header, height - 1);
++  return header;
++}
++
++void InspectWebP(std::string_view file, ImageMetadataInfo& info) {
++  const std::optional<std::vector<WebPChunk>> chunks = WebPChunks(file);
++  if (!chunks) {
++    info.unsupported = true;
++    return;
++  }
++  for (const WebPChunk& chunk : *chunks) {
++    if (chunk.fourcc == "C2PA") {
++      info.has_content_credentials = true;
++    } else if (chunk.fourcc == "XMP ") {
++      if (info.xmp) {
++        info.unsupported = true;
++      }
++      info.xmp = std::string(chunk.data);
++    }
++  }
++}
++
++std::optional<std::string> EmbedInWebP(std::string_view file,
++                                       std::string_view xmp) {
++  const std::optional<std::vector<WebPChunk>> chunks = WebPChunks(file);
++  if (!chunks || file.size() + xmp.size() + 64 > 0xFFFFFFFFu) {
++    return std::nullopt;
++  }
++  std::string body = "WEBP";
++  if (chunks->front().fourcc == "VP8X") {
++    if (chunks->front().data.size() < 10) {
++      return std::nullopt;
++    }
++    std::string header(chunks->front().data);
++    header[0] = static_cast<char>(U8(header, 0) | kWebPXmpFlag);
++    AppendWebPChunk(body, "VP8X", header);
++  } else if (chunks->size() == 1) {
++    const std::optional<std::string> header =
++        WebPExtendedHeader(chunks->front());
++    if (!header) {
++      return std::nullopt;
++    }
++    AppendWebPChunk(body, "VP8X", *header);
++    AppendWebPChunk(body, chunks->front().fourcc, chunks->front().data);
++  } else {
++    return std::nullopt;
++  }
++  // The XMP chunk comes last, replacing any earlier one.
++  if (chunks->front().fourcc == "VP8X") {
++    for (size_t i = 1; i < chunks->size(); ++i) {
++      if ((*chunks)[i].fourcc != "XMP ") {
++        AppendWebPChunk(body, (*chunks)[i].fourcc, (*chunks)[i].data);
++      }
++    }
++  }
++  AppendWebPChunk(body, "XMP ", xmp);
++
++  std::string out = "RIFF";
++  AppendLE32(out, static_cast<uint32_t>(body.size()));
++  out += body;
++  // Keep anything after the RIFF data.
++  out += file.substr(static_cast<size_t>(LE32(file, 4)) + 8);
++  return out;
++}
++
++// XMP, as parsed by data_decoder's XmlParser.
++
++constexpr char kXmpMetaNamespace[] = "adobe:ns:meta/";
++constexpr char kRdfNamespace[] = "http://www.w3.org/1999/02/22-rdf-syntax-ns#";
++constexpr char kDcNamespace[] = "http://purl.org/dc/elements/1.1/";
++constexpr char kPhotoshopNamespace[] = "http://ns.adobe.com/photoshop/1.0/";
++constexpr char kXmpMMNamespace[] = "http://ns.adobe.com/xap/1.0/mm/";
++constexpr char kResourceEventNamespace[] =
++    "http://ns.adobe.com/xap/1.0/sType/ResourceEvent#";
++constexpr char kHeliumNamespace[] =
++    "https://github.com/aagedal/helium/ns/capture/1.0/";
++constexpr char kXmlNamespace[] = "http://www.w3.org/XML/1998/namespace";
++
++constexpr char kTypeKey[] = "type";
++constexpr char kTagKey[] = "tag";
++constexpr char kTextKey[] = "text";
++constexpr char kAttributesKey[] = "attributes";
++constexpr char kChildrenKey[] = "children";
++constexpr char kNamespacesKey[] = "namespaces";
++constexpr char kElementType[] = "element";
++
++// The namespace declarations in scope, innermost last.
++using Scope = std::vector<const base::DictValue*>;
++
++struct QualifiedName {
++  std::string_view ns;
++  std::string_view local;
++
++  bool Is(std::string_view other_ns, std::string_view other_local) const {
++    return ns == other_ns && local == other_local;
++  }
++};
++
++std::string_view LookUpNamespace(std::string_view prefix, const Scope& scope) {
++  for (auto it = scope.rbegin(); it != scope.rend(); ++it) {
++    if (*it) {
++      if (const std::string* uri = (*it)->FindString(prefix)) {
++        return *uri;
++      }
++    }
++  }
++  return prefix == "xml" ? kXmlNamespace : std::string_view();
++}
++
++// Unprefixed attributes have no namespace, while unprefixed elements are in
++// the default namespace.
++QualifiedName Resolve(std::string_view name,
++                      const Scope& scope,
++                      bool is_attribute) {
++  const size_t colon = name.find(':');
++  if (colon == std::string_view::npos) {
++    return {is_attribute ? std::string_view() : LookUpNamespace("", scope),
++            name};
++  }
++  return {LookUpNamespace(name.substr(0, colon), scope),
++          name.substr(colon + 1)};
++}
++
++bool IsElement(const base::Value& node) {
++  const base::DictValue* dict = node.GetIfDict();
++  const std::string* type = dict ? dict->FindString(kTypeKey) : nullptr;
++  return type && *type == kElementType && dict->FindString(kTagKey);
++}
++
++QualifiedName ElementName(const base::DictValue& element, Scope& scope) {
++  scope.push_back(element.FindDict(kNamespacesKey));
++  return Resolve(*element.FindString(kTagKey), scope, false);
++}
++
++// Returns the first child element named `ns`:`local`, with its namespaces
++// added to `scope`.
++base::DictValue* FindChild(base::DictValue& parent,
++                           std::string_view ns,
++                           std::string_view local,
++                           Scope& scope) {
++  base::ListValue* children = parent.FindList(kChildrenKey);
++  if (!children) {
++    return nullptr;
++  }
++  for (base::Value& child : *children) {
++    if (!IsElement(child)) {
++      continue;
++    }
++    if (ElementName(child.GetDict(), scope).Is(ns, local)) {
++      return &child.GetDict();
++    }
++    scope.pop_back();
++  }
++  return nullptr;
++}
++
++base::Value Text(std::string_view text) {
++  return base::Value(
++      base::DictValue().Set(kTypeKey, "text").Set(kTextKey, text));
++}
++
++base::Value Element(std::string_view tag,
++                    base::DictValue attributes,
++                    base::DictValue namespaces,
++                    base::ListValue children) {
++  base::DictValue element;
++  element.Set(kTypeKey, kElementType);
++  element.Set(kTagKey, tag);
++  if (!attributes.empty()) {
++    element.Set(kAttributesKey, std::move(attributes));
++  }
++  if (!namespaces.empty()) {
++    element.Set(kNamespacesKey, std::move(namespaces));
++  }
++  element.Set(kChildrenKey, std::move(children));
++  return base::Value(std::move(element));
++}
++
++void AddTextProperty(base::ListValue& properties,
++                     std::string_view tag,
++                     std::string_view value) {
++  if (!value.empty()) {
++    properties.Append(
++        Element(tag, {}, {}, base::ListValue().Append(Text(value))));
++  }
++}
++
++// List items are structures. Items added to an existing list declare the
++// namespaces they use, as the prefixes in the document may differ.
++base::Value ListItem(base::ListValue properties,
++                     base::DictValue namespaces,
++                     bool declare_namespaces) {
++  if (!declare_namespaces) {
++    namespaces = {};
++  } else {
++    namespaces.Set("rdf", kRdfNamespace);
++  }
++  return Element("rdf:li", base::DictValue().Set("rdf:parseType", "Resource"),
++                 std::move(namespaces), std::move(properties));
++}
++
++base::Value HistoryEvent(const ImageContext& context, bool declare_namespaces) {
++  base::ListValue properties;
++  AddTextProperty(properties, "stEvt:action", "saved");
++  AddTextProperty(properties, "stEvt:when", context.saved_at);
++  AddTextProperty(properties, "stEvt:softwareAgent", context.software);
++  AddTextProperty(properties, "stEvt:parameters",
++                  context.image_url.empty() ? "from " + context.page_url
++                                            : "from " + context.image_url +
++                                                  " on " + context.page_url);
++  return ListItem(std::move(properties),
++                  base::DictValue().Set("stEvt", kResourceEventNamespace),
++                  declare_namespaces);
++}
++
++base::Value SaveRecord(const ImageContext& context, bool declare_namespaces) {
++  base::ListValue properties;
++  AddTextProperty(properties, "helium:PageURL", context.page_url);
++  AddTextProperty(properties, "helium:PageTitle", context.page_title);
++  AddTextProperty(properties, "helium:ImageURL", context.image_url);
++  AddTextProperty(properties, "helium:SavedAt", context.saved_at);
++  return ListItem(std::move(properties),
++                  base::DictValue().Set("helium", kHeliumNamespace),
++                  declare_namespaces);
++}
++
++base::Value OrderedList(base::Value item) {
++  return Element("rdf:Seq", {}, {}, base::ListValue().Append(std::move(item)));
++}
++
++// A property of an rdf:Description element.
++struct Property {
++  bool found = false;
++  // The property's rdf:Seq, if it is an ordered list.
++  raw_ptr<base::DictValue> list = nullptr;
++};
++
++void FindProperty(base::DictValue& description,
++                  std::string_view ns,
++                  std::string_view local,
++                  Scope& scope,
++                  Property& property) {
++  if (property.found) {
++    return;
++  }
++  // Simple values can be attributes of the description.
++  if (const base::DictValue* attributes =
++          description.FindDict(kAttributesKey)) {
++    for (const auto [name, value] : *attributes) {
++      if (Resolve(name, scope, true).Is(ns, local)) {
++        property.found = true;
++        return;
++      }
++    }
++  }
++  const size_t depth = scope.size();
++  base::DictValue* element = FindChild(description, ns, local, scope);
++  if (!element) {
++    return;
++  }
++  property.found = true;
++  property.list = FindChild(*element, kRdfNamespace, "Seq", scope);
++  scope.resize(depth);
++}
++
++// Escapes text for XML, dropping characters XML can't hold.
++std::string Escape(std::string_view text, bool attribute) {
++  std::string out;
++  out.reserve(text.size());
++  for (size_t i = 0; i < text.size(); ++i) {
++    const char c = text[i];
++    // U+FFFE and U+FFFF.
++    if (text.substr(i, 2) == "\xEF\xBF" && i + 2 < text.size() &&
++        (U8(text, i + 2) == 0xBE || U8(text, i + 2) == 0xBF)) {
++      out += "\xEF\xBF\xBD";
++      i += 2;
++      continue;
++    }
++    switch (c) {
++      case '&':
++        out += "&amp;";
++        break;
++      case '<':
++        out += "&lt;";
++        break;
++      case '>':
++        out += "&gt;";
++        break;
++      case '"':
++        out += attribute ? "&quot;" : "\"";
++        break;
++      case '\t':
++        out += attribute ? "&#x9;" : "\t";
++        break;
++      case '\n':
++        out += attribute ? "&#xA;" : "\n";
++        break;
++      case '\r':
++        out += "&#xD;";
++        break;
++      default:
++        if (static_cast<uint8_t>(c) >= 0x20) {
++          out += c;
++        }
++    }
++  }
++  return out;
++}
++
++void Serialize(const base::Value& node, std::string& out) {
++  const base::DictValue* dict = node.GetIfDict();
++  const std::string* type = dict ? dict->FindString(kTypeKey) : nullptr;
++  if (!type) {
++    return;
++  }
++  if (*type != kElementType) {
++    // Text and CDATA.
++    if (const std::string* text = dict->FindString(kTextKey)) {
++      out += Escape(*text, false);
++    }
++    return;
++  }
++  const std::string* tag = dict->FindString(kTagKey);
++  if (!tag) {
++    return;
++  }
++  out += '<';
++  out += *tag;
++  if (const base::DictValue* namespaces = dict->FindDict(kNamespacesKey)) {
++    for (const auto [prefix, uri] : *namespaces) {
++      if (!uri.is_string()) {
++        continue;
++      }
++      out += prefix.empty() ? " xmlns" : " xmlns:" + prefix;
++      out += "=\"" + Escape(uri.GetString(), true) + '"';
++    }
++  }
++  if (const base::DictValue* attributes = dict->FindDict(kAttributesKey)) {
++    for (const auto [name, value] : *attributes) {
++      if (value.is_string()) {
++        out += ' ' + name + "=\"" + Escape(value.GetString(), true) + '"';
++      }
++    }
++  }
++  const base::ListValue* children = dict->FindList(kChildrenKey);
++  if (!children || children->empty()) {
++    out += "/>";
++    return;
++  }
++  out += '>';
++  for (const base::Value& child : *children) {
++    Serialize(child, out);
++  }
++  out += "</" + *tag + '>';
++}
++
++// Returns the rdf:RDF element of an XMP packet, with the namespaces in scope.
++base::DictValue* FindRdf(base::Value& root, Scope& scope) {
++  if (!IsElement(root)) {
++    return nullptr;
++  }
++  base::DictValue* rdf = &root.GetDict();
++  const QualifiedName root_name = ElementName(*rdf, scope);
++  if (root_name.Is(kXmpMetaNamespace, "xmpmeta") ||
++      root_name.Is(kXmpMetaNamespace, "xapmeta")) {
++    return FindChild(*rdf, kRdfNamespace, "RDF", scope);
++  }
++  return root_name.Is(kRdfNamespace, "RDF") ? rdf : nullptr;
++}
++
++// The text directly in `element`.
++std::string ElementText(const base::DictValue& element) {
++  std::string text;
++  if (const base::ListValue* children = element.FindList(kChildrenKey)) {
++    for (const base::Value& child : *children) {
++      if (!IsElement(child) && child.is_dict()) {
++        if (const std::string* part = child.GetDict().FindString(kTextKey)) {
++          text += *part;
++        }
++      }
++    }
++  }
++  return text;
++}
++
++// The value of a property as text: the default of alternatives, the items of
++// a list joined, or plain text.
++std::string PropertyText(base::DictValue& property, Scope& scope) {
++  const size_t depth = scope.size();
++  for (std::string_view type : {"Alt", "Seq", "Bag"}) {
++    base::DictValue* list = FindChild(property, kRdfNamespace, type, scope);
++    if (!list) {
++      continue;
++    }
++    std::vector<std::string> items;
++    for (base::Value& item : *list->EnsureList(kChildrenKey)) {
++      if (!IsElement(item)) {
++        continue;
++      }
++      const size_t item_depth = scope.size();
++      if (ElementName(item.GetDict(), scope).Is(kRdfNamespace, "li")) {
++        const std::string text = ElementText(item.GetDict());
++        const std::string* language =
++            item.GetDict().FindStringByDottedPath("attributes.xml:lang");
++        if (type == "Alt" && language && *language == "x-default") {
++          scope.resize(depth);
++          return text;
++        }
++        if (!text.empty()) {
++          items.push_back(text);
++        }
++      }
++      scope.resize(item_depth);
++    }
++    scope.resize(depth);
++    if (type == "Alt") {
++      return items.empty() ? std::string() : items.front();
++    }
++    std::string joined;
++    for (const std::string& item : items) {
++      joined += (joined.empty() ? "" : ", ") + item;
++    }
++    return joined;
++  }
++  return ElementText(property);
++}
++
++base::Value EmptyXmp() {
++  return Element(
++      "x:xmpmeta", {}, base::DictValue().Set("x", kXmpMetaNamespace),
++      base::ListValue().Append(Element(
++          "rdf:RDF", {}, base::DictValue().Set("rdf", kRdfNamespace), {})));
++}
++
++}  // namespace
++
++ImageMetadataInfo InspectImageMetadata(std::string_view file) {
++  ImageMetadataInfo info;
++  if (file.starts_with("\xFF\xD8")) {
++    info.container = XmpContainer::kJpeg;
++    InspectJpeg(file, info);
++  } else if (file.starts_with(kPngSignature)) {
++    info.container = XmpContainer::kPng;
++    InspectPng(file, info);
++  } else if (file.size() >= kWebPHeaderSize && file.starts_with("RIFF") &&
++             file.substr(8, 4) == "WEBP") {
++    info.container = XmpContainer::kWebP;
++    InspectWebP(file, info);
++  }
++  return info;
++}
++
++std::optional<std::string> AddImageContextToXmp(const ImageContext& context,
++                                                const base::Value* existing) {
++  base::Value root = existing ? existing->Clone() : EmptyXmp();
++  Scope scope;
++  base::DictValue* rdf = FindRdf(root, scope);
++  if (!rdf) {
++    return std::nullopt;
++  }
++  // Make sure the list exists before pointing into the tree.
++  if (!rdf->FindList(kChildrenKey)) {
++    rdf->Set(kChildrenKey, base::ListValue());
++  }
++
++  // Look for the properties in every description, as XMP may split them.
++  Property source;
++  Property description_property;
++  Property supplier;
++  Property history;
++  Property saved_from;
++  std::string about;
++  bool found_about = false;
++  for (base::Value& child : *rdf->FindList(kChildrenKey)) {
++    if (!IsElement(child)) {
++      continue;
++    }
++    base::DictValue& description = child.GetDict();
++    const size_t depth = scope.size();
++    if (ElementName(description, scope).Is(kRdfNamespace, "Description")) {
++      if (const base::DictValue* attributes =
++              description.FindDict(kAttributesKey);
++          attributes && !found_about) {
++        for (const auto [name, value] : *attributes) {
++          if (value.is_string() &&
++              Resolve(name, scope, true).Is(kRdfNamespace, "about")) {
++            about = value.GetString();
++            found_about = true;
++          }
++        }
++      }
++      FindProperty(description, kDcNamespace, "source", scope, source);
++      FindProperty(description, kDcNamespace, "description", scope,
++                   description_property);
++      FindProperty(description, kPhotoshopNamespace, "Source", scope, supplier);
++      FindProperty(description, kXmpMMNamespace, "History", scope, history);
++      FindProperty(description, kHeliumNamespace, "SavedFrom", scope,
++                   saved_from);
++    }
++    scope.resize(depth);
++  }
++
++  // Add to the lists the image has, then put the rest in a description of its
++  // own, so that nothing already there changes. Lists that aren't ordered
++  // lists are left alone.
++  if (history.list) {
++    history.list->EnsureList(kChildrenKey)->Append(HistoryEvent(context, true));
++  }
++  if (saved_from.list) {
++    saved_from.list->EnsureList(kChildrenKey)
++        ->Append(SaveRecord(context, true));
++  }
++  base::ListValue properties;
++  base::DictValue namespaces;
++  if (!source.found && !context.page_url.empty()) {
++    AddTextProperty(properties, "dc:source", context.page_url);
++    namespaces.Set("dc", kDcNamespace);
++  }
++  if (!description_property.found && !context.description.empty()) {
++    // A text in alternative languages, of which this is the default.
++    properties.Append(Element(
++        "dc:description", {}, {},
++        base::ListValue().Append(Element(
++            "rdf:Alt", {}, {},
++            base::ListValue().Append(Element(
++                "rdf:li", base::DictValue().Set("xml:lang", "x-default"), {},
++                base::ListValue().Append(Text(context.description))))))));
++    namespaces.Set("dc", kDcNamespace);
++  }
++  if (!supplier.found && !context.source.empty()) {
++    AddTextProperty(properties, "photoshop:Source", context.source);
++    namespaces.Set("photoshop", kPhotoshopNamespace);
++  }
++  if (!history.found) {
++    properties.Append(Element(
++        "xmpMM:History", {}, {},
++        base::ListValue().Append(OrderedList(HistoryEvent(context, false)))));
++    namespaces.Set("xmpMM", kXmpMMNamespace);
++    namespaces.Set("stEvt", kResourceEventNamespace);
++  }
++  if (!saved_from.found) {
++    properties.Append(Element(
++        "helium:SavedFrom", {}, {},
++        base::ListValue().Append(OrderedList(SaveRecord(context, false)))));
++    namespaces.Set("helium", kHeliumNamespace);
++  }
++  if (!properties.empty()) {
++    namespaces.Set("rdf", kRdfNamespace);
++    rdf->FindList(kChildrenKey)
++        ->Append(Element("rdf:Description",
++                         base::DictValue().Set("rdf:about", about),
++                         std::move(namespaces), std::move(properties)));
++  }
++
++  std::string out =
++      "<?xpacket begin=\"\xEF\xBB\xBF\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>";
++  Serialize(root, out);
++  out += "<?xpacket end=\"w\"?>";
++  return out;
++}
++
++ImageXmpSummary SummarizeXmp(const base::Value& existing) {
++  ImageXmpSummary summary;
++  base::Value root = existing.Clone();
++  Scope scope;
++  base::DictValue* rdf = FindRdf(root, scope);
++  if (!rdf) {
++    return summary;
++  }
++  struct Field {
++    std::string_view ns;
++    std::string_view local;
++    std::string ImageXmpSummary::* text;
++  };
++  static constexpr Field kFields[] = {
++      {kDcNamespace, "title", &ImageXmpSummary::title},
++      {kDcNamespace, "creator", &ImageXmpSummary::creator},
++      {kDcNamespace, "rights", &ImageXmpSummary::rights},
++      {kPhotoshopNamespace, "Credit", &ImageXmpSummary::credit},
++      {kPhotoshopNamespace, "Source", &ImageXmpSummary::source},
++      {kDcNamespace, "description", &ImageXmpSummary::description},
++  };
++  for (base::Value& child : *rdf->EnsureList(kChildrenKey)) {
++    if (!IsElement(child)) {
++      continue;
++    }
++    base::DictValue& description = child.GetDict();
++    const size_t depth = scope.size();
++    if (ElementName(description, scope).Is(kRdfNamespace, "Description")) {
++      for (const Field& field : kFields) {
++        std::string& text = summary.*field.text;
++        if (!text.empty()) {
++          continue;
++        }
++        if (const base::DictValue* attributes =
++                description.FindDict(kAttributesKey)) {
++          for (const auto [name, value] : *attributes) {
++            if (value.is_string() &&
++                Resolve(name, scope, true).Is(field.ns, field.local)) {
++              text = value.GetString();
++            }
++          }
++        }
++        const size_t property_depth = scope.size();
++        if (base::DictValue* property =
++                FindChild(description, field.ns, field.local, scope)) {
++          text = PropertyText(*property, scope);
++        }
++        scope.resize(property_depth);
++      }
++    }
++    scope.resize(depth);
++  }
++  return summary;
++}
++
++std::optional<std::string> EmbedXmp(std::string_view file,
++                                    XmpContainer container,
++                                    std::string_view xmp) {
++  switch (container) {
++    case XmpContainer::kJpeg:
++      return EmbedInJpeg(file, xmp);
++    case XmpContainer::kPng:
++      return EmbedInPng(file, xmp);
++    case XmpContainer::kWebP:
++      return EmbedInWebP(file, xmp);
++    case XmpContainer::kNone:
++      return std::nullopt;
++  }
++  NOTREACHED();
++}
++
++}  // namespace image_editor
+--- /dev/null
++++ b/chrome/browser/image_editor/image_context_metadata.h
+@@ -0,0 +1,83 @@
++// Copyright 2026 The Helium Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_IMAGE_EDITOR_IMAGE_CONTEXT_METADATA_H_
++#define CHROME_BROWSER_IMAGE_EDITOR_IMAGE_CONTEXT_METADATA_H_
++
++#include <optional>
++#include <string>
++#include <string_view>
++
++namespace base {
++class Value;
++}  // namespace base
++
++namespace image_editor {
++
++// Where a saved image was found, recorded in its XMP metadata.
++struct ImageContext {
++  std::string page_url;
++  std::string page_title;
++  // Empty for images without an address of their own, such as data: URLs.
++  std::string image_url;
++  // When the image was saved, in ISO 8601 format.
++  std::string saved_at;
++  // The browser and its version.
++  std::string software;
++  // For the IPTC Source and the description, which photo apps show, when the
++  // image has neither.
++  std::string source;
++  std::string description;
++};
++
++// The image formats whose XMP metadata can be read and rewritten without
++// re-encoding the image.
++enum class XmpContainer { kNone, kJpeg, kPng, kWebP };
++
++struct ImageMetadataInfo {
++  XmpContainer container = XmpContainer::kNone;
++  // Whether the image carries Content Credentials (C2PA). Their signature
++  // covers the whole file, so any change makes them show as altered.
++  bool has_content_credentials = false;
++  // The image's XMP packet, if it has one.
++  std::optional<std::string> xmp;
++  // Whether the file can't be rewritten safely, for example because it is
++  // malformed or its XMP is compressed or split in two.
++  bool unsupported = false;
++};
++
++ImageMetadataInfo InspectImageMetadata(std::string_view file);
++
++// Returns an XMP packet holding everything in `existing` with `context` added.
++// `existing` is the image's XMP packet as parsed by data_decoder's XmlParser,
++// or nullptr when the image has none. Nothing in it is changed or removed: the
++// save is appended to the xmpMM:History and helium:SavedFrom lists, and
++// dc:source, dc:description and photoshop:Source are only filled in when the
++// image has none. Returns nullopt when `existing` isn't XMP.
++std::optional<std::string> AddImageContextToXmp(const ImageContext& context,
++                                                const base::Value* existing);
++
++// The fields of an image's own XMP that photo apps show, as text.
++struct ImageXmpSummary {
++  std::string title;
++  // The creators, joined.
++  std::string creator;
++  std::string rights;
++  std::string credit;
++  std::string source;
++  std::string description;
++};
++
++// Summarizes `existing`, an XMP packet as parsed by data_decoder's XmlParser.
++ImageXmpSummary SummarizeXmp(const base::Value& existing);
++
++// Returns `file` with its XMP packet replaced by `xmp`, or with `xmp` added
++// when it has none. Returns nullopt when the file can't hold it.
++std::optional<std::string> EmbedXmp(std::string_view file,
++                                    XmpContainer container,
++                                    std::string_view xmp);
++
++}  // namespace image_editor
++
++#endif  // CHROME_BROWSER_IMAGE_EDITOR_IMAGE_CONTEXT_METADATA_H_
+--- /dev/null
++++ b/chrome/browser/image_editor/image_context_metadata_unittest.cc
+@@ -0,0 +1,556 @@
++// Copyright 2026 The Helium Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#include "chrome/browser/image_editor/image_context_metadata.h"
++
++#include <memory>
++#include <optional>
++#include <string>
++#include <string_view>
++#include <vector>
++
++#include "base/containers/span.h"
++#include "base/test/task_environment.h"
++#include "base/test/test_future.h"
++#include "base/test/values_test_util.h"
++#include "base/values.h"
++#include "services/data_decoder/public/cpp/data_decoder.h"
++#include "services/data_decoder/public/cpp/test_support/in_process_data_decoder.h"
++#include "testing/gtest/include/gtest/gtest.h"
++#include "third_party/skia/include/codec/SkCodec.h"
++#include "third_party/skia/include/codec/SkWebpDecoder.h"
++#include "third_party/skia/include/core/SkBitmap.h"
++#include "third_party/skia/include/core/SkData.h"
++#include "ui/gfx/codec/jpeg_codec.h"
++#include "ui/gfx/codec/png_codec.h"
++#include "ui/gfx/codec/webp_codec.h"
++
++namespace image_editor {
++namespace {
++
++constexpr char kPacketStart[] =
++    "<?xpacket begin=\"\xEF\xBB\xBF\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>";
++constexpr char kPacketEnd[] = "<?xpacket end=\"w\"?>";
++
++ImageContext Context() {
++  return {.page_url = "https://example.com/article?a=1&b=2",
++          .page_title = "An <article>",
++          .image_url = "https://cdn.example.com/photo.jpg",
++          .saved_at = "2026-11-13T18:00:00Z",
++          .software = "Helium Neo 0.21.3.1",
++          .source = "example.com / https://example.com/article?a=1&b=2",
++          .description = "Saved from example.com"};
++}
++
++SkBitmap Bitmap() {
++  SkBitmap bitmap;
++  bitmap.allocN32Pixels(8, 6);
++  bitmap.eraseARGB(255, 40, 120, 200);
++  return bitmap;
++}
++
++std::string ToString(const std::vector<uint8_t>& bytes) {
++  return std::string(bytes.begin(), bytes.end());
++}
++
++base::span<const uint8_t> Bytes(const std::string& data) {
++  return base::as_byte_span(data);
++}
++
++// What data_decoder's XmlParser returns for an image's XMP packet.
++base::Value ParsedXmp(std::string_view json) {
++  return base::test::ParseJson(json);
++}
++
++TEST(ImageContextMetadataTest, CreatesXmpForImagesWithout) {
++  const std::optional<std::string> xmp =
++      AddImageContextToXmp(Context(), nullptr);
++  ASSERT_TRUE(xmp);
++  EXPECT_EQ(
++      std::string(kPacketStart) +
++          "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\">"
++          "<rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">"
++          "<rdf:Description "
++          "xmlns:dc=\"http://purl.org/dc/elements/1.1/\" "
++          "xmlns:helium=\"https://github.com/aagedal/helium/ns/capture/1.0/\" "
++          "xmlns:photoshop=\"http://ns.adobe.com/photoshop/1.0/\" "
++          "xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\" "
++          "xmlns:stEvt=\"http://ns.adobe.com/xap/1.0/sType/ResourceEvent#\" "
++          "xmlns:xmpMM=\"http://ns.adobe.com/xap/1.0/mm/\" rdf:about=\"\">"
++          "<dc:source>https://example.com/article?a=1&amp;b=2</dc:source>"
++          "<dc:description><rdf:Alt><rdf:li xml:lang=\"x-default\">"
++          "Saved from example.com</rdf:li></rdf:Alt></dc:description>"
++          "<photoshop:Source>example.com / "
++          "https://example.com/article?a=1&amp;b=2</photoshop:Source>"
++          "<xmpMM:History><rdf:Seq><rdf:li rdf:parseType=\"Resource\">"
++          "<stEvt:action>saved</stEvt:action>"
++          "<stEvt:when>2026-11-13T18:00:00Z</stEvt:when>"
++          "<stEvt:softwareAgent>Helium Neo 0.21.3.1</stEvt:softwareAgent>"
++          "<stEvt:parameters>from https://cdn.example.com/photo.jpg on "
++          "https://example.com/article?a=1&amp;b=2</stEvt:parameters>"
++          "</rdf:li></rdf:Seq></xmpMM:History>"
++          "<helium:SavedFrom><rdf:Seq><rdf:li rdf:parseType=\"Resource\">"
++          "<helium:PageURL>https://example.com/article?a=1&amp;b=2"
++          "</helium:PageURL>"
++          "<helium:PageTitle>An &lt;article&gt;</helium:PageTitle>"
++          "<helium:ImageURL>https://cdn.example.com/photo.jpg</helium:ImageURL>"
++          "<helium:SavedAt>2026-11-13T18:00:00Z</helium:SavedAt>"
++          "</rdf:li></rdf:Seq></helium:SavedFrom>"
++          "</rdf:Description></rdf:RDF></x:xmpmeta>" +
++          kPacketEnd,
++      *xmp);
++}
++
++TEST(ImageContextMetadataTest, KeepsExistingMetadataAndAppendsToLists) {
++  // A photo with a creator, a source given as an attribute and an edit
++  // history, using its own prefix for RDF.
++  const base::Value existing = ParsedXmp(R"({
++    "type": "element", "tag": "x:xmpmeta",
++    "namespaces": {"x": "adobe:ns:meta/"},
++    "attributes": {"x:xmptk": "Adobe XMP Core"},
++    "children": [{
++      "type": "element", "tag": "R:RDF",
++      "namespaces": {"R": "http://www.w3.org/1999/02/22-rdf-syntax-ns#"},
++      "children": [{
++        "type": "element", "tag": "R:Description",
++        "namespaces": {
++          "dc": "http://purl.org/dc/elements/1.1/",
++          "mm": "http://ns.adobe.com/xap/1.0/mm/"
++        },
++        "attributes": {"R:about": "uuid:1", "dc:source": "Agency"},
++        "children": [
++          {"type": "element", "tag": "dc:creator", "children": [
++            {"type": "element", "tag": "R:Seq", "children": [
++              {"type": "element", "tag": "R:li", "children": [
++                {"type": "text", "text": "A Photographer"}]}]}]},
++          {"type": "element", "tag": "mm:History", "children": [
++            {"type": "element", "tag": "R:Seq", "children": [
++              {"type": "element", "tag": "R:li",
++               "attributes": {"R:parseType": "Resource"}, "children": []}
++            ]}]}
++        ]
++      }]
++    }]
++  })");
++  const std::optional<std::string> xmp =
++      AddImageContextToXmp(Context(), &existing);
++  ASSERT_TRUE(xmp);
++  EXPECT_EQ(
++      std::string(kPacketStart) +
++          "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\" x:xmptk=\"Adobe XMP Core\">"
++          "<R:RDF xmlns:R=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">"
++          "<R:Description xmlns:dc=\"http://purl.org/dc/elements/1.1/\" "
++          "xmlns:mm=\"http://ns.adobe.com/xap/1.0/mm/\" R:about=\"uuid:1\" "
++          "dc:source=\"Agency\">"
++          "<dc:creator><R:Seq><R:li>A Photographer</R:li></R:Seq></dc:creator>"
++          "<mm:History><R:Seq><R:li R:parseType=\"Resource\"/>"
++          "<rdf:li "
++          "xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\" "
++          "xmlns:stEvt=\"http://ns.adobe.com/xap/1.0/sType/ResourceEvent#\" "
++          "rdf:parseType=\"Resource\">"
++          "<stEvt:action>saved</stEvt:action>"
++          "<stEvt:when>2026-11-13T18:00:00Z</stEvt:when>"
++          "<stEvt:softwareAgent>Helium Neo 0.21.3.1</stEvt:softwareAgent>"
++          "<stEvt:parameters>from https://cdn.example.com/photo.jpg on "
++          "https://example.com/article?a=1&amp;b=2</stEvt:parameters>"
++          "</rdf:li></R:Seq></mm:History></R:Description>"
++          // The rest goes in a description of its own, with the same subject.
++          "<rdf:Description "
++          "xmlns:dc=\"http://purl.org/dc/elements/1.1/\" "
++          "xmlns:helium=\"https://github.com/aagedal/helium/ns/capture/1.0/\" "
++          "xmlns:photoshop=\"http://ns.adobe.com/photoshop/1.0/\" "
++          "xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\" "
++          "rdf:about=\"uuid:1\">"
++          "<dc:description><rdf:Alt><rdf:li xml:lang=\"x-default\">"
++          "Saved from example.com</rdf:li></rdf:Alt></dc:description>"
++          "<photoshop:Source>example.com / "
++          "https://example.com/article?a=1&amp;b=2</photoshop:Source>"
++          "<helium:SavedFrom><rdf:Seq><rdf:li rdf:parseType=\"Resource\">"
++          "<helium:PageURL>https://example.com/article?a=1&amp;b=2"
++          "</helium:PageURL>"
++          "<helium:PageTitle>An &lt;article&gt;</helium:PageTitle>"
++          "<helium:ImageURL>https://cdn.example.com/photo.jpg</helium:ImageURL>"
++          "<helium:SavedAt>2026-11-13T18:00:00Z</helium:SavedAt>"
++          "</rdf:li></rdf:Seq></helium:SavedFrom></rdf:Description>"
++          "</R:RDF></x:xmpmeta>" +
++          kPacketEnd,
++      *xmp);
++}
++
++TEST(ImageContextMetadataTest, LeavesPropertiesThatArentListsAlone) {
++  // A malformed history is neither replaced nor added to.
++  const base::Value existing = ParsedXmp(R"({
++    "type": "element", "tag": "rdf:RDF",
++    "namespaces": {"rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#"},
++    "children": [{
++      "type": "element", "tag": "rdf:Description",
++      "namespaces": {"xmpMM": "http://ns.adobe.com/xap/1.0/mm/"},
++      "children": [{"type": "element", "tag": "xmpMM:History",
++                    "children": [{"type": "text", "text": "edited"}]}]
++    }]
++  })");
++  const std::optional<std::string> xmp =
++      AddImageContextToXmp(Context(), &existing);
++  ASSERT_TRUE(xmp);
++  EXPECT_NE(xmp->find("<xmpMM:History>edited</xmpMM:History>"),
++            std::string::npos);
++  EXPECT_EQ(xmp->find("stEvt"), std::string::npos);
++  EXPECT_NE(xmp->find("<helium:SavedFrom>"), std::string::npos);
++}
++
++TEST(ImageContextMetadataTest, KeepsTheImagesSourceAndDescription) {
++  // An agency photo with its caption and supplier.
++  const base::Value existing = ParsedXmp(R"({
++    "type": "element", "tag": "rdf:RDF",
++    "namespaces": {"rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#"},
++    "children": [{
++      "type": "element", "tag": "rdf:Description",
++      "namespaces": {
++        "dc": "http://purl.org/dc/elements/1.1/",
++        "photoshop": "http://ns.adobe.com/photoshop/1.0/"
++      },
++      "attributes": {"photoshop:Source": "NTB"},
++      "children": [{"type": "element", "tag": "dc:description", "children": [
++        {"type": "element", "tag": "rdf:Alt", "children": [
++          {"type": "element", "tag": "rdf:li",
++           "attributes": {"xml:lang": "x-default"},
++           "children": [{"type": "text", "text": "A caption"}]}]}]}]
++    }]
++  })");
++  const std::optional<std::string> xmp =
++      AddImageContextToXmp(Context(), &existing);
++  ASSERT_TRUE(xmp);
++  EXPECT_NE(xmp->find("photoshop:Source=\"NTB\""), std::string::npos);
++  EXPECT_NE(xmp->find(">A caption<"), std::string::npos);
++  EXPECT_EQ(xmp->find("Saved from example.com"), std::string::npos);
++  EXPECT_EQ(xmp->find("<photoshop:Source>"), std::string::npos);
++  EXPECT_NE(xmp->find("<dc:source>"), std::string::npos);
++}
++
++TEST(ImageContextMetadataTest, SummarizesTheImagesOwnFields) {
++  const base::Value existing = ParsedXmp(R"({
++    "type": "element", "tag": "x:xmpmeta",
++    "namespaces": {"x": "adobe:ns:meta/"},
++    "children": [{
++      "type": "element", "tag": "rdf:RDF",
++      "namespaces": {"rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#"},
++      "children": [{
++        "type": "element", "tag": "rdf:Description",
++        "namespaces": {
++          "dc": "http://purl.org/dc/elements/1.1/",
++          "ps": "http://ns.adobe.com/photoshop/1.0/"
++        },
++        "attributes": {"ps:Credit": "Agency"},
++        "children": [
++          {"type": "element", "tag": "dc:title", "children": [
++            {"type": "element", "tag": "rdf:Alt", "children": [
++              {"type": "element", "tag": "rdf:li",
++               "attributes": {"xml:lang": "nb"},
++               "children": [{"type": "text", "text": "Havn"}]},
++              {"type": "element", "tag": "rdf:li",
++               "attributes": {"xml:lang": "x-default"},
++               "children": [{"type": "text", "text": "Harbour"}]}]}]},
++          {"type": "element", "tag": "dc:creator", "children": [
++            {"type": "element", "tag": "rdf:Seq", "children": [
++              {"type": "element", "tag": "rdf:li",
++               "children": [{"type": "text", "text": "A"}]},
++              {"type": "element", "tag": "rdf:li",
++               "children": [{"type": "text", "text": "B"}]}]}]},
++          {"type": "element", "tag": "ps:Source",
++           "children": [{"type": "text", "text": "NTB"}]}
++        ]
++      }]
++    }]
++  })");
++  const ImageXmpSummary summary = SummarizeXmp(existing);
++  EXPECT_EQ("Harbour", summary.title);
++  EXPECT_EQ("A, B", summary.creator);
++  EXPECT_EQ("Agency", summary.credit);
++  EXPECT_EQ("NTB", summary.source);
++  EXPECT_EQ("", summary.rights);
++  EXPECT_EQ("", summary.description);
++}
++
++TEST(ImageContextMetadataTest, RejectsOtherXml) {
++  const base::Value svg = ParsedXmp(R"({
++    "type": "element", "tag": "svg",
++    "namespaces": {"": "http://www.w3.org/2000/svg"}, "children": []
++  })");
++  EXPECT_FALSE(AddImageContextToXmp(Context(), &svg));
++  const base::Value text = ParsedXmp(R"({"type": "text", "text": "x"})");
++  EXPECT_FALSE(AddImageContextToXmp(Context(), &text));
++}
++
++// Parses XMP as the browser does, in an in-process data decoder.
++class ImageContextMetadataParserTest : public testing::Test {
++ protected:
++  std::optional<base::Value> Parse(const std::string& xml) {
++    base::test::TestFuture<data_decoder::DataDecoder::ValueOrError> future;
++    data_decoder::DataDecoder::ParseXmlIsolated(
++        xml,
++        data_decoder::mojom::XmlParser::WhitespaceBehavior::
++            kPreserveSignificant,
++        future.GetCallback());
++    data_decoder::DataDecoder::ValueOrError result = future.Take();
++    if (!result.has_value()) {
++      return std::nullopt;
++    }
++    return std::move(result.value());
++  }
++
++  // Returns the children of the element `path` leads to through child indices.
++  base::ListValue& Children(base::Value& root, std::vector<size_t> path) {
++    base::Value* node = &root;
++    for (size_t index : path) {
++      node = &(*node->GetDict().FindList("children"))[index];
++    }
++    return *node->GetDict().FindList("children");
++  }
++
++  // Leaves out whitespace between elements.
++  void RemoveWhitespace(base::Value& node) {
++    base::ListValue* children = node.GetDict().FindList("children");
++    if (!children) {
++      return;
++    }
++    children->EraseIf([](const base::Value& child) {
++      const std::string* text = child.GetDict().FindString("text");
++      return text && text->find_first_not_of(" \t\r\n") == std::string::npos;
++    });
++    for (base::Value& child : *children) {
++      RemoveWhitespace(child);
++    }
++  }
++
++  base::test::TaskEnvironment task_environment_;
++  data_decoder::test::InProcessDataDecoder data_decoder_;
++};
++
++TEST_F(ImageContextMetadataParserTest, KeepsEverythingInRealXmp) {
++  // As Photoshop writes it, with padding, a credit given as an attribute and
++  // an edit history.
++  const std::string original =
++      "<?xpacket begin=\"\xEF\xBB\xBF\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\n"
++      "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\" x:xmptk=\"Adobe XMP Core 9.1\">\n"
++      " <rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\n"
++      "  <rdf:Description rdf:about=\"\"\n"
++      "    xmlns:dc=\"http://purl.org/dc/elements/1.1/\"\n"
++      "    xmlns:photoshop=\"http://ns.adobe.com/photoshop/1.0/\"\n"
++      "    xmlns:xmpMM=\"http://ns.adobe.com/xap/1.0/mm/\"\n"
++      "    xmlns:stEvt=\"http://ns.adobe.com/xap/1.0/sType/ResourceEvent#\"\n"
++      "    photoshop:Credit=\"Agency &amp; Co\">\n"
++      "   <dc:title><rdf:Alt><rdf:li xml:lang=\"x-default\">Harbour at "
++      "dawn</rdf:li></rdf:Alt></dc:title>\n"
++      "   <dc:creator><rdf:Seq><rdf:li>A "
++      "Photographer</rdf:li></rdf:Seq></dc:creator>\n"
++      "   <dc:rights><rdf:Alt><rdf:li xml:lang=\"x-default\">\xC2\xA9 2026 A "
++      "Photographer</rdf:li></rdf:Alt></dc:rights>\n"
++      "   <xmpMM:History>\n"
++      "    <rdf:Seq>\n"
++      "     <rdf:li rdf:parseType=\"Resource\">\n"
++      "      <stEvt:action>saved</stEvt:action>\n"
++      "      <stEvt:when>2026-01-02T03:04:05+01:00</stEvt:when>\n"
++      "     </rdf:li>\n"
++      "    </rdf:Seq>\n"
++      "   </xmpMM:History>\n"
++      "  </rdf:Description>\n"
++      " </rdf:RDF>\n"
++      "</x:xmpmeta>\n" +
++      std::string(200, ' ') + "\n<?xpacket end=\"w\"?>";
++  std::optional<base::Value> parsed = Parse(original);
++  ASSERT_TRUE(parsed);
++  const std::optional<std::string> merged =
++      AddImageContextToXmp(Context(), &*parsed);
++  ASSERT_TRUE(merged);
++  std::optional<base::Value> reparsed = Parse(*merged);
++  ASSERT_TRUE(reparsed);
++  RemoveWhitespace(*parsed);
++  RemoveWhitespace(*reparsed);
++
++  // The image's description gains one history event and nothing else.
++  base::ListValue& rdf = Children(*reparsed, {0});
++  ASSERT_EQ(2u, rdf.size());
++  base::ListValue& history = Children(*reparsed, {0, 0, 3, 0});
++  ASSERT_EQ(2u, history.size());
++  const base::Value added = history[1].Clone();
++  history.erase(history.begin() + 1);
++  EXPECT_EQ(Children(*parsed, {0}).front(), rdf.front());
++  EXPECT_EQ(*parsed->GetDict().FindDict("attributes"),
++            *reparsed->GetDict().FindDict("attributes"));
++  EXPECT_EQ("rdf:li", *added.GetDict().FindString("tag"));
++
++  // The source, description and saved image record go in a new description,
++  // as the credit, title, creator and rights stay untouched.
++  const base::ListValue& description = Children(*reparsed, {0, 1});
++  ASSERT_EQ(4u, description.size());
++  EXPECT_EQ("dc:source", *description[0].GetDict().FindString("tag"));
++  EXPECT_EQ("dc:description", *description[1].GetDict().FindString("tag"));
++  EXPECT_EQ("photoshop:Source", *description[2].GetDict().FindString("tag"));
++  EXPECT_EQ("helium:SavedFrom", *description[3].GetDict().FindString("tag"));
++}
++
++TEST(ImageContextMetadataTest, AddsAndReplacesXmpInJpeg) {
++  std::optional<std::vector<uint8_t>> encoded =
++      gfx::JPEGCodec::Encode(Bitmap(), 90);
++  ASSERT_TRUE(encoded);
++  const std::string jpeg = ToString(*encoded);
++
++  ImageMetadataInfo info = InspectImageMetadata(jpeg);
++  EXPECT_EQ(XmpContainer::kJpeg, info.container);
++  EXPECT_FALSE(info.xmp);
++  EXPECT_FALSE(info.unsupported);
++
++  std::optional<std::string> with_xmp =
++      EmbedXmp(jpeg, XmpContainer::kJpeg, "<first/>");
++  ASSERT_TRUE(with_xmp);
++  EXPECT_EQ(jpeg.size() + 4 + 29 + 8, with_xmp->size());
++  info = InspectImageMetadata(*with_xmp);
++  EXPECT_EQ("<first/>", info.xmp);
++  EXPECT_FALSE(info.unsupported);
++  EXPECT_FALSE(gfx::JPEGCodec::Decode(Bytes(*with_xmp)).empty());
++
++  // The JFIF segment stays first.
++  EXPECT_EQ(jpeg.substr(0, 20), with_xmp->substr(0, 20));
++
++  with_xmp = EmbedXmp(*with_xmp, XmpContainer::kJpeg, "<second/>");
++  ASSERT_TRUE(with_xmp);
++  info = InspectImageMetadata(*with_xmp);
++  EXPECT_EQ("<second/>", info.xmp);
++  EXPECT_EQ(jpeg.size() + 4 + 29 + 9, with_xmp->size());
++  EXPECT_FALSE(gfx::JPEGCodec::Decode(Bytes(*with_xmp)).empty());
++
++  EXPECT_FALSE(EmbedXmp(jpeg, XmpContainer::kJpeg, std::string(70000, 'x')));
++}
++
++TEST(ImageContextMetadataTest, FindsContentCredentialsInJpeg) {
++  // SOI, an APP11 JUMBF segment with a C2PA manifest store, then SOS.
++  std::string jpeg = "\xFF\xD8\xFF\xEB";
++  const std::string payload = std::string("JP\0\x01", 4) + "jumb....c2pa";
++  jpeg += static_cast<char>(0);
++  jpeg += static_cast<char>(payload.size() + 2);
++  jpeg += payload;
++  jpeg += "\xFF\xDA";
++  EXPECT_TRUE(InspectImageMetadata(jpeg).has_content_credentials);
++}
++
++TEST(ImageContextMetadataTest, RejectsTruncatedJpeg) {
++  const std::string jpeg = "\xFF\xD8\xFF\xE1\x40\x00";
++  EXPECT_TRUE(InspectImageMetadata(jpeg).unsupported);
++  EXPECT_FALSE(EmbedXmp(jpeg, XmpContainer::kJpeg, "<x/>"));
++}
++
++TEST(ImageContextMetadataTest, AddsAndReplacesXmpInPng) {
++  std::optional<std::vector<uint8_t>> encoded =
++      gfx::PNGCodec::EncodeBGRASkBitmap(Bitmap(), false);
++  ASSERT_TRUE(encoded);
++  const std::string png = ToString(*encoded);
++
++  ImageMetadataInfo info = InspectImageMetadata(png);
++  EXPECT_EQ(XmpContainer::kPng, info.container);
++  EXPECT_FALSE(info.xmp);
++
++  std::optional<std::string> with_xmp =
++      EmbedXmp(png, XmpContainer::kPng, "<first/>");
++  ASSERT_TRUE(with_xmp);
++  info = InspectImageMetadata(*with_xmp);
++  EXPECT_EQ("<first/>", info.xmp);
++  EXPECT_FALSE(info.unsupported);
++  // The decoder checks chunk CRCs.
++  EXPECT_FALSE(gfx::PNGCodec::Decode(Bytes(*with_xmp)).empty());
++  // After the signature and the 25-byte header chunk.
++  EXPECT_EQ("iTXt", with_xmp->substr(8 + 25 + 4, 4));
++
++  with_xmp = EmbedXmp(*with_xmp, XmpContainer::kPng, "<second/>");
++  ASSERT_TRUE(with_xmp);
++  EXPECT_EQ("<second/>", InspectImageMetadata(*with_xmp).xmp);
++  EXPECT_EQ(png.size() + 12 + 22 + 9, with_xmp->size());
++  EXPECT_FALSE(gfx::PNGCodec::Decode(Bytes(*with_xmp)).empty());
++}
++
++TEST(ImageContextMetadataTest, LeavesCompressedPngXmpAlone) {
++  std::optional<std::vector<uint8_t>> encoded =
++      gfx::PNGCodec::EncodeBGRASkBitmap(Bitmap(), false);
++  ASSERT_TRUE(encoded);
++  std::string png = ToString(*encoded);
++  // A compressed iTXt chunk; its CRC isn't checked when reading.
++  const std::string data =
++      std::string("XML:com.adobe.xmp\0\x01\0\0\0", 22) + "zz";
++  std::string chunk = std::string(3, '\0') + static_cast<char>(data.size()) +
++                      "iTXt" + data + std::string(4, '\0');
++  png.insert(8 + 25, chunk);
++  EXPECT_TRUE(InspectImageMetadata(png).unsupported);
++}
++
++TEST(ImageContextMetadataTest, AddsXmpToSimpleWebP) {
++  std::optional<std::vector<uint8_t>> encoded =
++      gfx::WebpCodec::Encode(Bitmap(), 80);
++  ASSERT_TRUE(encoded);
++  const std::string webp = ToString(*encoded);
++  ASSERT_EQ("VP8 ", webp.substr(12, 4));
++
++  ImageMetadataInfo info = InspectImageMetadata(webp);
++  EXPECT_EQ(XmpContainer::kWebP, info.container);
++  EXPECT_FALSE(info.xmp);
++
++  std::optional<std::string> with_xmp =
++      EmbedXmp(webp, XmpContainer::kWebP, "<first/>");
++  ASSERT_TRUE(with_xmp);
++  // A VP8X chunk with the XMP flag and the canvas size, minus one.
++  EXPECT_EQ(std::string("VP8X\x0A\0\0\0\x04\0\0\0\x07\0\0\x05\0\0", 18),
++            with_xmp->substr(12, 18));
++  info = InspectImageMetadata(*with_xmp);
++  EXPECT_EQ("<first/>", info.xmp);
++  EXPECT_FALSE(info.unsupported);
++
++  with_xmp = EmbedXmp(*with_xmp, XmpContainer::kWebP, "<second/>");
++  ASSERT_TRUE(with_xmp);
++  EXPECT_EQ("<second/>", InspectImageMetadata(*with_xmp).xmp);
++  EXPECT_EQ(webp.size() + 18 + 8 + 10, with_xmp->size());
++
++  SkCodec::Result result;
++  std::unique_ptr<SkCodec> codec = SkWebpDecoder::Decode(
++      SkData::MakeWithCopy(with_xmp->data(), with_xmp->size()), &result);
++  ASSERT_TRUE(codec);
++  SkBitmap decoded;
++  decoded.allocPixels(codec->getInfo());
++  EXPECT_EQ(SkCodec::kSuccess,
++            codec->getPixels(codec->getInfo(), decoded.getPixels(),
++                             decoded.rowBytes()));
++}
++
++TEST(ImageContextMetadataTest, CarriesLosslessAlphaIntoExtendedWebP) {
++  // A VP8L header for a 3 by 2 image with alpha, without the image data.
++  const uint32_t bits = (3 - 1) | ((2 - 1) << 14) | (1 << 28);
++  std::string vp8l = "\x2F";
++  for (int shift = 0; shift < 32; shift += 8) {
++    vp8l += static_cast<char>(bits >> shift);
++  }
++  vp8l += '\0';
++  std::string webp = "RIFF";
++  const uint32_t size = static_cast<uint32_t>(4 + 8 + vp8l.size());
++  for (int shift = 0; shift < 32; shift += 8) {
++    webp += static_cast<char>(size >> shift);
++  }
++  webp += "WEBPVP8L";
++  webp += static_cast<char>(vp8l.size());
++  webp += std::string(3, '\0');
++  webp += vp8l;
++
++  const std::optional<std::string> with_xmp =
++      EmbedXmp(webp, XmpContainer::kWebP, "<x/>");
++  ASSERT_TRUE(with_xmp);
++  EXPECT_EQ(std::string("VP8X\x0A\0\0\0\x14\0\0\0\x02\0\0\x01\0\0", 18),
++            with_xmp->substr(12, 18));
++  EXPECT_EQ("VP8L", with_xmp->substr(30, 4));
++  EXPECT_EQ("<x/>", InspectImageMetadata(*with_xmp).xmp);
++}
++
++TEST(ImageContextMetadataTest, IgnoresOtherFormats) {
++  const ImageMetadataInfo gif = InspectImageMetadata("GIF89a....");
++  EXPECT_EQ(XmpContainer::kNone, gif.container);
++  EXPECT_FALSE(EmbedXmp("GIF89a....", XmpContainer::kNone, "<x/>"));
++}
++
++}  // namespace
++}  // namespace image_editor
+--- /dev/null
++++ b/chrome/browser/ui/views/sharing_hub/screenshot/image_context_bubble.cc
+@@ -0,0 +1,413 @@
++// Copyright 2026 The Helium Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#include "chrome/browser/ui/views/sharing_hub/screenshot/image_context_bubble.h"
++
++#include <memory>
++#include <optional>
++#include <string>
++#include <utility>
++
++#include "base/functional/bind.h"
++#include "base/memory/raw_ptr.h"
++#include "base/memory/weak_ptr.h"
++#include "base/strings/utf_string_conversions.h"
++#include "chrome/browser/download/download_prefs.h"
++#include "chrome/browser/image_editor/image_context_metadata.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/sharing_hub/sharing_hub_features.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
++#include "chrome/browser/ui/browser_window/public/global_browser_collection.h"
++#include "chrome/browser/ui/select_file_policy/chrome_select_file_policy.h"
++#include "chrome/browser/ui/views/download/bubble/helium_download_overlay.h"
++#include "chrome/browser/ui/views/frame/browser_view.h"
++#include "chrome/browser/ui/views/frame/toolbar_button_provider.h"
++#include "chrome/browser/ui/views/location_bar/location_bar_bubble_delegate_view.h"
++#include "chrome/browser/ui/views/sharing_hub/screenshot/image_context_save.h"
++#include "chrome/browser/ui/views/sharing_hub/screenshot/screenshot_documentation.h"
++#include "chrome/grit/generated_resources.h"
++#include "components/download/public/common/download_item.h"
++#include "components/prefs/pref_service.h"
++#include "content/public/browser/download_manager.h"
++#include "content/public/browser/web_contents.h"
++#include "ui/base/l10n/l10n_util.h"
++#include "ui/base/metadata/metadata_header_macros.h"
++#include "ui/base/metadata/metadata_impl_macros.h"
++#include "ui/base/mojom/dialog_button.mojom.h"
++#include "ui/shell_dialogs/select_file_dialog.h"
++#include "ui/shell_dialogs/selected_file_info.h"
++#include "ui/views/accessibility/view_accessibility.h"
++#include "ui/views/controls/button/checkbox.h"
++#include "ui/views/controls/button/md_text_button.h"
++#include "ui/views/controls/label.h"
++#include "ui/views/controls/textarea/textarea.h"
++#include "ui/views/controls/textfield/textfield.h"
++#include "ui/views/layout/box_layout.h"
++#include "ui/views/style/typography.h"
++
++namespace sharing_hub {
++namespace {
++
++using Location = SavedImageContext::Location;
++
++constexpr int kContentWidth = 420;
++
++class ImageContextBubble : public LocationBarBubbleDelegateView,
++                           public ui::SelectFileDialog::Listener {
++  METADATA_HEADER(ImageContextBubble, LocationBarBubbleDelegateView)
++
++ public:
++  ImageContextBubble(views::BubbleAnchor anchor,
++                     content::WebContents* web_contents,
++                     scoped_refptr<SavedImageContext> image)
++      : LocationBarBubbleDelegateView(anchor, nullptr),
++        image_(std::move(image)),
++        web_contents_(web_contents->GetWeakPtr()) {
++    SetTitle(IDS_HELIUM_IMAGE_CONTEXT_TITLE);
++    SetButtons(static_cast<int>(ui::mojom::DialogButton::kOk) |
++               static_cast<int>(ui::mojom::DialogButton::kCancel));
++    SetButtonLabel(ui::mojom::DialogButton::kOk,
++                   l10n_util::GetStringUTF16(IDS_HELIUM_IMAGE_CONTEXT_UPDATE));
++    SetAcceptCallbackWithClose(base::BindRepeating(&ImageContextBubble::Update,
++                                                   base::Unretained(this)));
++    set_close_on_deactivate(false);
++    set_fixed_width(kContentWidth + 40);
++  }
++
++  ImageContextBubble(const ImageContextBubble&) = delete;
++  ImageContextBubble& operator=(const ImageContextBubble&) = delete;
++
++  ~ImageContextBubble() override {
++    if (folder_dialog_) {
++      folder_dialog_->ListenerDestroyed();
++    }
++  }
++
++  // Shows the bubble over the top right of the anchor, the browser window in
++  // frameless mode, instead of below a toolbar button that would reveal the
++  // toolbar.
++  void set_overlay(bool overlay) { overlay_ = overlay; }
++
++ private:
++  // LocationBarBubbleDelegateView:
++  gfx::Rect GetBubbleBounds() override {
++    gfx::Rect bounds = LocationBarBubbleDelegateView::GetBubbleBounds();
++    views::View* anchor = GetAnchorView();
++    if (!overlay_ || !anchor) {
++      return bounds;
++    }
++    constexpr int kOverlayInset = 16;
++    const gfx::Rect anchor_bounds = anchor->GetBoundsInScreen();
++    bounds.set_x(anchor_bounds.right() - bounds.width() - kOverlayInset);
++    bounds.set_y(anchor_bounds.y() + kOverlayInset);
++    return bounds;
++  }
++
++  bool ShouldShowCloseButton() const override { return true; }
++
++  void Init() override {
++    set_margins(gfx::Insets(20));
++    SetLayoutManager(
++        std::make_unique<views::BoxLayout>(
++            views::BoxLayout::Orientation::kVertical, gfx::Insets(), 8))
++        ->set_cross_axis_alignment(
++            views::BoxLayout::CrossAxisAlignment::kStart);
++    const image_editor::ImageMetadataInfo& info = image_->info;
++    const image_editor::ImageXmpSummary own =
++        image_->own_xmp ? image_editor::SummarizeXmp(*image_->own_xmp)
++                        : image_editor::ImageXmpSummary();
++
++    // The image's own metadata, which is never changed.
++    AddHeading(IDS_HELIUM_IMAGE_CONTEXT_OWN_SECTION);
++    bool has_own = false;
++    for (const auto& [message_id, value] :
++         {std::pair(IDS_HELIUM_IMAGE_CONTEXT_OWN_TITLE, own.title),
++          std::pair(IDS_HELIUM_IMAGE_CONTEXT_OWN_CREATOR, own.creator),
++          std::pair(IDS_HELIUM_IMAGE_CONTEXT_OWN_RIGHTS, own.rights),
++          std::pair(IDS_HELIUM_IMAGE_CONTEXT_OWN_CREDIT, own.credit),
++          std::pair(IDS_HELIUM_IMAGE_CONTEXT_OWN_SOURCE, own.source),
++          std::pair(IDS_HELIUM_IMAGE_CONTEXT_OWN_DESCRIPTION,
++                    own.description)}) {
++      if (!value.empty()) {
++        has_own = true;
++        AddText(
++            l10n_util::GetStringFUTF16(message_id, base::UTF8ToUTF16(value)),
++            4);
++      }
++    }
++    if (info.xmp && !image_->own_xmp) {
++      AddText(l10n_util::GetStringUTF16(IDS_HELIUM_IMAGE_CONTEXT_UNREADABLE));
++    } else if (!has_own) {
++      AddText(l10n_util::GetStringUTF16(IDS_HELIUM_IMAGE_CONTEXT_OWN_NONE));
++    }
++    if (info.has_content_credentials) {
++      AddText(l10n_util::GetStringUTF16(IDS_HELIUM_IMAGE_CONTEXT_SIGNED));
++    }
++
++    // The context, of which the summary fields can be edited when the image
++    // had none of its own.
++    AddHeading(IDS_HELIUM_IMAGE_CONTEXT_ADDED_SECTION);
++    const image_editor::ImageContext& context = image_->context;
++    AddText(l10n_util::GetStringFUTF16(IDS_HELIUM_IMAGE_CONTEXT_PAGE,
++                                       base::UTF8ToUTF16(context.page_url)),
++            2)
++        ->SetSelectable(true);
++    if (!context.image_url.empty()) {
++      AddText(l10n_util::GetStringFUTF16(IDS_HELIUM_IMAGE_CONTEXT_IMAGE,
++                                         base::UTF8ToUTF16(context.image_url)),
++              2)
++          ->SetSelectable(true);
++    }
++    if (const std::string saved = ScreenshotDisplayDate(context.saved_at);
++        !saved.empty()) {
++      AddText(l10n_util::GetStringFUTF16(IDS_HELIUM_IMAGE_CONTEXT_SAVED,
++                                         base::UTF8ToUTF16(saved)));
++    }
++    if (own.source.empty()) {
++      source_ = AddField(IDS_HELIUM_IMAGE_CONTEXT_SOURCE_FIELD,
++                         std::make_unique<views::Textfield>(), 32);
++      source_->SetText(base::UTF8ToUTF16(context.source));
++    }
++    if (own.description.empty()) {
++      description_ = AddField(IDS_HELIUM_IMAGE_CONTEXT_DESCRIPTION_FIELD,
++                              std::make_unique<views::Textarea>(), 120);
++      description_->SetText(base::UTF8ToUTF16(context.description));
++    }
++    if (!own.source.empty() || !own.description.empty()) {
++      AddText(l10n_util::GetStringUTF16(IDS_HELIUM_IMAGE_CONTEXT_KEPT));
++    }
++    switch (image_->location) {
++      case Location::kImage:
++        AddText(l10n_util::GetStringUTF16(IDS_HELIUM_IMAGE_CONTEXT_IN_IMAGE));
++        break;
++      case Location::kSidecar:
++        AddText(l10n_util::GetStringFUTF16(
++            IDS_HELIUM_IMAGE_CONTEXT_IN_SIDECAR,
++            image_->sidecar.BaseName().LossyDisplayName()));
++        break;
++      case Location::kNowhere:
++        AddText(l10n_util::GetStringUTF16(IDS_HELIUM_IMAGE_CONTEXT_NOWHERE));
++        break;
++    }
++
++    // Choices for this image, remembered for the next ones.
++    AddHeading(IDS_HELIUM_IMAGE_CONTEXT_OPTIONS_SECTION);
++    if (info.container == image_editor::XmpContainer::kNone) {
++      sidecar_ = AddCheckbox(IDS_HELIUM_IMAGE_CONTEXT_SIDECAR_OPTION,
++                             image_->sidecar_for_other_formats);
++    }
++    if (info.has_content_credentials) {
++      embed_in_signed_ = AddCheckbox(IDS_HELIUM_IMAGE_CONTEXT_EMBED_OPTION,
++                                     image_->embed_in_signed);
++    }
++    folder_label_ = AddText(std::u16string());
++    folder_label_->SetSelectable(true);
++    UpdateFolderLabel();
++    AddChildView(std::make_unique<views::MdTextButton>(
++        base::BindRepeating(&ImageContextBubble::ChooseFolder,
++                            base::Unretained(this)),
++        l10n_util::GetStringUTF16(IDS_HELIUM_IMAGE_CONTEXT_CHANGE_FOLDER)));
++    status_ = AddText(std::u16string());
++    status_->SetVisible(false);
++  }
++
++  // ui::SelectFileDialog::Listener:
++  void FileSelected(const ui::SelectedFileInfo& file, int index) override {
++    folder_dialog_ = nullptr;
++    if (PrefService* prefs = GetPrefs()) {
++      prefs->SetFilePath(kSavedImageDirectoryPref, file.path());
++    }
++    UpdateFolderLabel();
++    SizeToContents();
++  }
++
++  void FileSelectionCanceled() override { folder_dialog_ = nullptr; }
++
++  views::Label* AddText(const std::u16string& text, int max_lines = 0) {
++    auto* label = AddChildView(std::make_unique<views::Label>(text));
++    label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
++    label->SetMultiLine(true);
++    label->SetMaxLines(max_lines);
++    label->SetMaximumWidth(kContentWidth);
++    return label;
++  }
++
++  void AddHeading(int message_id) {
++    AddText(l10n_util::GetStringUTF16(message_id))
++        ->SetTextStyle(views::style::STYLE_EMPHASIZED);
++  }
++
++  views::Textfield* AddField(int message_id,
++                             std::unique_ptr<views::Textfield> field,
++                             int height) {
++    const std::u16string label = l10n_util::GetStringUTF16(message_id);
++    AddText(label);
++    field->GetViewAccessibility().SetName(label);
++    field->SetPreferredSize(gfx::Size(kContentWidth, height));
++    return AddChildView(std::move(field));
++  }
++
++  views::Checkbox* AddCheckbox(int message_id, bool checked) {
++    auto* checkbox = AddChildView(std::make_unique<views::Checkbox>(
++        l10n_util::GetStringUTF16(message_id)));
++    checkbox->SetMultiLine(true);
++    checkbox->SetMaxSize(gfx::Size(kContentWidth, 0));
++    checkbox->SetChecked(checked);
++    return checkbox;
++  }
++
++  PrefService* GetPrefs() {
++    return web_contents_
++               ? Profile::FromBrowserContext(web_contents_->GetBrowserContext())
++                     ->GetPrefs()
++               : nullptr;
++  }
++
++  void UpdateFolderLabel() {
++    PrefService* prefs = GetPrefs();
++    if (!prefs) {
++      return;
++    }
++    base::FilePath folder = prefs->GetFilePath(kSavedImageDirectoryPref);
++    if (folder.empty()) {
++      folder =
++          DownloadPrefs::FromBrowserContext(web_contents_->GetBrowserContext())
++              ->DownloadPath();
++    }
++    folder_label_->SetText(l10n_util::GetStringFUTF16(
++        IDS_HELIUM_IMAGE_CONTEXT_FOLDER, folder.LossyDisplayName()));
++  }
++
++  void ChooseFolder() {
++    PrefService* prefs = GetPrefs();
++    if (!prefs || folder_dialog_) {
++      return;
++    }
++    folder_dialog_ = ui::SelectFileDialog::Create(
++        this, std::make_unique<ChromeSelectFilePolicy>(web_contents_.get()));
++    folder_dialog_->SelectFile(
++        ui::SelectFileDialog::SELECT_FOLDER,
++        l10n_util::GetStringUTF16(IDS_HELIUM_IMAGE_CONTEXT_CHANGE_FOLDER),
++        prefs->GetFilePath(kSavedImageDirectoryPref), nullptr, 0,
++        base::FilePath::StringType(), web_contents_->GetTopLevelNativeWindow());
++  }
++
++  // Stores the edited context, closing the bubble once it's done.
++  bool Update() {
++    if (!image_->ready) {
++      return false;
++    }
++    if (source_) {
++      image_->context.source = base::UTF16ToUTF8(source_->GetText());
++    }
++    if (description_) {
++      image_->context.description = base::UTF16ToUTF8(description_->GetText());
++    }
++    PrefService* prefs = GetPrefs();
++    if (sidecar_) {
++      image_->sidecar_for_other_formats = sidecar_->GetChecked();
++      if (prefs) {
++        prefs->SetBoolean(kSavedImageSidecarPref, sidecar_->GetChecked());
++      }
++    }
++    if (embed_in_signed_) {
++      image_->embed_in_signed = embed_in_signed_->GetChecked();
++      if (prefs) {
++        prefs->SetBoolean(kSavedImageEmbedInSignedPref,
++                          embed_in_signed_->GetChecked());
++      }
++    }
++    SetButtonEnabled(ui::mojom::DialogButton::kOk, false);
++    status_->SetVisible(false);
++    UpdateSavedImage(image_, base::BindOnce(&ImageContextBubble::Updated,
++                                            weak_factory_.GetWeakPtr()));
++    return false;
++  }
++
++  void Updated(bool success) {
++    if (!success) {
++      SetButtonEnabled(ui::mojom::DialogButton::kOk, true);
++      status_->SetText(
++          l10n_util::GetStringUTF16(IDS_HELIUM_IMAGE_CONTEXT_UPDATE_FAILED));
++      status_->SetVisible(true);
++      SizeToContents();
++      return;
++    }
++    // Offer the updated file again, from the overlay it first showed in.
++    if (download::DownloadItem* item = GetDownload()) {
++      if (BrowserWindowInterface* browser =
++              GlobalBrowserCollection::GetInstance()->FindBrowserWithTab(
++                  web_contents_.get())) {
++        if (BrowserView* browser_view =
++                BrowserView::GetBrowserViewForBrowser(browser)) {
++          HeliumDownloadOverlay::Show(browser_view, item);
++        }
++      }
++    }
++    GetWidget()->Close();
++  }
++
++  download::DownloadItem* GetDownload() {
++    if (!web_contents_) {
++      return nullptr;
++    }
++    download::DownloadItem* item =
++        web_contents_->GetBrowserContext()
++            ->GetDownloadManager()
++            ->GetDownloadByGuid(image_->download_guid);
++    return item && item->GetState() == download::DownloadItem::COMPLETE &&
++                   !item->GetFileExternallyRemoved()
++               ? item
++               : nullptr;
++  }
++
++  const scoped_refptr<SavedImageContext> image_;
++  const base::WeakPtr<content::WebContents> web_contents_;
++  bool overlay_ = false;
++  raw_ptr<views::Textfield> source_ = nullptr;
++  raw_ptr<views::Textfield> description_ = nullptr;
++  raw_ptr<views::Checkbox> sidecar_ = nullptr;
++  raw_ptr<views::Checkbox> embed_in_signed_ = nullptr;
++  raw_ptr<views::Label> folder_label_ = nullptr;
++  raw_ptr<views::Label> status_ = nullptr;
++  scoped_refptr<ui::SelectFileDialog> folder_dialog_;
++  base::WeakPtrFactory<ImageContextBubble> weak_factory_{this};
++};
++
++BEGIN_METADATA(ImageContextBubble)
++END_METADATA
++
++}  // namespace
++
++void ShowImageContextBubble(base::WeakPtr<content::WebContents> web_contents,
++                            scoped_refptr<SavedImageContext> image) {
++  if (!web_contents || !image->ready) {
++    return;
++  }
++  BrowserWindowInterface* browser =
++      GlobalBrowserCollection::GetInstance()->FindBrowserWithTab(
++          web_contents.get());
++  BrowserView* browser_view =
++      browser ? BrowserView::GetBrowserViewForBrowser(browser) : nullptr;
++  if (!browser_view) {
++    return;
++  }
++  // In frameless mode, a bubble anchored in the toolbar would reveal it.
++  const bool overlay = browser_view->IsZenModeEnabledForLayout();
++  views::BubbleAnchor anchor =
++      overlay
++          ? views::BubbleAnchor(browser_view)
++          : ToolbarButtonProvider::From(browser)->GetBubbleAnchor(std::nullopt);
++  auto bubble = std::make_unique<ImageContextBubble>(anchor, web_contents.get(),
++                                                     std::move(image));
++  auto* bubble_ptr = bubble.get();
++  if (overlay) {
++    bubble->set_overlay(true);
++    bubble->SetArrow(views::BubbleBorder::FLOAT);
++  }
++  views::BubbleDialogDelegateView::CreateBubble(std::move(bubble));
++  bubble_ptr->ShowForReason(LocationBarBubbleDelegateView::USER_GESTURE);
++}
++
++}  // namespace sharing_hub
+--- /dev/null
++++ b/chrome/browser/ui/views/sharing_hub/screenshot/image_context_bubble.h
+@@ -0,0 +1,27 @@
++// Copyright 2026 The Helium Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_VIEWS_SHARING_HUB_SCREENSHOT_IMAGE_CONTEXT_BUBBLE_H_
++#define CHROME_BROWSER_UI_VIEWS_SHARING_HUB_SCREENSHOT_IMAGE_CONTEXT_BUBBLE_H_
++
++#include "base/memory/scoped_refptr.h"
++#include "base/memory/weak_ptr.h"
++
++namespace content {
++class WebContents;
++}  // namespace content
++
++namespace sharing_hub {
++
++struct SavedImageContext;
++
++// Shows the metadata of an image saved with its context: the image's own,
++// read only, then the context Helium added, which can be edited, and where it
++// is stored. Does nothing while the image is being processed.
++void ShowImageContextBubble(base::WeakPtr<content::WebContents> web_contents,
++                            scoped_refptr<SavedImageContext> image);
++
++}  // namespace sharing_hub
++
++#endif  // CHROME_BROWSER_UI_VIEWS_SHARING_HUB_SCREENSHOT_IMAGE_CONTEXT_BUBBLE_H_
+--- /dev/null
++++ b/chrome/browser/ui/views/sharing_hub/screenshot/image_context_save.cc
+@@ -0,0 +1,422 @@
++// Copyright 2026 The Helium Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#include "chrome/browser/ui/views/sharing_hub/screenshot/image_context_save.h"
++
++#include <optional>
++#include <string>
++#include <utility>
++
++#include "base/files/file_path.h"
++#include "base/files/file_util.h"
++#include "base/functional/bind.h"
++#include "base/i18n/time_formatting.h"
++#include "base/memory/raw_ptr.h"
++#include "base/memory/weak_ptr.h"
++#include "base/notreached.h"
++#include "base/strings/utf_string_conversions.h"
++#include "base/task/thread_pool.h"
++#include "base/time/time.h"
++#include "base/uuid.h"
++#include "base/values.h"
++#include "chrome/app/vector_icons/vector_icons.h"
++#include "chrome/browser/download/download_prefs.h"
++#include "chrome/browser/download/download_target_determiner.h"
++#include "chrome/browser/image_editor/image_context_metadata.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/sharing_hub/sharing_hub_features.h"
++#include "chrome/browser/ui/simple_message_box.h"
++#include "chrome/browser/ui/views/download/bubble/helium_download_overlay.h"
++#include "chrome/browser/ui/views/sharing_hub/screenshot/image_context_bubble.h"
++#include "chrome/grit/generated_resources.h"
++#include "components/download/public/common/download_item.h"
++#include "components/download/public/common/download_url_parameters.h"
++#include "components/prefs/pref_service.h"
++#include "components/version_info/version_info.h"
++#include "content/public/browser/download_manager.h"
++#include "content/public/browser/web_contents.h"
++#include "services/data_decoder/public/cpp/data_decoder.h"
++#include "ui/base/l10n/l10n_util.h"
++#include "url/gurl.h"
++
++namespace sharing_hub {
++namespace {
++
++using image_editor::ImageContext;
++using image_editor::ImageMetadataInfo;
++using image_editor::XmpContainer;
++using Location = SavedImageContext::Location;
++
++constexpr size_t kMaxImageSize = 256 * 1024 * 1024;
++
++// Leaves out user names and passwords.
++std::string AddressForRecord(const GURL& url) {
++  if (!url.is_valid()) {
++    return std::string();
++  }
++  GURL::Replacements replacements;
++  replacements.ClearUsername();
++  replacements.ClearPassword();
++  return url.ReplaceComponents(replacements).spec();
++}
++
++// A readable summary first, then the record, as screenshots have.
++std::string Describe(const SavedImageContext& image) {
++  const ImageContext& context = image.context;
++  const bool norwegian = image.language == ScreenshotTextLanguage::kNorwegian;
++  std::string description;
++  const std::string saved = ScreenshotDisplayDate(context.saved_at);
++  if (!saved.empty()) {
++    description += (norwegian ? "Lagret: " : "Saved: ") + saved + "\n";
++  }
++  if (!image.site.empty()) {
++    description += image.site + "\n";
++  }
++  if (!description.empty()) {
++    description += "\n";
++  }
++  description += "HELIUM NEO — SAVED IMAGE SOURCE RECORD\n\n";
++  const auto field = [&](std::string_view label, const std::string& value) {
++    description += std::string(label) + ": " +
++                   (value.empty() ? "Not supplied" : value) + "\n\n";
++  };
++  field("Page URL (observed)", context.page_url);
++  field("Page title (observed)", context.page_title);
++  field("Image URL (observed)", context.image_url);
++  field("Saved (UTC, computer clock)", context.saved_at);
++  return description;
++}
++
++struct DownloadedImage {
++  bool read = false;
++  ImageMetadataInfo info;
++};
++
++DownloadedImage InspectDownloadedImage(const base::FilePath& path) {
++  DownloadedImage image;
++  std::string file;
++  image.read = base::ReadFileToStringWithMaxSize(path, &file, kMaxImageSize);
++  if (image.read) {
++    image.info = image_editor::InspectImageMetadata(file);
++  }
++  return image;
++}
++
++// What UpdateSavedImage() does away from the UI thread.
++struct StoreTask {
++  base::FilePath path;
++  XmpContainer container = XmpContainer::kNone;
++  Location target = Location::kNowhere;
++  Location location = Location::kNowhere;
++  base::FilePath sidecar;
++  std::string original_file;
++  bool keep_original = false;
++  std::string image_xmp;
++  std::string sidecar_xmp;
++};
++
++struct StoreResult {
++  bool success = false;
++  Location location = Location::kNowhere;
++  base::FilePath sidecar;
++  std::string original_file;
++};
++
++// A free name for an XMP file next to `image`, as photo apps look for it.
++base::FilePath FreeSidecarPath(const base::FilePath& image) {
++  for (const base::FilePath& sidecar :
++       {image.ReplaceExtension(FILE_PATH_LITERAL("xmp")),
++        image.AddExtension(FILE_PATH_LITERAL("xmp"))}) {
++    if (!base::PathExists(sidecar)) {
++      return sidecar;
++    }
++  }
++  return base::FilePath();
++}
++
++StoreResult Store(StoreTask task) {
++  StoreResult result = {.location = task.location,
++                        .sidecar = task.sidecar,
++                        .original_file = std::move(task.original_file)};
++  const auto write_sidecar = [&] {
++    const base::FilePath sidecar =
++        result.sidecar.empty() ? FreeSidecarPath(task.path) : result.sidecar;
++    if (sidecar.empty() || !base::WriteFile(sidecar, task.sidecar_xmp)) {
++      return false;
++    }
++    result.sidecar = sidecar;
++    result.location = Location::kSidecar;
++    return true;
++  };
++  const auto remove_sidecar = [&] {
++    if (!result.sidecar.empty() && base::DeleteFile(result.sidecar)) {
++      result.sidecar.clear();
++    }
++  };
++
++  switch (task.target) {
++    case Location::kImage: {
++      std::string file;
++      if (!base::ReadFileToStringWithMaxSize(task.path, &file, kMaxImageSize)) {
++        return result;
++      }
++      if (task.keep_original && task.location != Location::kImage) {
++        result.original_file = file;
++      }
++      const std::optional<std::string> embedded =
++          image_editor::EmbedXmp(file, task.container, task.image_xmp);
++      if (!embedded) {
++        // Too much metadata for the format.
++        result.success = write_sidecar();
++        return result;
++      }
++      // Rewrite the file in place, which keeps its extended attributes, such
++      // as the addresses macOS shows under "Where from".
++      if (!base::WriteFile(task.path, *embedded)) {
++        return result;
++      }
++      remove_sidecar();
++      result.location = Location::kImage;
++      result.success = true;
++      return result;
++    }
++    case Location::kSidecar:
++      if (task.location == Location::kImage) {
++        // Only images with Content Credentials move out of the file. Put it
++        // back as it was downloaded.
++        if (result.original_file.empty() ||
++            !base::WriteFile(task.path, result.original_file)) {
++          return result;
++        }
++        result.original_file.clear();
++        result.location = Location::kNowhere;
++      }
++      result.success = write_sidecar();
++      return result;
++    case Location::kNowhere:
++      remove_sidecar();
++      result.location = Location::kNowhere;
++      result.success = result.sidecar.empty();
++      return result;
++  }
++  NOTREACHED();
++}
++
++void Stored(scoped_refptr<SavedImageContext> image,
++            base::OnceCallback<void(bool)> done,
++            StoreResult result) {
++  image->location = result.location;
++  image->sidecar = std::move(result.sidecar);
++  image->original_file = std::move(result.original_file);
++  image->ready = true;
++  std::move(done).Run(result.success);
++}
++
++void ShowMessage(base::WeakPtr<content::WebContents> web_contents,
++                 int message_id) {
++  if (web_contents) {
++    chrome::ShowWarningMessageBoxAsync(
++        web_contents->GetTopLevelNativeWindow(),
++        l10n_util::GetStringUTF16(IDS_HELIUM_SAVE_IMAGE_WITH_CONTEXT),
++        l10n_util::GetStringUTF16(message_id));
++  }
++}
++
++void FirstStored(base::WeakPtr<content::WebContents> web_contents,
++                 scoped_refptr<SavedImageContext> image,
++                 bool success) {
++  if (!success) {
++    ShowMessage(web_contents, IDS_HELIUM_SAVE_IMAGE_WITH_CONTEXT_FAILED);
++  } else if (image->location == Location::kNowhere) {
++    ShowMessage(web_contents, IDS_HELIUM_SAVE_IMAGE_WITH_CONTEXT_UNSUPPORTED);
++  }
++}
++
++void OwnXmpParsed(base::WeakPtr<content::WebContents> web_contents,
++                  scoped_refptr<SavedImageContext> image,
++                  data_decoder::DataDecoder::ValueOrError own_xmp) {
++  // XMP that can't be parsed is left alone, with the context in a sidecar.
++  if (own_xmp.has_value() &&
++      image_editor::AddImageContextToXmp(image->context, &own_xmp.value())) {
++    image->own_xmp = std::move(own_xmp.value());
++  }
++  UpdateSavedImage(image, base::BindOnce(&FirstStored, web_contents, image));
++}
++
++void Downloaded(base::WeakPtr<content::WebContents> web_contents,
++                scoped_refptr<SavedImageContext> image,
++                DownloadedImage downloaded) {
++  if (!downloaded.read) {
++    ShowMessage(web_contents, IDS_HELIUM_SAVE_IMAGE_WITH_CONTEXT_FAILED);
++    return;
++  }
++  image->info = std::move(downloaded.info);
++  if (!image->info.xmp) {
++    UpdateSavedImage(image, base::BindOnce(&FirstStored, web_contents, image));
++    return;
++  }
++  // The XMP comes from the web, so it's parsed in a sandboxed process.
++  data_decoder::DataDecoder::ParseXmlIsolated(
++      *image->info.xmp,
++      data_decoder::mojom::XmlParser::WhitespaceBehavior::kPreserveSignificant,
++      base::BindOnce(&OwnXmpParsed, web_contents, image));
++}
++
++// Stores the context once the image is downloaded, then deletes itself.
++class SavedImageWatcher : public download::DownloadItem::Observer {
++ public:
++  static void Watch(download::DownloadItem* item,
++                    base::WeakPtr<content::WebContents> web_contents,
++                    scoped_refptr<SavedImageContext> image) {
++    auto* watcher =
++        new SavedImageWatcher(item, std::move(web_contents), std::move(image));
++    watcher->OnDownloadUpdated(item);
++  }
++
++  SavedImageWatcher(const SavedImageWatcher&) = delete;
++  SavedImageWatcher& operator=(const SavedImageWatcher&) = delete;
++
++  // download::DownloadItem::Observer:
++  void OnDownloadUpdated(download::DownloadItem* item) override {
++    switch (item->GetState()) {
++      case download::DownloadItem::IN_PROGRESS:
++        return;
++      case download::DownloadItem::COMPLETE:
++        image_->path = item->GetTargetFilePath();
++        image_->context.saved_at = base::TimeFormatAsIso8601(base::Time::Now());
++        image_->context.description = Describe(*image_);
++        base::ThreadPool::PostTaskAndReplyWithResult(
++            FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
++            base::BindOnce(&InspectDownloadedImage, image_->path),
++            base::BindOnce(&Downloaded, web_contents_, image_));
++        break;
++      default:
++        // The download UI reports failed and cancelled downloads.
++        break;
++    }
++    Stop();
++  }
++
++  void OnDownloadDestroyed(download::DownloadItem* item) override { Stop(); }
++
++ private:
++  SavedImageWatcher(download::DownloadItem* item,
++                    base::WeakPtr<content::WebContents> web_contents,
++                    scoped_refptr<SavedImageContext> image)
++      : item_(item),
++        web_contents_(std::move(web_contents)),
++        image_(std::move(image)) {
++    item_->AddObserver(this);
++  }
++  ~SavedImageWatcher() override = default;
++
++  void Stop() {
++    item_->RemoveObserver(this);
++    delete this;
++  }
++
++  const raw_ptr<download::DownloadItem> item_;
++  const base::WeakPtr<content::WebContents> web_contents_;
++  const scoped_refptr<SavedImageContext> image_;
++};
++
++void DownloadStarted(base::WeakPtr<content::WebContents> web_contents,
++                     scoped_refptr<SavedImageContext> image,
++                     download::DownloadItem* item,
++                     download::DownloadInterruptReason reason) {
++  if (!item || reason != download::DOWNLOAD_INTERRUPT_REASON_NONE) {
++    helium::ClearDownloadTargetPath(image->download_guid);
++    return;
++  }
++  HeliumDownloadOverlay::SetExtraAction(
++      item, kEditIcon, l10n_util::GetStringUTF16(IDS_NEO_CAPTURE_EDIT_METADATA),
++      base::BindRepeating(&ShowImageContextBubble, web_contents, image));
++  SavedImageWatcher::Watch(item, std::move(web_contents), std::move(image));
++}
++
++}  // namespace
++
++SavedImageContext::SavedImageContext() = default;
++SavedImageContext::~SavedImageContext() = default;
++
++void SaveImageWithContext(
++    content::WebContents* web_contents,
++    std::unique_ptr<download::DownloadUrlParameters> params) {
++  Profile* profile =
++      Profile::FromBrowserContext(web_contents->GetBrowserContext());
++  const PrefService* prefs = profile->GetPrefs();
++  base::FilePath directory = prefs->GetFilePath(kSavedImageDirectoryPref);
++  if (directory.empty()) {
++    directory = DownloadPrefs::FromBrowserContext(profile)->DownloadPath();
++  }
++
++  auto image = base::MakeRefCounted<SavedImageContext>();
++  ImageContext& context = image->context;
++  const GURL& page_url = web_contents->GetLastCommittedURL();
++  context.page_url = AddressForRecord(page_url);
++  context.page_title = base::UTF16ToUTF8(web_contents->GetTitle());
++  if (params->url().SchemeIsHTTPOrHTTPS()) {
++    context.image_url = AddressForRecord(params->url());
++  }
++  context.software =
++      "Helium Neo / Chromium " + std::string(version_info::GetVersionNumber());
++
++  // Name the site as screenshots do, as "Facebook" or "tv2.no".
++  image->site = ScreenshotPlatformName(page_url);
++  if (image->site.empty() && page_url.SchemeIsHTTPOrHTTPS()) {
++    image->site = page_url.host();
++    if (image->site.starts_with("www.")) {
++      image->site.erase(0, 4);
++    }
++  }
++  context.source = image->site.empty() ? context.page_url
++                                       : image->site + " / " + context.page_url;
++  image->language =
++      static_cast<ScreenshotTextLanguage>(GetScreenshotTextLanguage(prefs));
++  image->sidecar_for_other_formats = prefs->GetBoolean(kSavedImageSidecarPref);
++  image->embed_in_signed = prefs->GetBoolean(kSavedImageEmbedInSignedPref);
++
++  image->download_guid = base::Uuid::GenerateRandomV4().AsLowercaseString();
++  helium::SetDownloadTargetDirectory(image->download_guid, directory);
++  params->set_guid(image->download_guid);
++  params->set_prompt(false);
++  params->set_callback(base::BindOnce(
++      &DownloadStarted, web_contents->GetWeakPtr(), std::move(image)));
++  profile->GetDownloadManager()->DownloadUrl(std::move(params));
++}
++
++void UpdateSavedImage(scoped_refptr<SavedImageContext> image,
++                      base::OnceCallback<void(bool)> done) {
++  const ImageMetadataInfo& info = image->info;
++  StoreTask task = {.path = image->path,
++                    .container = info.container,
++                    .location = image->location,
++                    .sidecar = image->sidecar,
++                    .original_file = image->original_file,
++                    .keep_original = info.has_content_credentials};
++  if (info.container == XmpContainer::kNone) {
++    task.target = image->sidecar_for_other_formats ? Location::kSidecar
++                                                   : Location::kNowhere;
++  } else if (info.unsupported || (info.xmp && !image->own_xmp) ||
++             (info.has_content_credentials && !image->embed_in_signed)) {
++    // Leave files that can't be rewritten safely alone, and keep Content
++    // Credentials intact unless asked not to.
++    task.target = Location::kSidecar;
++  } else {
++    task.target = Location::kImage;
++    task.image_xmp = *image_editor::AddImageContextToXmp(
++        image->context, image->own_xmp ? &*image->own_xmp : nullptr);
++  }
++  // The sidecar holds only the context; the image keeps its own metadata.
++  task.sidecar_xmp =
++      *image_editor::AddImageContextToXmp(image->context, nullptr);
++
++  image->ready = false;
++  base::ThreadPool::PostTaskAndReplyWithResult(
++      FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
++      base::BindOnce(&Store, std::move(task)),
++      base::BindOnce(&Stored, std::move(image), std::move(done)));
++}
++
++}  // namespace sharing_hub
+--- /dev/null
++++ b/chrome/browser/ui/views/sharing_hub/screenshot/image_context_save.h
+@@ -0,0 +1,83 @@
++// Copyright 2026 The Helium Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_VIEWS_SHARING_HUB_SCREENSHOT_IMAGE_CONTEXT_SAVE_H_
++#define CHROME_BROWSER_UI_VIEWS_SHARING_HUB_SCREENSHOT_IMAGE_CONTEXT_SAVE_H_
++
++#include <memory>
++#include <optional>
++#include <string>
++
++#include "base/files/file_path.h"
++#include "base/functional/callback_forward.h"
++#include "base/memory/ref_counted.h"
++#include "base/values.h"
++#include "chrome/browser/image_editor/image_context_metadata.h"
++#include "chrome/browser/ui/views/sharing_hub/screenshot/screenshot_documentation.h"
++
++namespace content {
++class WebContents;
++}  // namespace content
++
++namespace download {
++class DownloadUrlParameters;
++}  // namespace download
++
++namespace sharing_hub {
++
++// An image saved with its context, which the metadata panel edits.
++struct SavedImageContext : public base::RefCounted<SavedImageContext> {
++  enum class Location { kNowhere, kImage, kSidecar };
++
++  SavedImageContext();
++  SavedImageContext(const SavedImageContext&) = delete;
++  SavedImageContext& operator=(const SavedImageContext&) = delete;
++
++  base::FilePath path;
++  std::string download_guid;
++  image_editor::ImageContext context;
++  image_editor::ImageMetadataInfo info;
++  // The image's own XMP, parsed, if it has XMP that could be read.
++  std::optional<base::Value> own_xmp;
++  // The platform or host the image was saved from, if any.
++  std::string site;
++  ScreenshotTextLanguage language = ScreenshotTextLanguage::kEnglish;
++  // Whether images that can't hold metadata get a sidecar file.
++  bool sidecar_for_other_formats = false;
++  // Whether to add the context to images with Content Credentials.
++  bool embed_in_signed = false;
++
++  // Where the context is stored.
++  Location location = Location::kNowhere;
++  // The sidecar file Helium wrote, if any.
++  base::FilePath sidecar;
++  // The file as downloaded, kept while the context is in an image with
++  // Content Credentials, so that they can be restored.
++  std::string original_file;
++  // Whether the image has been processed and isn't being updated.
++  bool ready = false;
++
++ private:
++  friend class base::RefCounted<SavedImageContext>;
++  ~SavedImageContext();
++};
++
++// Downloads the image `params` points to into the folder for saved images,
++// without asking where, then records the page it was saved from and its own
++// address in its XMP metadata. The image's own metadata is kept. Images whose
++// format can't hold metadata, or whose Content Credentials it would break, get
++// it in an XMP sidecar file instead, as the preferences say. The download
++// overlay then offers to edit it.
++void SaveImageWithContext(
++    content::WebContents* web_contents,
++    std::unique_ptr<download::DownloadUrlParameters> params);
++
++// Stores the context of `image` where its options say, replacing what was
++// stored before, then runs `done` with whether that succeeded.
++void UpdateSavedImage(scoped_refptr<SavedImageContext> image,
++                      base::OnceCallback<void(bool)> done);
++
++}  // namespace sharing_hub
++
++#endif  // CHROME_BROWSER_UI_VIEWS_SHARING_HUB_SCREENSHOT_IMAGE_CONTEXT_SAVE_H_
