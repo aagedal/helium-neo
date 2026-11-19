@@ -311,10 +311,10 @@
    return tab ? tab->view() : gfx::NativeView();
 --- a/chrome/browser/ui/BUILD.gn
 +++ b/chrome/browser/ui/BUILD.gn
-@@ -980,6 +980,10 @@ if (!is_android) {
-       "//ui/gfx",
-       "//ui/gfx/geometry",
-     ]
+@@ -990,6 +990,10 @@ if (!is_android) {
+     if (is_win || is_mac || is_linux) {
+       deps += [ "//chrome/browser/ui/views/scheduled_restart" ]
+     }
 +
 +    if (is_mac) {
 +      deps += [ "//chrome/browser:helium_webkit_streaming" ]
@@ -335,7 +335,7 @@
  #include "chrome/app/chrome_command_ids.h"
  #include "chrome/browser/autocomplete/autocomplete_classifier_factory.h"
  #include "chrome/browser/bookmarks/bookmark_model_factory.h"
-@@ -807,6 +811,14 @@ void ReloadInternal(BrowserWindowInterfa
+@@ -797,6 +801,14 @@ void ReloadInternal(BrowserWindowInterfa
        new_tab->Focus();
      }
  
@@ -350,7 +350,7 @@
      DevToolsWindow* const devtools =
          DevToolsWindow::GetInstanceForInspectedWebContents(new_tab);
      constexpr content::ReloadType kBypassingType =
-@@ -1047,6 +1059,11 @@ bool CanGoBack(const BrowserWindowInterf
+@@ -1037,6 +1049,11 @@ bool CanGoBack(const BrowserWindowInterf
  }
  
  bool CanGoBack(content::WebContents* web_contents) {
@@ -362,7 +362,7 @@
    return web_contents &&
           (web_contents->GetController().CanGoBack() ||
            back_to_opener::BackToOpenerController::CanGoBackToOpener(
-@@ -1060,6 +1077,11 @@ bool ShouldEnableBackButton(const Browse
+@@ -1050,6 +1067,11 @@ bool ShouldEnableBackButton(const Browse
      return false;
    }
  
@@ -374,7 +374,7 @@
    // Check for regular back navigation first.
    if (web_contents->GetController().ShouldEnableBackButton()) {
      return true;
-@@ -1129,6 +1151,12 @@ void GoBack(content::WebContents* web_co
+@@ -1119,6 +1141,12 @@ void GoBack(content::WebContents* web_co
      return;
    }
  
@@ -387,7 +387,7 @@
    // Try regular back navigation first.
    if (web_contents->GetController().CanGoBack()) {
      web_contents->GetController().GoBack();
-@@ -1146,17 +1174,25 @@ void GoBack(content::WebContents* web_co
+@@ -1136,17 +1164,25 @@ void GoBack(content::WebContents* web_co
  }
  
  bool CanGoForward(const BrowserWindowInterface* browser) {
@@ -417,7 +417,7 @@
    return browser->GetTabStripModel()
        ->GetActiveWebContents()
        ->GetController()
-@@ -1169,11 +1205,17 @@ void GoForward(BrowserWindowInterface* b
+@@ -1159,11 +1195,17 @@ void GoForward(BrowserWindowInterface* b
    if (CanGoForward(browser)) {
      tabs::TabInterface* tab = GetTabAndRevertIfNecessary(browser, disposition);
      CHECK(tab);
@@ -436,7 +436,7 @@
    base::RecordAction(UserMetricsAction("Forward"));
    if (CanGoForward(web_contents)) {
      web_contents->GetController().GoForward();
-@@ -1327,6 +1369,13 @@ base::WeakPtr<content::NavigationHandle>
+@@ -1318,6 +1360,13 @@ base::WeakPtr<content::NavigationHandle>
  
  void Stop(BrowserWindowInterface* browser) {
    base::RecordAction(UserMetricsAction("Stop"));
@@ -479,7 +479,7 @@
 @@ -71,6 +75,13 @@ ChromeLocationBarModelDelegate::Formatte
  
  bool ChromeLocationBarModelDelegate::GetURL(GURL* url) const {
-   DCHECK(url);
+   CHECK(url, base::NotFatalUntil::M162);
 +#if BUILDFLAG(IS_MAC)
 +  GURL webkit_url = helium::GetWebKitStreamingTabURL(GetActiveWebContents());
 +  if (webkit_url.is_valid()) {

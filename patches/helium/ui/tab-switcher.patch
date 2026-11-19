@@ -394,7 +394,7 @@
 +}
 --- a/chrome/browser/ui/views/helium/BUILD.gn
 +++ b/chrome/browser/ui/views/helium/BUILD.gn
-@@ -26,6 +26,20 @@
+@@ -26,6 +26,20 @@ source_set("command_bar") {
    }
  }
  
@@ -417,17 +417,17 @@
      "frame_corner_radius.cc",
 --- a/chrome/browser/BUILD.gn
 +++ b/chrome/browser/BUILD.gn
-@@ -4732,6 +4732,7 @@
+@@ -4281,6 +4281,7 @@ source_set("browser") {
      deps += [
        ":resources",
        "//chrome/browser/ui/views/helium:command_bar",
 +      "//chrome/browser/ui/views/helium:tab_switcher",
-       "//base",
        "//chrome/browser/collaboration",
        "//chrome/browser/collaboration/messaging",
+       "//chrome/browser/desktop_to_mobile_promos:utils",
 --- a/chrome/common/pref_names.h
 +++ b/chrome/common/pref_names.h
-@@ -608,6 +608,10 @@
+@@ -608,6 +608,10 @@ inline constexpr char kNewTabNextToActiv
  // when cycling through tabs with Ctrl+Tab.
  inline constexpr char kTabCyclingMRU[] = "helium.browser.mru_tab_cycling";
  
@@ -440,7 +440,7 @@
  inline constexpr char kShiftRightClickContextMenu[] =
 --- a/chrome/browser/ui/browser_ui_prefs.cc
 +++ b/chrome/browser/ui/browser_ui_prefs.cc
-@@ -136,6 +136,8 @@
+@@ -141,6 +141,8 @@ void RegisterBrowserUserPrefs(user_prefs
  
    registry->RegisterBooleanPref(prefs::kTabCyclingMRU, false);
  
@@ -451,7 +451,7 @@
    registry->RegisterBooleanPref(prefs::kShowZoomIndicator, true);
 --- a/chrome/browser/extensions/api/settings_private/prefs_util.cc
 +++ b/chrome/browser/extensions/api/settings_private/prefs_util.cc
-@@ -325,6 +325,8 @@
+@@ -326,6 +326,8 @@ const PrefsUtil::TypedPrefMap& PrefsUtil
        settings_api::PrefType::kBoolean;
    (*s_allowlist)[::prefs::kTabCyclingMRU] =
        settings_api::PrefType::kBoolean;
@@ -462,7 +462,7 @@
    (*s_allowlist)[::prefs::kShowZoomIndicator] =
 --- a/chrome/app/settings_strings.grdp
 +++ b/chrome/app/settings_strings.grdp
-@@ -270,6 +270,9 @@
+@@ -336,6 +336,9 @@
      <message name="IDS_SETTINGS_CYCLE_TABS_IN_MRU_ORDER" desc="Label for the checkbox which enables or disables cycling through tabs in MRU order when using Ctrl+Tab.">
        Cycle through tabs in most recently used order with Ctrl+Tab
      </message>
@@ -474,7 +474,7 @@
      </message>
 --- a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
 +++ b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
-@@ -605,6 +605,7 @@
+@@ -634,6 +634,7 @@ void AddAppearanceStrings(content::WebUI
        {"systemMode", IDS_NTP_CUSTOMIZE_CHROME_COLOR_SCHEME_MODE_SYSTEM_LABEL},
        {"openNewTabNextToActive", IDS_SETTINGS_NEW_TAB_NEXT_TO_ACTIVE_BUTTON},
        {"cycleTabsInMRUOrder", IDS_SETTINGS_CYCLE_TABS_IN_MRU_ORDER},
@@ -498,7 +498,7 @@
        label="$i18n{shiftRightClickContextMenu}">
 --- a/chrome/app/generated_resources.grd
 +++ b/chrome/app/generated_resources.grd
-@@ -288,6 +288,8 @@
+@@ -297,6 +297,8 @@ are declared in tools/grit/grit_args.gni
        <message name="IDS_HELIUM_CREATE_FOUR_PANE_SPLIT" desc="Tab context menu action creating a grid with this tab and three new tabs.">Create Four-Way Split</message>
        <message name="IDS_HELIUM_EXPAND_FOUR_PANE_SPLIT" desc="Tab context menu action adding new tabs to fill an existing split to four panes.">Expand to Four-Way Split</message>
        <message name="IDS_HELIUM_TAB_VIEW" desc="Tab menu submenu for individual tab preview and refresh settings.">Tab view</message>
@@ -509,7 +509,7 @@
        <message name="IDS_HELIUM_CREATE_PREVIEW_WORKSPACE" desc="Create a pinned tab group containing desktop and mobile copies of this page.">Create desktop/mobile workspace</message>
 --- a/chrome/browser/ui/tabs/tab_strip_model.h
 +++ b/chrome/browser/ui/tabs/tab_strip_model.h
-@@ -630,6 +630,11 @@
+@@ -629,6 +629,11 @@ class TabStripModel {
    // Used in BrowserView::StopTabCycling().
    void StopMRUCycling();
  
@@ -521,7 +521,7 @@
    // Moves the active in the specified direction. Respects group boundaries.
    void MoveTabNext();
    void MoveTabPrevious();
-@@ -1557,6 +1562,9 @@
+@@ -1553,6 +1558,9 @@ class TabStripModel {
    // List of tabs for MRU cycling
    std::vector<int> mru_cycle_list_;
  
@@ -533,7 +533,7 @@
  
 --- a/chrome/browser/ui/tabs/tab_strip_model.cc
 +++ b/chrome/browser/ui/tabs/tab_strip_model.cc
-@@ -4635,6 +4635,11 @@
+@@ -4690,6 +4690,11 @@ void TabStripModel::SelectRelativeTabCyc
  
  void TabStripModel::SelectMRUTab(TabRelativeDirection direction,
                                   TabStripUserGestureDetails detail) {
@@ -545,7 +545,7 @@
    if (mru_cycle_list_.empty()) {
      BrowserWindowInterface* browser =
          GlobalBrowserCollection::GetInstance()->FindBrowserWithTab(
-@@ -4659,19 +4664,51 @@
+@@ -4714,19 +4719,51 @@ void TabStripModel::SelectMRUTab(TabRela
      }
    }
  
@@ -604,7 +604,7 @@
  void TabStripModel::SelectRelativeTab(TabRelativeDirection direction,
 --- a/chrome/browser/ui/views/frame/browser_view.h
 +++ b/chrome/browser/ui/views/frame/browser_view.h
-@@ -102,6 +102,7 @@
+@@ -102,6 +102,7 @@ class SidePanelAnimationContentView;
  class TabCyclingEventHandler;
  class TabDragTarget;
  class TabSearchBubbleHost;
@@ -612,7 +612,7 @@
  class TabStrip;
  class TabStripRegionView;
  class ToolbarButtonProvider;
-@@ -613,6 +614,9 @@
+@@ -617,6 +618,9 @@ class BrowserView : public BrowserWindow
    void ShowUpdateChromeDialog() override;
    void StartTabCycling();
    void StopTabCycling();
@@ -622,7 +622,7 @@
    void ShowIntentPickerBubble(
        std::vector<apps::IntentPickerAppInfo> app_info,
        bool show_stay_in_chrome,
-@@ -1489,6 +1493,7 @@
+@@ -1496,6 +1500,7 @@ class BrowserView : public BrowserWindow
        tab_strip_web_apps_reparented_state_;
  
    std::unique_ptr<TabCyclingEventHandler> tab_cycling_event_handler_;
@@ -632,7 +632,7 @@
    std::unique_ptr<views::EventMonitor> zen_mode_event_monitor_;
 --- a/chrome/browser/ui/views/frame/browser_view.cc
 +++ b/chrome/browser/ui/views/frame/browser_view.cc
-@@ -187,6 +187,7 @@
+@@ -188,6 +188,7 @@
  #include "chrome/browser/ui/views/frame/tab_strip_region_view.h"
  #include "chrome/browser/ui/views/frame/top_container_view.h"
  #include "chrome/browser/ui/views/helium/command_bar_view.h"
@@ -640,7 +640,7 @@
  #include "chrome/browser/ui/views/frame/top_controls_slide_controller.h"
  #include "chrome/browser/ui/views/frame/vertical_tab_strip_background_blur_backdrop.h"
  #include "chrome/browser/ui/views/frame/vertical_tab_strip_region_view.h"
-@@ -932,10 +933,34 @@
+@@ -938,10 +939,34 @@ class TabCyclingEventHandler : public ui
   private:
    // ui::EventObserver overrides:
    void OnEvent(const ui::Event& event) override {
@@ -679,7 +679,7 @@
        return;
      }
  
-@@ -984,14 +1009,29 @@
+@@ -990,14 +1015,29 @@ class TabCyclingEventHandler : public ui
  };
  
  void BrowserView::StartTabCycling() {
@@ -712,7 +712,7 @@
  
 --- a/chrome/browser/ui/browser_command_controller.cc
 +++ b/chrome/browser/ui/browser_command_controller.cc
-@@ -826,6 +826,10 @@
+@@ -842,6 +842,10 @@ void BrowserCommandController::HandleCom
                        TabStripUserGestureDetails(
                            TabStripUserGestureDetails::GestureType::kKeyboard,
                            time_stamp));
@@ -723,7 +723,7 @@
        }
        break;
      case IDC_CYCLE_TO_PREV_TAB:
-@@ -841,6 +845,10 @@
+@@ -857,6 +861,10 @@ void BrowserCommandController::HandleCom
              browser_, TabStripUserGestureDetails(
                            TabStripUserGestureDetails::GestureType::kKeyboard,
                            time_stamp));

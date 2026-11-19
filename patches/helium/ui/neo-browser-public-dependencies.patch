@@ -1,0 +1,101 @@
+--- a/chrome/browser/BUILD.gn
++++ b/chrome/browser/BUILD.gn
+@@ -5601,3 +5601,98 @@ if (is_android) {
+     ]
+   }
+ }
++
++# Neo: Chromium 158 removed this group when it merged //chrome/browser/ui into
++# //chrome/browser. Neo's targets that are circularly dependent on
++# //chrome/browser still use it for the browser's public and generated headers.
++group("browser_public_dependencies") {
++  public_deps = [
++    ":browser_features",
++    ":buildflags",
++    ":shell_integration",
++    "//base",
++    "//build:branding_buildflags",
++    "//chrome/app/vector_icons",
++    "//chrome/browser/enterprise",
++    "//chrome/browser/plugins",
++    "//chrome/browser/policy",
++    "//chrome/browser/record_replay",
++    "//chrome/browser/ui/record_replay",
++    "//chrome/common",
++    "//chrome/common:buildflags",
++    "//chrome/common:constants",
++    "//chrome/common/compose:mojo_bindings",
++    "//chrome/services/file_util/public/mojom",
++    "//components/account_id",
++    "//components/autofill/content/browser",
++    "//components/autofill/core/browser",
++    "//components/commerce/core:coupon_db_content_proto",
++    "//components/commerce/core/mojom:mojo_bindings",
++    "//components/compose/core/browser:mojo_bindings",
++    "//components/cross_device/logging",
++    "//components/dom_distiller/core",
++    "//components/enterprise/buildflags",
++    "//components/enterprise/common:files_scan_data",
++    "//components/enterprise/common/proto:legacy_tech_events_proto",
++    "//components/enterprise/core",
++    "//components/feed/core/proto:proto_ios_shared_v2",
++    "//components/feed/core/proto:proto_v2",
++    "//components/input",
++    "//components/media_router/common/mojom:media_controller",
++    "//components/on_device_translation/buildflags",
++    "//components/optimization_guide/core",
++    "//components/page_info",
++    "//components/page_info/core",
++    "//components/paint_preview/buildflags",
++    "//components/payments/core",
++    "//components/payments/core:error_strings",
++    "//components/policy/proto",
++    "//components/record_replay/core/common:mojom",
++    "//components/reporting/proto:configuration_file_proto",
++    "//components/safe_browsing:buildflags",
++    "//components/saved_tab_groups/proto",
++    "//components/search_engines",
++    "//components/segmentation_platform/public",
++    "//components/services/storage:storage_features",
++    "//components/services/storage/public/mojom",
++    "//components/session_proto_db",
++    "//components/sharing_message",
++    "//components/supervised_user/core/browser/proto",
++    "//components/sync",
++    "//components/sync_device_info",
++    "//components/sync_user_events",
++    "//components/system_cpu",
++    "//components/translate/content/browser",
++    "//components/url_deduplication",
++    "//components/user_education/common",
++    "//components/wallet/core/common:features",
++    "//components/webapps/browser",
++    "//content/public/browser",
++    "//extensions/buildflags",
++    "//ipc",
++    "//mojo/public/cpp/bindings",
++    "//pdf:buildflags",
++    "//services/data_decoder/public/mojom",
++    "//services/image_annotation/public/mojom",
++    "//services/network/public/mojom",
++    "//services/screen_ai/buildflags",
++    "//services/webnn/public/cpp",
++    "//sql",
++    "//ui/base/dragdrop/mojom:mojom_headers",
++    "//ui/lottie",
++    "//ui/views",
++    "//ui/views/controls/webview",
++    "//ui/webui/resources",
++    "//ui/webui/resources/cr_components/help_bubble:mojo_bindings",
++    "//ui/webui/resources/cr_components/history_embeddings:mojo_bindings",
++  ]
++  if (enable_extensions_core) {
++    public_deps += [ "//extensions/browser" ]
++  }
++  if (enable_printing) {
++    public_deps += [ "//components/printing/common:mojo_interfaces" ]
++  }
++  if (enable_bound_session_credentials) {
++    public_deps += [ "//chrome/browser/signin:bound_session_credentials_proto" ]
++  }
++}

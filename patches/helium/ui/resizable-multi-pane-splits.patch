@@ -39,7 +39,7 @@
 +  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), GetUrl1()));
 +  for (int i = 1; i < 4; ++i) {
 +    ui_test_utils::NavigateToURLWithDisposition(
-+        browser(), GetUrl1(), WindowOpenDisposition::NEW_FOREGROUND_TAB,
++        browser(), GetUrl1(), WindowOpenDisposition::kNewForegroundTab,
 +        ui_test_utils::BROWSER_TEST_WAIT_FOR_LOAD_STOP);
 +  }
 +  auto* model = browser()->tab_strip_model();

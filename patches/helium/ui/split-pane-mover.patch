@@ -1,6 +1,6 @@
 --- a/chrome/browser/ui/views/frame/BUILD.gn
 +++ b/chrome/browser/ui/views/frame/BUILD.gn
-@@ -3328,7 +3328,11 @@ source_set("multi_contents_view") {
+@@ -3224,7 +3224,11 @@ source_set("multi_contents_view") {
  }
  
  source_set("multi_contents_view_impl") {
@@ -10,10 +10,10 @@
 +    "split_pane_mover.cc",
 +    "split_pane_mover.h",
 +  ]
-   public_deps = [
-     ":multi_contents_view",
-     "//chrome/browser:browser_public_dependencies",
-@@ -3349,6 +3353,7 @@ source_set("multi_contents_view_impl") {
+   public_deps = [ ":multi_contents_view" ]
+   deps = [
+     ":browser_view_header",
+@@ -3242,6 +3246,7 @@ source_set("multi_contents_view_impl") {
      ":scrim_view",
      ":themed_background",
      "//base",
@@ -52,7 +52,7 @@
    UpdateContentsBorderAndOverlay();
    InvalidateLayout();
  }
-@@ -354,6 +362,9 @@ void MultiContentsView::CloseSplitView() {
+@@ -354,6 +362,9 @@ void MultiContentsView::CloseSplitView()
    UpdatePaneResizeAreas();
    divider_resize_state_.reset();
    resize_area_->SetVisible(false);
