@@ -404,8 +404,8 @@
 +    web_contents()->OpenURL(
 +        content::OpenURLParams(
 +            url, content::Referrer(),
-+            new_window ? WindowOpenDisposition::NEW_FOREGROUND_TAB
-+                       : WindowOpenDisposition::CURRENT_TAB,
++            new_window ? WindowOpenDisposition::kNewForegroundTab
++                       : WindowOpenDisposition::kCurrentTab,
 +            ui::PAGE_TRANSITION_LINK, /*is_renderer_initiated=*/false),
 +        /*navigation_handle_callback=*/{});
 +  }

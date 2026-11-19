@@ -1293,7 +1293,7 @@
 +        return false;
 +      }
 +      if (selected_index_ && !entries_[*selected_index_].fill_text.empty()) {
-+        OpenEntry(*selected_index_, WindowOpenDisposition::CURRENT_TAB);
++        OpenEntry(*selected_index_, WindowOpenDisposition::kCurrentTab);
 +        return true;
 +      }
 +      if (bare_bang_ && !bang_keyword_.empty()) {
@@ -1871,8 +1871,8 @@
 +    int event_flags) const {
 +  return ui::DispositionFromEventFlags(
 +      event_flags, mode_ == Mode::kNewTab
-+                       ? WindowOpenDisposition::NEW_FOREGROUND_TAB
-+                       : WindowOpenDisposition::CURRENT_TAB);
++                       ? WindowOpenDisposition::kNewForegroundTab
++                       : WindowOpenDisposition::kCurrentTab);
 +}
 +
 +std::vector<CommandBarView::ScoredTab> CommandBarView::GetTabs(
