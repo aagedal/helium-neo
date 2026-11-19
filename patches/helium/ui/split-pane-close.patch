@@ -31,7 +31,7 @@
      case CommandAddToSplit:
      case CommandSwapWithActiveSplit:
      case CommandArrangeSplit:
-@@ -3028,6 +3031,24 @@ void TabStripModel::ExecuteContextMenuCommand(int context_index,
+@@ -3028,6 +3031,26 @@ void TabStripModel::ExecuteContextMenuCommand(int context_index,
                                     selection_model_.size());
        base::RecordAction(UserMetricsAction("TabContextMenu_CloseTab"));
  
@@ -40,16 +40,18 @@
 +      const std::optional<split_tabs::SplitTabId> split =
 +          GetSplitForTab(context_index);
 +      if (split && std::ranges::is_permutation(
-+                       GetTabsForCommand(context_index),
-+                       GetSplitData(*split)->ListTabs())) {
++                       GetTabsForCommand(context_tab),
++                       GetSplitData(*split)->ListTabs(), {}, {},
++                       [](tabs::TabInterface* tab) {
++                         return tab->GetHandle();
++                       })) {
 +        ExecuteCloseTabsCommand(
 +            base::BindRepeating(
 +                [](tabs::TabHandle tab) {
-+                  return tab.Get()
-+                             ? std::vector<tabs::TabInterface*>{tab.Get()}
-+                             : std::vector<tabs::TabInterface*>();
++                  return tab.Get() ? std::vector<tabs::TabHandle>{tab}
++                                   : std::vector<tabs::TabHandle>();
 +                },
-+                GetTabAtIndex(context_index)->GetHandle()),
++                context_tab),
 +            /*delete_groups=*/true);
 +        break;
 +      }
