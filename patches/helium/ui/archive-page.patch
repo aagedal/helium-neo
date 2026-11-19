@@ -850,7 +850,7 @@
 +}  // namespace helium
 --- a/chrome/app/chrome_command_ids.h
 +++ b/chrome/app/chrome_command_ids.h
-@@ -298,6 +298,7 @@
+@@ -289,6 +289,7 @@
  #define IDC_SHOW_TTC_MENU 40306
  
  #define IDC_HELIUM_SERVICES_OPEN 40700
@@ -871,7 +871,7 @@
        <message name="IDS_HELIUM_COMMAND_BAR_CMD_ZOOM_RESET" desc="Search overlay command that resets the zoom level.">Reset zoom</message>
 --- a/chrome/app/settings_strings.grdp
 +++ b/chrome/app/settings_strings.grdp
-@@ -1105,6 +1105,12 @@
+@@ -1173,6 +1173,12 @@
      <message name="IDS_SETTINGS_CHANGE_DOWNLOAD_LOCATION" desc="Text for the button which allows the user to change the default download directory.">
        Change
      </message>
@@ -886,7 +886,7 @@
      </message>
 --- a/chrome/browser/extensions/api/settings_private/prefs_util.cc
 +++ b/chrome/browser/extensions/api/settings_private/prefs_util.cc
-@@ -409,6 +409,8 @@
+@@ -410,6 +410,8 @@ const PrefsUtil::TypedPrefMap& PrefsUtil
        settings_api::PrefType::kList;
  
    // Downloads settings.
@@ -919,7 +919,7 @@
    }
 --- a/chrome/browser/resources/settings/downloads_page/downloads_page.html.ts
 +++ b/chrome/browser/resources/settings/downloads_page/downloads_page.html.ts
-@@ -33,6 +33,25 @@
+@@ -33,6 +33,25 @@ export function getHtml(this: SettingsDo
          end-justified>
      </controlled-button>
    </div>
@@ -986,7 +986,7 @@
    }
 --- a/chrome/browser/ui/accelerator_table.cc
 +++ b/chrome/browser/ui/accelerator_table.cc
-@@ -77,6 +77,8 @@ const AcceleratorMapping kAcceleratorMap
+@@ -77,6 +77,8 @@ constexpr AcceleratorMapping kAccelerato
      {ui::VKEY_S, ui::EF_PLATFORM_ACCELERATOR, IDC_CTRL_S_SHORTCUT},
      {ui::VKEY_S, ui::EF_SHIFT_DOWN | ui::EF_PLATFORM_ACCELERATOR,
       IDC_SHARING_HUB_SCREENSHOT},
@@ -994,18 +994,18 @@
 +     IDC_HELIUM_ARCHIVE_PAGE},
      {ui::VKEY_9, ui::EF_PLATFORM_ACCELERATOR, IDC_SELECT_LAST_TAB},
      {ui::VKEY_NUMPAD9, ui::EF_PLATFORM_ACCELERATOR, IDC_SELECT_LAST_TAB},
- #if BUILDFLAG(IS_LINUX)
+     // Control modifier is rarely used on Mac, so we allow it only in several
 --- a/chrome/browser/ui/browser_command_controller.cc
 +++ b/chrome/browser/ui/browser_command_controller.cc
-@@ -99,6 +99,7 @@
+@@ -100,6 +100,7 @@
  #include "chrome/browser/ui/views/download/bubble/download_toolbar_ui_controller.h"
  #include "chrome/browser/ui/views/frame/browser_view.h"
  #include "chrome/browser/ui/views/helium/command_bar_view.h"
 +#include "chrome/browser/ui/views/helium/page_archive.h"
+ #include "chrome/browser/ui/views/side_panel/tabs_from_other_devices/tabs_from_other_devices_side_panel_coordinator.h"
  #include "chrome/browser/ui/web_applications/app_browser_controller.h"
  #include "chrome/browser/ui/web_applications/web_app_dialog_utils.h"
- #include "chrome/browser/ui/web_applications/web_app_launch_utils.h"
-@@ -982,6 +983,9 @@ void BrowserCommandController::HandleCom
+@@ -998,6 +999,9 @@ void BrowserCommandController::HandleCom
      case IDC_SAVE_PAGE:
        SavePage(browser_);
        break;
@@ -1015,7 +1015,7 @@
      case IDC_BOOKMARK_THIS_TAB:
        BookmarkCurrentTab(browser_);
        break;
-@@ -2819,6 +2823,8 @@ void BrowserCommandController::UpdateSav
+@@ -2854,6 +2858,8 @@ void BrowserCommandController::UpdateSav
  
    const bool can_save_page = CanSavePage(browser_);
    command_updater_->UpdateCommandEnabled(IDC_SAVE_PAGE, can_save_page);
@@ -1037,9 +1037,9 @@
                         ? IDS_SHORTCUT_COMMAND_TOGGLE_VERTICAL_TABS
 --- a/chrome/browser/ui/browser_ui_prefs.cc
 +++ b/chrome/browser/ui/browser_ui_prefs.cc
-@@ -7,13 +7,16 @@
- #include <memory>
+@@ -8,7 +8,9 @@
  #include <string>
+ #include <utility>
  
 +#include "base/files/file_path.h"
  #include "base/numerics/safe_conversions.h"
@@ -1047,6 +1047,7 @@
  #include "build/branding_buildflags.h"
  #include "build/build_config.h"
  #include "chrome/browser/profiles/profile.h"
+@@ -16,6 +18,7 @@
  #include "chrome/browser/ui/ui_features.h"
  #include "chrome/browser/upgrade_detector/upgrade_detector.h"
  #include "chrome/common/buildflags.h"
@@ -1054,7 +1055,7 @@
  #include "chrome/common/pref_names.h"
  #include "components/helium_services/pref_names.h"
  #include "components/policy/core/common/policy_pref_names.h"
-@@ -143,6 +146,13 @@
+@@ -148,6 +151,13 @@ void RegisterBrowserUserPrefs(user_prefs
  
    registry->RegisterBooleanPref(prefs::kHeliumCommandBar, false);
  
@@ -1092,7 +1093,7 @@
                Item().is_separator()
 --- a/chrome/browser/ui/toolbar/app_menu_model.cc
 +++ b/chrome/browser/ui/toolbar/app_menu_model.cc
-@@ -694,6 +694,9 @@ SaveAndShareSubMenuModel::SaveAndShareSu
+@@ -704,6 +704,9 @@ SaveAndShareSubMenuModel::SaveAndShareSu
                                     features::IsRoundedIconsEnabled()
                                         ? kFileSaveIcon
                                         : kFileSaveChromeRefreshOldIcon);
@@ -1104,7 +1105,7 @@
        !install_item.empty()) {
 --- a/chrome/browser/ui/views/helium/command_bar_commands.cc
 +++ b/chrome/browser/ui/views/helium/command_bar_commands.cc
-@@ -111,6 +111,10 @@
+@@ -111,6 +111,10 @@ constexpr CommandBarCommand kCommands[]
       .label_id = IDS_HELIUM_COMMAND_BAR_CMD_SAVE_PAGE,
       .keywords = "download html",
       .icon = &kFileSaveIcon},
@@ -1209,7 +1210,7 @@
  }  // namespace settings
 --- a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
 +++ b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
-@@ -885,6 +885,8 @@
+@@ -914,6 +914,8 @@ void AddDownloadsStrings(content::WebUID
        {"downloadsPageTitle", IDS_SETTINGS_DOWNLOADS},
        {"downloadLocation", IDS_SETTINGS_DOWNLOAD_LOCATION},
        {"changeDownloadLocation", IDS_SETTINGS_CHANGE_DOWNLOAD_LOCATION},
@@ -1220,7 +1221,7 @@
         IDS_SETTINGS_OPEN_FILE_TYPES_AUTOMATICALLY},
 --- a/chrome/common/pref_names.h
 +++ b/chrome/common/pref_names.h
-@@ -658,6 +658,10 @@
+@@ -658,6 +658,10 @@ inline constexpr char kHeliumMinimalLoca
  // open the search overlay instead of the integrated address bar.
  inline constexpr char kHeliumCommandBar[] = "helium.browser.command_bar";
  
@@ -1233,7 +1234,7 @@
  inline constexpr char kHeliumShowProgressBar[] =
 --- a/chrome/browser/ui/views/helium/BUILD.gn
 +++ b/chrome/browser/ui/views/helium/BUILD.gn
-@@ -10,6 +10,8 @@
+@@ -10,6 +10,8 @@ source_set("command_bar") {
      "command_bar_commands.h",
      "command_bar_view.cc",
      "command_bar_view.h",
@@ -1244,9 +1245,9 @@
    public_deps = [ "//chrome/browser:browser_public_dependencies" ]
 --- a/chrome/browser/download/download_target_determiner.h
 +++ b/chrome/browser/download/download_target_determiner.h
-@@ -29,6 +29,19 @@
- class Profile;
- class DownloadPrefs;
+@@ -33,6 +33,19 @@ namespace supervised_user {
+ struct WebFilteringResult;
+ }  // namespace supervised_user
  
 +namespace helium {
 +
@@ -1279,7 +1280,7 @@
  #include "base/rand_util.h"
  #include "base/strings/string_util.h"
  #include "base/strings/stringprintf.h"
-@@ -101,6 +103,22 @@
+@@ -104,6 +106,22 @@ namespace {
  const base::FilePath::CharType kCrdownloadSuffix[] =
      FILE_PATH_LITERAL(".crdownload");
  
@@ -1302,7 +1303,7 @@
  // Condenses the results from HistoryService::GetVisibleVisitCountToHost() to a
  // single bool. A host is considered visited before if prior visible visits were
  // found in history and the first such visit was earlier than the most recent
-@@ -175,6 +193,22 @@
+@@ -178,6 +196,22 @@ std::wstring SanitizeDownloadFileName(st
  
  }  // namespace
  
@@ -1325,7 +1326,7 @@
  DownloadTargetDeterminerDelegate::~DownloadTargetDeterminerDelegate() = default;
  
  DownloadTargetDeterminer::DownloadTargetDeterminer(
-@@ -324,6 +358,15 @@
+@@ -379,6 +413,15 @@ DownloadTargetDeterminer::Result
      RecordDownloadPathGeneration(
          DownloadPathGenerationEvent::USE_EXISTING_VIRTUAL_PATH, false);
      containment_directory_ = virtual_path_.DirName();

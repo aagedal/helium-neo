@@ -1,6 +1,6 @@
 --- a/chrome/app/generated_resources.grd
 +++ b/chrome/app/generated_resources.grd
-@@ -21218,6 +21218,175 @@ Please help our engineers fix this probl
+@@ -21318,6 +21318,175 @@ Please help our engineers fix this probl
      <message name="IDS_OSCRYPTASYNC_AVAILABILITY_INFOBAR_BUTTON" desc="The text of the button to proceed with relaunching the entire browser to resolve keychain permission issues.">
        Relaunch
      </message>
@@ -178,7 +178,7 @@
  </grit>
 --- a/chrome/browser/ui/BUILD.gn
 +++ b/chrome/browser/ui/BUILD.gn
-@@ -507,6 +507,7 @@ if (!is_android) {
+@@ -509,6 +509,7 @@ if (!is_android) {
        "//chrome/browser/sessions",
        "//chrome/browser/ui/browser_window",
        "//chrome/browser/ui/send_tab_to_self",
@@ -188,7 +188,7 @@
        "//chrome/browser/ui/tabs:tab_strip",
 --- a/chrome/browser/ui/tabs/BUILD.gn
 +++ b/chrome/browser/ui/tabs/BUILD.gn
-@@ -102,6 +102,32 @@
+@@ -103,6 +103,32 @@ source_set("page_context_eligibility_hel
  }
  
  if (!is_android) {
@@ -221,7 +221,7 @@
    source_set("pane_settings") {
      sources = [
        "pane_settings.cc",
-@@ -117,6 +143,7 @@
+@@ -118,6 +144,7 @@ if (!is_android) {
        "//chrome/browser/sessions",
        "//components/embedder_support:user_agent",
        "//components/sessions",
@@ -229,10 +229,10 @@
      ]
    }
  
-@@ -286,9 +313,9 @@
-       "existing_base_sub_menu_model.h",
+@@ -294,9 +321,9 @@ if (!is_android) {
        "existing_tab_group_sub_menu_model.h",
        "existing_window_sub_menu_model.h",
+       "other_device_tabs_sub_menu_model.h",
 +      "pane_settings_menu_model.h",
        "recent_tabs_builder.h",
        "recent_tabs_sub_menu_model.h",
@@ -240,7 +240,7 @@
        "remote_tabs_menu_util.h",
        "split_tab_menu_model.h",
        "split_tab_mute_menu_model.h",
-@@ -337,6 +364,7 @@
+@@ -343,6 +370,7 @@ if (!is_android) {
      ]
  
      deps = [
@@ -248,7 +248,7 @@
        ":pane_settings",
        ":tab_group",
        ":tab_menu",
-@@ -563,6 +591,7 @@
+@@ -574,6 +602,7 @@ if (!is_android) {
      }
  
      deps = [
@@ -256,23 +256,24 @@
        ":pane_settings",
        ":tab_group",
        ":tab_model",
-@@ -1063,8 +1092,8 @@
+@@ -1082,9 +1111,9 @@ if (!is_android) {
    source_set("unit_tests") {
      testonly = true
      sources = [
-+      "inactive_window_mouse_event_controller_unittest.cc",
-       "pane_settings_unittest.cc",
--      "inactive_window_mouse_event_controller_unittest.cc",
+-      "pane_settings_unittest.cc",
+       "contextual_tasks_tab_sub_menu_model_unittest.cc",
+       "inactive_window_mouse_event_controller_unittest.cc",
++      "pane_settings_unittest.cc",
        "split_view_iph_controller_unittest.cc",
        "tab_group_deletion_dialog_controller_unittest.cc",
-       "tab_menu_model_unittest.cc",
-@@ -1085,8 +1114,8 @@
+       "tab_group_focus_iph_controller_unittest.cc",
+@@ -1106,8 +1135,8 @@ if (!is_android) {
      ]
  
      deps = [
-+      ":page_context_eligibility_helper_unit_tests",
-       ":pane_settings",
--      ":page_context_eligibility_helper_unit_tests",
+-      ":pane_settings",
+       ":page_context_eligibility_helper_unit_tests",
++      ":pane_settings",
        ":tab_enums",
        ":tab_group",
        ":tab_menu",
@@ -2722,18 +2723,18 @@
  }  // namespace tabs
 --- a/chrome/browser/BUILD.gn
 +++ b/chrome/browser/BUILD.gn
-@@ -3916,6 +3916,8 @@
-       ]
-     }
- 
+@@ -2966,6 +2966,8 @@ source_set("browser") {
+       "//url",
+     ]
+   } else {
 +    deps += [ "//chrome/browser/ui/tabs:page_change_monitor_impl" ]
 +
-     # Non-android deps for "ui" target.
-     deps += [
-       ":chrome_browser_interface_binders_webui_parts",
+     public_deps += [
+       "//chrome/browser/accessibility/phrase_segmentation",
+       "//chrome/browser/indigo/resources:indigo_strings",
 --- a/chrome/browser/ui/tabs/tab_features.cc
 +++ b/chrome/browser/ui/tabs/tab_features.cc
-@@ -162,6 +162,7 @@
+@@ -166,6 +166,7 @@
  #include "chrome/browser/ui/tabs/alert/tab_alert_controller.h"
  #include "chrome/browser/ui/tabs/back_to_opener/back_to_opener_controller.h"
  #include "chrome/browser/ui/tabs/inactive_window_mouse_event_controller.h"
@@ -2741,7 +2742,7 @@
  #include "chrome/browser/ui/tabs/page_context_eligibility_helper.h"
  #include "chrome/browser/ui/tabs/public/tab_dialog_manager.h"
  #include "chrome/browser/ui/tabs/saved_tab_groups/collaboration_messaging_page_action_controller.h"
-@@ -1296,6 +1297,7 @@ void TabFeatures::Init(TabInterface& tab
+@@ -1323,6 +1324,7 @@ void TabFeatures::Init(TabInterface& tab
            tab, tab, tab.GetContents());
  #endif
  
@@ -2749,7 +2750,7 @@
    webapps::PreRedirectionURLObserver::CreateForWebContents(tab.GetContents());
  
    if (search::IsInstantExtendedAPIEnabled()) {
-@@ -1968,6 +1970,7 @@ void TabFeatures::WillDiscardContents(ta
+@@ -2021,6 +2023,7 @@ void TabFeatures::WillDiscardContents(ta
            *tab, *tab, new_contents);
  #endif
  

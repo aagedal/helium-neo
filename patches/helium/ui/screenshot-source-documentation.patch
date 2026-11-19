@@ -1,6 +1,6 @@
 --- a/chrome/app/generated_resources.grd
 +++ b/chrome/app/generated_resources.grd
-@@ -14593,6 +14593,189 @@ Check your passwords anytime in <ph name
+@@ -14661,6 +14661,189 @@ Check your passwords anytime in <ph name
  
        <!-- Desktop Screenshots feature within the share hub; desktop-only. -->
        <if expr="not is_android">
@@ -602,7 +602,7 @@
  #include "third_party/skia/include/core/SkColor.h"
  #include "ui/base/cursor/cursor.h"
  #include "ui/compositor/layer_textured.h"
-@@ -103,6 +121,7 @@
+@@ -103,6 +121,7 @@ ScreenshotFlow::ScreenshotFlow(content::
  }
  
  ScreenshotFlow::~ScreenshotFlow() {
@@ -610,7 +610,7 @@
    RemoveUIOverlay();
  }
  
-@@ -188,6 +207,8 @@
+@@ -188,6 +207,8 @@ void ScreenshotFlow::RemoveUIOverlay() {
  
  void ScreenshotFlow::Start(ScreenshotCaptureCallback flow_callback) {
    flow_callback_ = std::move(flow_callback);
@@ -619,7 +619,7 @@
    CreateAndAddUIOverlay();
    RequestRepaint(gfx::Rect());
  }
-@@ -210,17 +231,257 @@
+@@ -210,17 +231,257 @@ void ScreenshotFlow::StartForRegionSelec
  void ScreenshotFlow::CaptureAndRunScreenshotCompleteCallback(
      ScreenshotCaptureResultCode result_code,
      gfx::Rect region) {
@@ -885,7 +885,7 @@
  }
  
  void ScreenshotFlow::CancelCapture() {
-@@ -230,6 +491,13 @@
+@@ -230,6 +491,13 @@ void ScreenshotFlow::CancelCapture() {
  
  void ScreenshotFlow::OnKeyEvent(ui::KeyEvent* event) {
    if (event->type() == ui::EventType::kKeyPressed &&
@@ -899,7 +899,7 @@
        event->key_code() == ui::VKEY_ESCAPE) {
      event->StopPropagation();
      CompleteCapture(ScreenshotCaptureResultCode::USER_ESCAPE_EXIT, gfx::Rect());
-@@ -289,20 +557,15 @@
+@@ -289,20 +557,15 @@ void ScreenshotFlow::OnMouseEvent(ui::Mo
        if ((capture_mode_ == CaptureMode::SELECTION_RECTANGLE ||
             capture_mode_ == CaptureMode::SELECTION_ELEMENT) &&
            is_dragging_) {
@@ -923,7 +923,7 @@
        break;
      default:
        break;
-@@ -310,21 +573,9 @@
+@@ -310,21 +573,9 @@ void ScreenshotFlow::OnMouseEvent(ui::Mo
  }
  
  void ScreenshotFlow::OnScrollEvent(ui::ScrollEvent* event) {
@@ -948,7 +948,7 @@
  }
  
  void ScreenshotFlow::CompleteCapture(ScreenshotCaptureResultCode result_code,
-@@ -340,17 +591,12 @@
+@@ -340,17 +591,12 @@ void ScreenshotFlow::CompleteCapture(Scr
  }
  
  void ScreenshotFlow::RunScreenshotCompleteCallback(
@@ -970,7 +970,7 @@
    std::move(flow_callback_).Run(result);
  }
  
-@@ -387,7 +633,18 @@
+@@ -387,7 +633,18 @@ void ScreenshotFlow::OnPaintLayer(const
    auto selection_rect = gfx::BoundingRect(drag_start_, drag_end_);
    // Draw border exclusively outside selected region.
    selection_rect.Inset(gfx::Insets::TLBR(-1, -1, 0, 0));
@@ -3412,7 +3412,7 @@
 +}  // namespace image_editor
 --- a/chrome/browser/prefs/browser_prefs.cc
 +++ b/chrome/browser/prefs/browser_prefs.cc
-@@ -1672,6 +1672,9 @@ void RegisterLocalState(PrefRegistrySimp
+@@ -1731,6 +1731,9 @@ void RegisterLocalState(PrefRegistrySimp
    registry->RegisterIntegerPref(
        prefs::kHeliumCrashReportingMode,
        static_cast<int>(helium::CrashReportingMode::kAsk));
@@ -3424,7 +3424,7 @@
    chrome_for_testing::RegisterPrefs(registry);
 --- a/chrome/browser/renderer_context_menu/BUILD.gn
 +++ b/chrome/browser/renderer_context_menu/BUILD.gn
-@@ -163,6 +163,7 @@ source_set("impl") {
+@@ -164,6 +164,7 @@ source_set("impl") {
        "//chrome/browser/ui/qrcode_generator",
        "//chrome/browser/ui/read_anything",
        "//chrome/browser/ui/send_tab_to_self",
@@ -3434,15 +3434,15 @@
        "//chrome/browser/ui/toasts/api:toasts",
 --- a/chrome/browser/renderer_context_menu/render_view_context_menu.cc
 +++ b/chrome/browser/renderer_context_menu/render_view_context_menu.cc
-@@ -138,6 +138,7 @@
- #include "chrome/browser/ui/read_anything/read_anything_side_panel_controller_utils.h"
+@@ -140,6 +140,7 @@
+ #include "chrome/browser/ui/read_anything/read_anything_entry_point_controller.h"
  #include "chrome/browser/ui/send_tab_to_self/send_tab_to_self_bubble.h"
  #include "chrome/browser/ui/send_tab_to_self/send_tab_to_self_sub_menu_model.h"
 +#include "chrome/browser/ui/sharing_hub/screenshot/screenshot_captured_bubble_controller.h"
  #include "chrome/browser/ui/tab_contents/core_tab_helper.h"
  #include "chrome/browser/ui/tabs/features.h"
  #include "chrome/browser/ui/tabs/page_context_eligibility_helper.h"
-@@ -1303,6 +1304,13 @@ void RenderViewContextMenu::InitMenu() {
+@@ -1313,6 +1314,13 @@ void RenderViewContextMenu::InitMenu() {
    const bool use_simplified_menu_for_text_selection =
        ShouldUseSimplifiedTextSelection();
  
@@ -3456,7 +3456,7 @@
    bool took_simplified_page_items_path = false;
    if (content_type_->SupportsGroup(ContextMenuContentType::ITEM_GROUP_PAGE)) {
      took_simplified_page_items_path = features::IsMenuSimplificationEnabled() &&
-@@ -1668,6 +1676,10 @@ std::u16string RenderViewContextMenu::Ge
+@@ -1671,6 +1679,10 @@ std::u16string RenderViewContextMenu::Ge
  }
  
  void RenderViewContextMenu::RecordUsedItem(int id) {
@@ -3467,7 +3467,7 @@
    // Log general ID.
  
    int enum_id =
-@@ -1784,6 +1796,9 @@ void RenderViewContextMenu::RecordUsedIt
+@@ -1787,6 +1799,9 @@ void RenderViewContextMenu::RecordUsedIt
  }
  
  void RenderViewContextMenu::RecordShownItem(int id, bool is_submenu) {
@@ -3477,7 +3477,7 @@
    // The "RenderViewContextMenu.Shown" histogram is not recorded for submenus.
    if (is_submenu) {
      return;
-@@ -3465,6 +3480,12 @@ bool RenderViewContextMenu::IsCommandIdE
+@@ -3509,6 +3524,12 @@ bool RenderViewContextMenu::IsCommandIdE
        enterprise_isolated_mode::IsolatedModeReplacesIncognito(GetProfile());
  
    switch (id) {
@@ -3490,7 +3490,7 @@
      case IDC_BACK:
        return embedder_web_contents_->GetController().CanGoBack();
  
-@@ -4080,6 +4101,14 @@ void RenderViewContextMenu::ExecuteComma
+@@ -4129,6 +4150,14 @@ void RenderViewContextMenu::ExecuteComma
        chrome::GoForward(embedder_web_contents_);
        break;
  
@@ -3600,7 +3600,7 @@
  }  // namespace sharing_hub
 --- a/chrome/browser/ui/accelerator_table.cc
 +++ b/chrome/browser/ui/accelerator_table.cc
-@@ -75,6 +75,8 @@ const AcceleratorMapping kAcceleratorMap
+@@ -75,6 +75,8 @@ constexpr AcceleratorMapping kAccelerato
      {ui::VKEY_R, ui::EF_SHIFT_DOWN | ui::EF_PLATFORM_ACCELERATOR,
       IDC_RELOAD_BYPASSING_CACHE},
      {ui::VKEY_S, ui::EF_PLATFORM_ACCELERATOR, IDC_CTRL_S_SHORTCUT},
@@ -3608,7 +3608,7 @@
 +     IDC_SHARING_HUB_SCREENSHOT},
      {ui::VKEY_9, ui::EF_PLATFORM_ACCELERATOR, IDC_SELECT_LAST_TAB},
      {ui::VKEY_NUMPAD9, ui::EF_PLATFORM_ACCELERATOR, IDC_SELECT_LAST_TAB},
- #if BUILDFLAG(IS_LINUX)
+     // Control modifier is rarely used on Mac, so we allow it only in several
 --- a/chrome/browser/ui/browser_shortcuts/browser_shortcut_metadata.cc
 +++ b/chrome/browser/ui/browser_shortcuts/browser_shortcut_metadata.cc
 @@ -195,7 +195,7 @@ std::optional<BrowserShortcutCommandLabe
@@ -7109,7 +7109,7 @@
  
 --- a/components/viz/service/display/direct_renderer.cc
 +++ b/components/viz/service/display/direct_renderer.cc
-@@ -643,7 +643,8 @@ void DirectRenderer::DrawRenderPassAndEx
+@@ -613,7 +613,8 @@ void DirectRenderer::DrawRenderPassAndEx
      // CopyOutputRequest - we need to adjust them to something that will be
      // compatible. Formats other than RGBA have this restriction.
      geometry.result_selection =
@@ -7246,7 +7246,7 @@
        base::BindOnce(
 --- a/content/browser/renderer_host/delegated_frame_host.h
 +++ b/content/browser/renderer_host/delegated_frame_host.h
-@@ -153,6 +153,11 @@ class CONTENT_EXPORT DelegatedFrameHost
+@@ -152,6 +152,11 @@ class CONTENT_EXPORT DelegatedFrameHost
        bool is_copy_request_secure,
        base::TimeDelta timeout,
        base::OnceCallback<void(const content::CopyFromSurfaceResult&)> callback);
@@ -7255,12 +7255,12 @@
 +      const gfx::Size& output_size,
 +      base::TimeDelta timeout,
 +      base::OnceCallback<void(const content::CopyFromSurfaceResult&)> callback);
-   void CopyFromCompositingSurfaceAsTexture(
-       const gfx::Rect& src_subrect,
-       const gfx::Size& output_size,
-@@ -255,6 +260,13 @@ class CONTENT_EXPORT DelegatedFrameHost
  
-   SkColor GetGutterColor() const;
+   bool CanCopyFromCompositingSurface() const;
+   const viz::FrameSinkId& frame_sink_id() const { return frame_sink_id_; }
+@@ -255,6 +260,13 @@ class CONTENT_EXPORT DelegatedFrameHost
+       const gfx::Size& output_size,
+       viz::CopyOutputRequest::CopyOutputRequestCallback callback);
  
 +  void CopyFromCompositingSurfaceWithHDRInternal(
 +      const gfx::Rect& src_subrect,
@@ -7274,7 +7274,7 @@
        const gfx::Size& output_size,
 --- a/content/browser/renderer_host/render_widget_host_view_aura.cc
 +++ b/content/browser/renderer_host/render_widget_host_view_aura.cc
-@@ -756,34 +756,33 @@ void RenderWidgetHostViewAura::HideImpl(
+@@ -771,34 +771,33 @@ void RenderWidgetHostViewAura::HideImpl(
    if (!host()->IsHidden()) {
      host()->WasHidden();
      aura::WindowTreeHost* host = window_->GetHost();
@@ -7333,7 +7333,7 @@
  #endif
    }
  
-@@ -1225,6 +1224,15 @@ void RenderWidgetHostViewAura::CopyFromS
+@@ -1258,6 +1257,15 @@ void RenderWidgetHostViewAura::CopyFromS
        is_copy_request_secure, timeout, std::move(callback));
  }
  
@@ -7351,7 +7351,7 @@
    if (!window_ || !window_->provider()) {
 --- a/content/browser/renderer_host/render_widget_host_view_aura.h
 +++ b/content/browser/renderer_host/render_widget_host_view_aura.h
-@@ -67,7 +67,7 @@ class Display;
+@@ -68,7 +68,7 @@ class Display;
  namespace gfx {
  class Point;
  class Rect;
@@ -7360,7 +7360,7 @@
  
  namespace input {
  class CursorManager;
-@@ -77,7 +77,7 @@ namespace ui {
+@@ -78,7 +78,7 @@ namespace ui {
  enum class DomCode : uint32_t;
  class InputMethod;
  class LocatedEvent;
@@ -7369,7 +7369,7 @@
  
  namespace wm {
  class ScopedTooltipDisabler;
-@@ -178,6 +178,12 @@ class CONTENT_EXPORT RenderWidgetHostVie
+@@ -181,6 +181,12 @@ class CONTENT_EXPORT RenderWidgetHostVie
        base::TimeDelta timeout,
        base::OnceCallback<void(const content::CopyFromSurfaceResult&)> callback)
        override;
@@ -7384,7 +7384,7 @@
    gfx::Rect GetBoundsInScreen() override;
 --- a/content/browser/renderer_host/render_widget_host_view_mac.h
 +++ b/content/browser/renderer_host/render_widget_host_view_mac.h
-@@ -50,7 +50,7 @@ class Compositor;
+@@ -51,7 +51,7 @@ class Compositor;
  enum class DomCode : uint32_t;
  class Layer;
  class ScopedPasswordInputEnabler;
@@ -7393,7 +7393,7 @@
  
  namespace input {
  class CursorManager;
-@@ -181,6 +181,12 @@ class CONTENT_EXPORT RenderWidgetHostVie
+@@ -182,6 +182,12 @@ class CONTENT_EXPORT RenderWidgetHostVie
        base::TimeDelta timeout,
        base::OnceCallback<void(const content::CopyFromSurfaceResult&)> callback)
        override;
@@ -7408,7 +7408,7 @@
                            const gfx::Rect& node_bounds_in_screen) override;
 --- a/content/browser/renderer_host/render_widget_host_view_mac.mm
 +++ b/content/browser/renderer_host/render_widget_host_view_mac.mm
-@@ -1216,6 +1216,16 @@ void RenderWidgetHostViewMac::CopyFromSu
+@@ -1222,6 +1222,16 @@ void RenderWidgetHostViewMac::CopyFromSu
        is_copy_request_secure, timeout, std::move(callback));
  }
  

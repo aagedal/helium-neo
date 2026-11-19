@@ -1,6 +1,6 @@
 --- a/chrome/browser/ui/views/tabs/common/tab_strip_collection_controller.cc
 +++ b/chrome/browser/ui/views/tabs/common/tab_strip_collection_controller.cc
-@@ -288,7 +288,10 @@ void TabStripCollectionController::Selec
+@@ -308,7 +308,10 @@ void TabStripCollectionController::Selec
    }
  
    std::optional<split_tabs::SplitTabId> split_id = tab_interface->GetSplit();
@@ -14,7 +14,7 @@
  
 --- a/chrome/browser/ui/views/tabs/common/tab_view.cc
 +++ b/chrome/browser/ui/views/tabs/common/tab_view.cc
-@@ -154,9 +154,15 @@ class TabStyleViewDelegateImpl : public
+@@ -156,9 +156,15 @@ class TabStyleViewDelegateImpl : public
  
    const views::View* GetView() const override { return tab_view_; }
  
@@ -31,7 +31,7 @@
      return tab_view_->GetSelectionState() ==
             TabStyle::TabSelectionState::kSelected;
    }
-@@ -823,12 +829,8 @@ void TabView::PaintChildren(const views:
+@@ -841,12 +847,8 @@ void TabView::PaintChildren(const views:
  }
  
  void TabView::OnPaint(gfx::Canvas* canvas) {
@@ -61,7 +61,7 @@
  #include "chrome/browser/ui/tabs/tab_strip_model.h"
  #include "chrome/browser/ui/views/tabs/common/tab_collection_node.h"
  #include "chrome/browser/ui/views/tabs/common/tab_group_line_view.h"
-@@ -198,3 +202,72 @@ INSTANTIATE_TEST_SUITE_P(All,
+@@ -229,3 +233,72 @@ INSTANTIATE_TEST_SUITE_P(All,
                           SplitTabViewParameterizedTest,
                           testing::Values(TabStripOrientation::kVertical,
                                           TabStripOrientation::kHorizontal));
@@ -136,7 +136,7 @@
 +                         testing::Values(2, 3, 4, 5, 6));
 --- a/chrome/browser/ui/views/tabs/common/split_tab_view.cc
 +++ b/chrome/browser/ui/views/tabs/common/split_tab_view.cc
-@@ -95,25 +95,6 @@ void SplitTabView::OnMouseMoved(const ui
+@@ -99,25 +99,6 @@ void SplitTabView::OnMouseMoved(const ui
  }
  
  void SplitTabView::OnPaint(gfx::Canvas* canvas) {
@@ -162,7 +162,7 @@
    views::View::OnPaint(canvas);
  }
  
-@@ -291,6 +272,41 @@ views::ProposedLayout SplitTabView::Calc
+@@ -314,6 +295,41 @@ views::ProposedLayout SplitTabView::Calc
            ? GetLayoutConstant(LayoutConstant::kVerticalTabPinnedBorderThickness)
            : 0;
  
@@ -204,17 +204,3 @@
    // Layout children in order. Children will have their preferred height and
    // fill available width. If unbounded or uncollapsed and both children fit on
    // one row they will share it, otherwise they will be stacked vertically.
-@@ -343,7 +359,12 @@ views::ProposedLayout SplitTabView::Calc
- 
- void SplitTabView::OnCollapseStateChanged(
-     tabs::VerticalTabStripCollapseState state) {
--  collapsed_ = state == tabs::VerticalTabStripCollapseState::kCollapsed;
-+  const bool collapsed =
-+      state == tabs::VerticalTabStripCollapseState::kCollapsed;
-+  if (collapsed_ != collapsed) {
-+    collapsed_ = collapsed;
-+    InvalidateLayout();
-+  }
- }
- 
- std::unique_ptr<views::View> SplitTabView::RemoveChildViewForReparenting(

@@ -1,6 +1,6 @@
 --- a/chrome/app/generated_resources.grd
 +++ b/chrome/app/generated_resources.grd
-@@ -21218,6 +21218,60 @@
+@@ -21318,6 +21318,60 @@ Please help our engineers fix this probl
      <message name="IDS_OSCRYPTASYNC_AVAILABILITY_INFOBAR_BUTTON" desc="The text of the button to proceed with relaunching the entire browser to resolve keychain permission issues.">
        Relaunch
      </message>
@@ -63,7 +63,7 @@
      </message>
 --- a/chrome/browser/actor/execution_engine_unittest.cc
 +++ b/chrome/browser/actor/execution_engine_unittest.cc
-@@ -159,6 +159,8 @@
+@@ -160,6 +160,8 @@ class FakeChromeRenderFrame : public chr
        RequestBitmapForContextNodeWithBoundsHintCallback callback) override {}
    void RequestBoundsHintForAllImages(
        RequestBoundsHintForAllImagesCallback callback) override {}
@@ -74,20 +74,7 @@
        const gfx::Size& image_max_size_pixels,
 --- a/chrome/browser/password_manager/actor_login/internal/actor_login_siwg_controller_unittest.cc
 +++ b/chrome/browser/password_manager/actor_login/internal/actor_login_siwg_controller_unittest.cc
-@@ -98,6 +98,10 @@
-               (RequestBoundsHintForAllImagesCallback),
-               (override));
-   MOCK_METHOD(void,
-+              RequestImageThumbnails,
-+              (RequestImageThumbnailsCallback),
-+              (override));
-+  MOCK_METHOD(void,
-               RequestImageForContextNode,
-               (int32_t,
-                const gfx::Size&,
---- a/chrome/browser/password_manager/password_change/password_change_page_stability_waiter_unittest.cc
-+++ b/chrome/browser/password_manager/password_change/password_change_page_stability_waiter_unittest.cc
-@@ -87,6 +87,10 @@
+@@ -99,6 +99,10 @@ class MockChromeRenderFrame : public chr
                (RequestBoundsHintForAllImagesCallback),
                (override));
    MOCK_METHOD(void,
@@ -100,7 +87,7 @@
                 const gfx::Size&,
 --- a/chrome/browser/ui/tabs/BUILD.gn
 +++ b/chrome/browser/ui/tabs/BUILD.gn
-@@ -102,6 +102,24 @@
+@@ -103,6 +103,24 @@ source_set("page_context_eligibility_hel
  }
  
  if (!is_android) {
@@ -127,7 +114,7 @@
      public_deps = [
 --- a/chrome/browser/ui/views/BUILD.gn
 +++ b/chrome/browser/ui/views/BUILD.gn
-@@ -1525,9 +1525,13 @@ source_set("find_bar_views") {
+@@ -1529,9 +1529,13 @@ source_set("find_bar_views") {
      "//chrome/browser/ui/browser_window",
      "//chrome/browser/ui/color:color_headers",
      "//chrome/browser/ui/find_bar",
@@ -218,7 +205,7 @@
  #include "ui/views/controls/separator.h"
  #include "ui/views/layout/box_layout.h"
  #include "ui/views/layout/box_layout_view.h"
-@@ -74,6 +95,26 @@
+@@ -74,6 +95,26 @@ void SetCommonButtonAttributes(views::Im
  constexpr int kBasePadding = 4;
  constexpr int kHorizontalGap = 6;
  
@@ -245,7 +232,7 @@
  }  // namespace
  
  DEFINE_CLASS_ELEMENT_IDENTIFIER_VALUE(FindBarView, kElementId);
-@@ -204,6 +245,12 @@
+@@ -204,6 +245,12 @@ FindBarView::FindBarView(FindBarHost* ho
            .SetInsideBorderInsets(
                gfx::Insets::VH(0, kBasePadding * 2))
            .AddChildren(
@@ -258,7 +245,7 @@
                views::Builder<views::Textfield>()
                    .CopyAddressTo(&find_text_)
                    .SetAccessibleName(
-@@ -235,6 +282,15 @@
+@@ -235,6 +282,15 @@ FindBarView::FindBarView(FindBarHost* ho
                        gfx::Insets(horizontal_margin +
                                    chrome_refresh_separator_vertical_margin)),
                views::Builder<views::ImageButton>()
@@ -274,7 +261,7 @@
                    .CopyAddressTo(&find_previous_button_)
                    .SetAccessibleName(
                        l10n_util::GetStringUTF16(IDS_ACCNAME_PREVIOUS))
-@@ -314,6 +370,14 @@
+@@ -314,6 +370,14 @@ FindBarView::FindBarView(FindBarHost* ho
            kColorFindBarButtonIconHovered));
  
    views::SetImageFromVectorIconWithColor(
@@ -289,7 +276,7 @@
        close_button_,
        features::IsRoundedIconsEnabled() ? kCloseSmallIcon
                                          : kCloseChromeRefreshOldIcon,
-@@ -356,9 +420,14 @@
+@@ -356,9 +420,14 @@ FindBarView::FindBarView(FindBarHost* ho
    SetCommonButtonAttributes(find_previous_button_);
    SetCommonButtonAttributes(find_next_button_);
    SetCommonButtonAttributes(close_button_);
@@ -305,7 +292,7 @@
  
  void FindBarView::SetHost(FindBarHost* host) {
    find_bar_host_ = host;
-@@ -369,6 +438,8 @@
+@@ -369,6 +438,8 @@ void FindBarView::SetHost(FindBarHost* h
  void FindBarView::SetFindTextAndSelectedRange(
      const std::u16string& find_text,
      const gfx::Range& selected_range) {
@@ -314,7 +301,7 @@
    find_text_->SetText(find_text);
    find_text_->SetSelectedRange(selected_range);
    last_searched_text_ = find_text;
-@@ -393,6 +464,9 @@
+@@ -393,6 +464,9 @@ std::u16string_view FindBarView::GetMatc
  void FindBarView::UpdateForResult(
      const find_in_page::FindNotificationDetails& result,
      const std::u16string& find_text) {
@@ -324,7 +311,7 @@
    bool have_valid_range =
        result.number_of_matches() != -1 && result.active_match_ordinal() != -1;
  
-@@ -438,7 +512,8 @@
+@@ -438,7 +512,8 @@ void FindBarView::ClearMatchCount() {
  
  bool FindBarView::ContainsFocus() const {
    return find_text_->HasFocus() || find_previous_button_->HasFocus() ||
@@ -334,7 +321,7 @@
  }
  
  ///////////////////////////////////////////////////////////////////////////////
-@@ -476,6 +551,26 @@
+@@ -476,6 +551,26 @@ gfx::Size FindBarView::CalculatePreferre
    return size;
  }
  
@@ -361,7 +348,7 @@
  ////////////////////////////////////////////////////////////////////////////////
  // FindBarView, DropdownBarHostDelegate implementation:
  
-@@ -503,6 +598,12 @@
+@@ -503,6 +598,12 @@ bool FindBarView::HandleKeyEvent(views::
      return true;  // Handled, we are done!
    }
  
@@ -374,7 +361,7 @@
    if (key_event.key_code() == ui::VKEY_RETURN &&
        key_event.type() == ui::EventType::kKeyPressed) {
      // Pressing Return/Enter starts the search (unless text box is empty).
-@@ -541,6 +642,9 @@
+@@ -541,6 +642,9 @@ bool FindBarView::HandleMouseEvent(views
  void FindBarView::OnAfterUserAction(views::Textfield* sender) {
    // The composition text wouldn't be what the user is really looking for.
    // We delay the search until the user commits the composition text.
@@ -384,7 +371,7 @@
    if (!sender->IsIMEComposing() && sender->GetText() != last_searched_text_) {
      Find(sender->GetText());
    }
-@@ -566,9 +670,39 @@
+@@ -566,9 +670,39 @@ bool FindBarView::OnBeforeCutOrCopy(view
  void FindBarView::OnBeforePaste(
      views::Textfield* sender,
      base::OnceCallback<void(std::optional<std::u16string>)> callback) {
@@ -427,7 +414,7 @@
  }
  
  std::unique_ptr<ui::ScopedClipboardWriter>
-@@ -621,6 +755,10 @@
+@@ -621,6 +755,10 @@ void FindBarView::FindNext(bool reverse)
    if (!find_bar_host_) {
      return;
    }
@@ -438,7 +425,7 @@
    if (!find_text_->GetText().empty()) {
      find_in_page::FindTabHelper* find_tab_helper =
          find_in_page::FindTabHelper::FromWebContents(
-@@ -641,10 +779,267 @@
+@@ -641,10 +779,267 @@ void FindBarView::EndFindSession() {
  }
  
  void FindBarView::UpdateMatchCountAppearance(bool no_match) {
@@ -857,7 +844,7 @@
      "media/cdm_registration.cc",
 --- a/chrome/common/chrome_render_frame.mojom
 +++ b/chrome/common/chrome_render_frame.mojom
-@@ -27,6 +27,19 @@
+@@ -28,6 +28,19 @@ enum ImageFormat {
  };
  
  // Messages sent from chrome to the render frame.
@@ -877,7 +864,7 @@
  interface ChromeRenderFrame {
    // Updates the window features of the main frame's render view.
    SetWindowFeatures(blink.mojom.WindowFeatures window_features);
-@@ -58,6 +71,12 @@
+@@ -59,6 +72,12 @@ interface ChromeRenderFrame {
    // image.
    RequestBoundsHintForAllImages() => (array<gfx.mojom.Rect> all_bounds);
  
@@ -916,7 +903,7 @@
  #include "third_party/blink/public/web/web_frame_content_dumper.h"
  #include "third_party/blink/public/web/web_local_frame.h"
  #include "third_party/blink/public/web/web_local_frame_client.h"
-@@ -617,6 +620,52 @@
+@@ -617,6 +620,52 @@ void ChromeRenderFrameObserver::RequestB
    std::move(callback).Run(all_bounds);
  }
  
@@ -971,7 +958,7 @@
  void ChromeRenderFrameObserver::FindImageElements(
 --- a/chrome/renderer/chrome_render_frame_observer.h
 +++ b/chrome/renderer/chrome_render_frame_observer.h
-@@ -124,6 +124,7 @@
+@@ -124,6 +124,7 @@ class ChromeRenderFrameObserver : public
        RequestBitmapForContextNodeWithBoundsHintCallback callback) override;
    void RequestBoundsHintForAllImages(
        RequestBoundsHintForAllImagesCallback callback) override;
@@ -2167,15 +2154,15 @@
 +#endif  // CHROME_COMMON_IMAGE_MATCH_THUMBNAIL_H_
 --- a/chrome/browser/BUILD.gn
 +++ b/chrome/browser/BUILD.gn
-@@ -3916,7 +3916,10 @@
-       ]
-     }
- 
+@@ -2969,7 +2969,10 @@ source_set("browser") {
+       "//url",
+     ]
+   } else {
 -    deps += [ "//chrome/browser/ui/tabs:page_change_monitor_impl" ]
 +    deps += [
 +      "//chrome/browser/ui/tabs:image_match_finder_impl",
 +      "//chrome/browser/ui/tabs:page_change_monitor_impl",
 +    ]
  
-     # Non-android deps for "ui" target.
-     deps += [
+     public_deps += [
+       "//chrome/browser/accessibility/phrase_segmentation",

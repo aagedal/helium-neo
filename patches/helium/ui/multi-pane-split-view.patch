@@ -739,14 +739,6 @@
    // See `SetTargetContentBounds()`.
 --- a/chrome/browser/ui/views/tabs/common/split_tab_view.cc
 +++ b/chrome/browser/ui/views/tabs/common/split_tab_view.cc
-@@ -4,6 +4,7 @@
- 
- #include "chrome/browser/ui/views/tabs/common/split_tab_view.h"
- 
-+#include <algorithm>
- #include <vector>
- 
- #include "chrome/browser/ui/color/chrome_color_id.h"
 @@ -148,31 +149,22 @@ gfx::Size SplitTabView::GetMinimumSize()
  
  std::optional<BrowserRootView::DropIndex> SplitTabView::GetLinkDropIndex(
