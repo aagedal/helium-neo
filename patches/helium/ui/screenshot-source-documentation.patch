@@ -7427,7 +7427,7 @@
    return gesture_provider_.get();
 --- a/content/public/browser/render_widget_host_view.h
 +++ b/content/public/browser/render_widget_host_view.h
-@@ -7,6 +7,7 @@
+@@ -7,9 +7,11 @@
  
  #include <optional>
  #include <string>
@@ -7435,7 +7435,11 @@
  
  #include "base/containers/flat_map.h"
  #include "base/containers/flat_set.h"
-@@ -255,6 +256,18 @@ class CONTENT_EXPORT RenderWidgetHostVie
++#include "base/functional/callback.h"
+ #include "base/types/expected.h"
+ #include "build/build_config.h"
+ #include "content/common/content_export.h"
+@@ -255,6 +257,18 @@ class CONTENT_EXPORT RenderWidgetHostVie
        base::TimeDelta timeout,
        base::OnceCallback<void(const CopyFromSurfaceResult&)> callback) = 0;
  
