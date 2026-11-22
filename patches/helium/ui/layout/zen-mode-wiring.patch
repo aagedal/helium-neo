@@ -73,6 +73,23 @@
    (*s_allowlist)[::embedder_support::kAlternateErrorPagesEnabled] =
 --- a/chrome/browser/resources/settings/appearance_page/appearance_layout_page.html.ts
 +++ b/chrome/browser/resources/settings/appearance_page/appearance_layout_page.html.ts
+@@ -32,8 +32,15 @@ export function getHtml(this: SettingsAp
+       pref-key="helium.browser.vertical_right_aligned"
+       label="$i18n{tabStripRightAlign}">
+   </settings-toggle-button>
++  <settings-toggle-button class="hr" disabled
++      ?hidden="${!this.showVerticalTabsExpandOnHoverSetting_() ||
++                 !this.isExpandOnHoverForcedByZenMode_()}"
++      pref-key="synthetic.settings.helium.forced_expand_on_hover"
++      label="$i18n{showVerticalTabsExpandOnHover}">
++  </settings-toggle-button>
+   <settings-toggle-button class="hr" id="showVerticalTabsExpandOnHover"
+-      ?hidden="${!this.showVerticalTabsExpandOnHoverSetting_()}"
++      ?hidden="${!this.showVerticalTabsExpandOnHoverSetting_() ||
++                 this.isExpandOnHoverForcedByZenMode_()}"
+       pref-key="vertical_tabs.expand_on_hover"
+       label="$i18n{showVerticalTabsExpandOnHover}">
+   </settings-toggle-button>
 @@ -46,6 +53,23 @@ export function getHtml(this: SettingsAp
        pref-key="helium.browser.minimal_location_bar"
        label="$i18n{minimalLocationBar}">
@@ -99,28 +116,45 @@
    // clang-format on
 --- a/chrome/browser/resources/settings/appearance_page/appearance_layout_page.ts
 +++ b/chrome/browser/resources/settings/appearance_page/appearance_layout_page.ts
-@@ -53,11 +53,13 @@ export class SettingsAppearanceLayoutPag
+@@ -53,11 +53,16 @@ export class SettingsAppearanceLayoutPag
      return {
        browserLayoutPref_: {type: Object},
        browserLayoutOptions_: {type: Array},
 +      zenModePref_: {type: Object},
++      zenModeSidebarPinnedPref_: {type: Object},
      };
    }
  
    protected accessor browserLayoutPref_: PrefObject<number>|undefined =
        undefined;
 +  protected accessor zenModePref_: PrefObject<boolean>|undefined = undefined;
++  protected accessor zenModeSidebarPinnedPref_: PrefObject<boolean>|undefined =
++      undefined;
  
    protected accessor browserLayoutOptions_: BrowserLayoutOption[] = [
      {
-@@ -88,6 +93,7 @@ export class SettingsAppearanceLayoutPag
+@@ -88,6 +93,8 @@ export class SettingsAppearanceLayoutPag
  
      this.mirrorPrefs({
        'helium.browser.layout': 'browserLayoutPref_',
 +      'helium.browser.zen_mode': 'zenModePref_',
++      'helium.browser.zen_mode_sidebar_pinned': 'zenModeSidebarPinnedPref_',
      });
    }
  
+@@ -99,6 +106,12 @@ export class SettingsAppearanceLayoutPag
+     return this.showVerticalSettings_();
+   }
+ 
++  // The unpinned zen mode sidebar is always expanded while it floats.
++  protected isExpandOnHoverForcedByZenMode_(): boolean {
++    return !!this.zenModePref_?.value &&
++        !this.zenModeSidebarPinnedPref_?.value;
++  }
++
+   protected showCenteredLocationBarSetting_(): boolean {
+     return this.browserLayoutPref_?.value !== BrowserLayout.COMPACT;
+   }
 --- a/chrome/browser/resources/settings/appearance_page/appearance_layout_page.css
 +++ b/chrome/browser/resources/settings/appearance_page/appearance_layout_page.css
 @@ -113,3 +113,11 @@
@@ -276,7 +310,7 @@
      {IDC_SHOW_BOOKMARK_MANAGER, ui::EF_COMMAND_DOWN | ui::EF_ALT_DOWN,
 --- a/chrome/app/generated_resources.grd
 +++ b/chrome/app/generated_resources.grd
-@@ -20020,6 +20020,9 @@ Please help our engineers fix this probl
+@@ -20032,6 +20032,9 @@ Please help our engineers fix this probl
        <message name="IDS_LINK_COPIED_TOAST_BODY" desc="Text on a toast notification that is shown when a link is successfully copied.">
          Link copied
        </message>
@@ -319,3 +353,18 @@
  </enum>
  
  <!-- LINT.ThenChange(/chrome/browser/ui/toasts/api/toast_id.h:ToastId) -->
+--- a/chrome/browser/resources/settings_shared/prefs2/pref_service.ts
++++ b/chrome/browser/resources/settings_shared/prefs2/pref_service.ts
+@@ -140,6 +140,12 @@ function getSyntheticPrefs(): chrome.set
+       value: 0,
+     },
+     {
++      // Shows expand on hover as on while Zen mode forces it.
++      key: 'synthetic.settings.helium.forced_expand_on_hover',
++      type: chrome.settingsPrivate.PrefType.BOOLEAN,
++      value: true,
++    },
++    {
+       key: 'synthetic.settings.omnibox_everywhere.show_shortcuts',
+       type: chrome.settingsPrivate.PrefType.BOOLEAN,
+       value: false,
