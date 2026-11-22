@@ -10,7 +10,7 @@
        <message name="IDS_HELIUM_PREVIEW_WORKSPACE_TITLE" desc="Default name for a desktop and mobile preview tab group.">Desktop + mobile</message>
 --- a/chrome/browser/ui/browser_commands.cc
 +++ b/chrome/browser/ui/browser_commands.cc
-@@ -757,15 +757,14 @@ void ReloadInternal(BrowserWindowInterfa
+@@ -751,15 +751,14 @@ void ReloadInternal(BrowserWindowInterfa
  
    std::vector<tabs::TabInterface*> tabs_to_reload;
  
@@ -103,7 +103,7 @@
  #include <memory>
  #include <utility>
  #include <vector>
-@@ -51,6 +52,7 @@
+@@ -50,6 +51,7 @@
  #include "chrome/browser/ui/startup/startup_tab.h"
  #include "chrome/browser/ui/startup/startup_tab_provider.h"
  #include "chrome/browser/ui/startup/startup_types.h"
@@ -111,32 +111,15 @@
  #include "chrome/browser/ui/tabs/shared_tab_group_version_upgrade_modal.h"
  #include "chrome/browser/ui/tabs/tab_enums.h"
  #include "chrome/browser/ui/tabs/tab_strip_model.h"
-@@ -69,6 +71,7 @@
- #include "components/sessions/core/serialized_navigation_entry.h"
- #include "components/sessions/core/serialized_user_agent_override.h"
+@@ -66,6 +68,7 @@
+ #include "components/helium_services/pref_names.h"
+ #include "components/prefs/pref_service.h"
  #include "components/signin/public/base/signin_switches.h"
 +#include "components/split_tabs/split_tab_id.h"
  #include "components/tab_groups/tab_group_id.h"
  #include "content/public/browser/child_process_security_policy.h"
  #include "content/public/browser/dom_storage_context.h"
-@@ -218,12 +221,13 @@ BrowserWindowInterface* GetExistingBrows
-   return workspace_browser;
- }
- 
--void AddDeferredPinnedStartupTab(BrowserWindowInterface* browser,
--                                 const GURL& url) {
-+content::WebContents* AddDeferredPinnedStartupTab(
-+    BrowserWindowInterface* browser,
-+    const GURL& url) {
-   sessions::SerializedNavigationEntry navigation;
-   navigation.set_index(0);
-   navigation.set_virtual_url(url);
--  chrome::AddRestoredTab(
-+  return chrome::AddRestoredTab(
-       browser, base::span_from_ref(navigation),
-       browser->tab_strip_model()->IndexOfFirstNonPinnedTab(),
-       /*selected_navigation=*/0, /*extension_app_id=*/std::string(),
-@@ -385,6 +389,20 @@ BrowserWindowInterface* StartupBrowserCr
+@@ -368,6 +371,20 @@ BrowserWindowInterface* StartupBrowserCr
    }
    CHECK(profile_);
  
@@ -157,16 +140,22 @@
    bool first_tab = true;
    bool process_headless_commands = headless::ShouldProcessHeadlessCommands();
    custom_handlers::ProtocolHandlerRegistry* registry =
-@@ -454,7 +472,7 @@ BrowserWindowInterface* StartupBrowserCr
+@@ -437,10 +454,10 @@ BrowserWindowInterface* StartupBrowserCr
      // Pinned tabs from the startup-tab provider do not pass through the session
      // restore tab loader, so add background ones without loading them.
      if (!first_tab && tab.type == StartupTab::Type::kPinned) {
--      AddDeferredPinnedStartupTab(browser, tab.url);
-+      restore_pane(tab, AddDeferredPinnedStartupTab(browser, tab.url));
+-      chrome::AddDeferredTab(
+-          browser, tab.url, /*title=*/std::u16string(),
+-          browser->tab_strip_model()->IndexOfFirstNonPinnedTab(),
+-          /*pin=*/true);
++      restore_pane(tab, chrome::AddDeferredTab(
++                            browser, tab.url, /*title=*/std::u16string(),
++                            browser->tab_strip_model()->IndexOfFirstNonPinnedTab(),
++                            /*pin=*/true));
        continue;
      }
  
-@@ -485,8 +503,25 @@ BrowserWindowInterface* StartupBrowserCr
+@@ -475,8 +492,25 @@ BrowserWindowInterface* StartupBrowserCr
  #endif  // BUILDFLAG(ENABLE_RLZ)
  
      Navigate(&params);
@@ -222,7 +211,7 @@
    bool is_untrusted_launch = false;
 --- a/chrome/browser/ui/tabs/BUILD.gn
 +++ b/chrome/browser/ui/tabs/BUILD.gn
-@@ -556,6 +556,7 @@ if (!is_android) {
+@@ -581,6 +581,7 @@ if (!is_android) {
      }
  
      deps = [
@@ -230,7 +219,7 @@
        ":tab_group",
        ":tab_model",
        ":tab_strip",
-@@ -867,6 +868,7 @@ if (!is_android) {
+@@ -998,6 +999,7 @@ if (!is_android) {
      ]
  
      deps = [
@@ -688,7 +677,7 @@
 +}
 --- a/chrome/browser/ui/views/frame/contents_container_view.cc
 +++ b/chrome/browser/ui/views/frame/contents_container_view.cc
-@@ -397,9 +397,8 @@ void ContentsContainerView::Layout(PassK
+@@ -395,9 +395,8 @@ void ContentsContainerView::Layout(PassK
    if (contents) {
      auto* settings = tabs::PaneSettings::FromWebContents(contents);
      if (settings && settings->mobile_enabled()) {
@@ -700,7 +689,7 @@
      }
    }
  
-@@ -607,8 +606,9 @@ views::ProposedLayout ContentsContainerV
+@@ -606,8 +605,9 @@ views::ProposedLayout ContentsContainerV
    if (auto* contents = contents_view_->web_contents()) {
      auto* settings = tabs::PaneSettings::FromWebContents(contents);
      if (settings && settings->mobile_enabled()) {
