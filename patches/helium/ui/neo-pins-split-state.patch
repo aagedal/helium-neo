@@ -1,9 +1,11 @@
 --- a/chrome/browser/ui/tabs/helium_pins_list.cc
 +++ b/chrome/browser/ui/tabs/helium_pins_list.cc
-@@ -5,9 +5,11 @@
+@@ -5,9 +5,13 @@
  #include "chrome/browser/ui/tabs/helium_pins_list.h"
  
  #include <algorithm>
++#include <array>
++#include <cmath>
 +#include <optional>
  #include <utility>
  
@@ -12,7 +14,7 @@
  
  namespace helium_pins {
  
-@@ -21,6 +23,24 @@ constexpr char kSplitKey[] = "split";
+@@ -21,6 +25,24 @@ constexpr char kSplitKey[] = "split";
  constexpr char kSplitLayoutKey[] = "split_layout";
  constexpr char kSplitRatioKey[] = "split_ratio";
  constexpr char kStackedLayout[] = "stacked";
@@ -37,7 +39,86 @@
  
  }  // namespace
  
-@@ -62,8 +82,16 @@ PinList PinList::FromPref(const base::Li
+@@ -28,6 +50,52 @@ std::string CreatePinId() {
+   return base::Uuid::GenerateRandomV4().AsLowercaseString();
+ }
+ 
++std::optional<LegacySplit> ReadLegacySplit(const base::DictValue& entry) {
++  const base::DictValue* const split = entry.FindDict(kSplitKey);
++  if (!split) {
++    return std::nullopt;
++  }
++
++  const std::string* const id = split->FindString("id");
++  const std::optional<int> layout = split->FindInt("layout");
++  const std::optional<int> arrangement = split->FindInt("arrangement");
++  const std::optional<double> ratio = split->FindDouble("ratio");
++  const base::ListValue* const weights = split->FindList("weights");
++  if (!id || id->empty() || !layout || *layout < 0 || *layout > 1 ||
++      !arrangement || *arrangement < 0 || *arrangement > 4 || !ratio ||
++      !std::isfinite(*ratio) || *ratio <= 0 || *ratio >= 1 || !weights ||
++      weights->size() != split_tabs::kLegacySplitPaneWeights) {
++    return std::nullopt;
++  }
++
++  std::array<double, split_tabs::kLegacySplitPaneWeights> sizes;
++  for (size_t i = 0; i < sizes.size(); ++i) {
++    if (!(*weights)[i].is_double() && !(*weights)[i].is_int()) {
++      return std::nullopt;
++    }
++    sizes[i] = (*weights)[i].GetDouble();
++    if (!std::isfinite(sizes[i]) || sizes[i] < 0.001 || sizes[i] > 1000) {
++      return std::nullopt;
++    }
++  }
++
++  LegacySplit result{
++      *id, split_tabs::SplitTabVisualData::FromArrangement(
++               static_cast<split_tabs::SplitTabLayout>(*layout), *ratio,
++               static_cast<split_tabs::SplitTabArrangement>(*arrangement),
++               sizes)};
++  // Newer versions also save the layout tree, which replaces the arrangement.
++  if (const std::string* const tree = split->FindString("tree")) {
++    if (std::optional<split_tabs::SplitLayoutTree> parsed =
++            split_tabs::SplitLayoutTree::Parse(*tree,
++                                               split_tabs::kMaxSplitPanes)) {
++      result.visual_data.set_tree(std::move(*parsed));
++    }
++  }
++
++  return result;
++}
++
+ PinList::PinList() = default;
+ PinList::PinList(const PinList&) = default;
+ PinList& PinList::operator=(const PinList&) = default;
+@@ -38,20 +106,25 @@ PinList::~PinList() = default;
+ // static
+ PinList PinList::FromPref(const base::ListValue& value) {
+   PinList list;
++  // The id that PinnedTabCodec gave the split of the last migrated pin.
++  std::string legacy_split;
+   for (const base::Value& entry : value) {
+     const base::DictValue* const dict = entry.GetIfDict();
+     const std::string* const url = dict ? dict->FindString(kUrlKey) : nullptr;
+     if (!url) {
++      legacy_split.clear();
+       continue;
+     }
+ 
+     const GURL pin_url(*url);
+     if (!pin_url.is_valid()) {
++      legacy_split.clear();
+       continue;
+     }
+ 
+     const std::string* const id = dict->FindString(kIdKey);
+     if (id && !id->empty() && list.Find(*id) == list.end()) {
++      legacy_split.clear();
+       list.pins_.push_back({*id, pin_url});
+       if (const std::string* const split = dict->FindString(kSplitKey)) {
+         Pin& pin = list.pins_.back();
+@@ -62,17 +135,64 @@ PinList PinList::FromPref(const base::Li
                  ? split_tabs::SplitTabLayout::kStacked
                  : split_tabs::SplitTabLayout::kSideBySide,
              dict->FindDouble(kSplitRatioKey).value_or(0.5));
@@ -54,15 +135,59 @@
        continue;
      }
  
-@@ -72,6 +100,7 @@ PinList PinList::FromPref(const base::Li
-     if (!std::ranges::contains(list.pins_, pin_url, &Pin::url)) {
-       const std::string id = CreatePinId();
-       list.pins_.push_back({id, pin_url});
-+      list.pins_.back().pane_settings = ReadPaneSettings(*dict);
-       list.migrated_ids_.insert(id);
+     // Lists written by PinnedTabCodec have no ids and repeat a URL for every
+     // window that pinned it, so all windows' pins are merged into one set.
+-    if (!std::ranges::contains(list.pins_, pin_url, &Pin::url)) {
+-      const std::string id = CreatePinId();
+-      list.pins_.push_back({id, pin_url});
+-      list.migrated_ids_.insert(id);
++    if (std::ranges::contains(list.pins_, pin_url, &Pin::url)) {
++      legacy_split.clear();
++      continue;
++    }
++
++    const std::string new_id = CreatePinId();
++    list.pins_.push_back({new_id, pin_url});
++    list.pins_.back().pane_settings = ReadPaneSettings(*dict);
++    list.migrated_ids_.insert(new_id);
++
++    // Neo saved each pane of a pinned split with the split's id and layout.
++    // The panes of a split follow each other, so consecutive pins of the same
++    // split become one split, named after its first pin.
++    std::optional<LegacySplit> split = ReadLegacySplit(*dict);
++    if (!split) {
++      legacy_split.clear();
++      continue;
++    }
++
++    Pin& pin = list.pins_.back();
++    if (split->id == legacy_split) {
++      const Pin& previous = list.pins_[list.pins_.size() - 2];
++      pin.split = previous.split;
++      pin.split_visual_data = previous.split_visual_data;
++    } else {
++      pin.split = new_id;
++      pin.split_visual_data = std::move(split->visual_data);
++      legacy_split = std::move(split->id);
++    }
++  }
++
++  // A split needs two panes. Others were pinned in other windows, whose
++  // repeated pins were merged above.
++  std::map<std::string, size_t> split_sizes;
++  for (const Pin& pin : list.pins_) {
++    if (!pin.split.empty()) {
++      ++split_sizes[pin.split];
++    }
++  }
++  for (Pin& pin : list.pins_) {
++    if (!pin.split.empty() && split_sizes[pin.split] < 2) {
++      pin.split.clear();
++      pin.split_visual_data = split_tabs::SplitTabVisualData();
      }
    }
-@@ -92,6 +121,18 @@ base::ListValue PinList::ToPref() const
+ 
+@@ -92,6 +212,18 @@ base::ListValue PinList::ToPref() const
        }
  
        entry.Set(kSplitRatioKey, pin.split_visual_data.split_ratio());
@@ -83,15 +208,16 @@
      value.Append(std::move(entry));
 --- a/chrome/browser/ui/tabs/helium_pins_list.h
 +++ b/chrome/browser/ui/tabs/helium_pins_list.h
-@@ -8,6 +8,7 @@
+@@ -7,6 +7,8 @@
+ 
  #include <stddef.h>
  
- #include <set>
 +#include <map>
++#include <optional>
+ #include <set>
  #include <string>
  #include <vector>
- 
-@@ -25,6 +26,9 @@ struct Pin {
+@@ -25,11 +27,25 @@ struct Pin {
    // The id of the first pin of the split that this pin is part of, if any.
    std::string split;
    split_tabs::SplitTabVisualData split_visual_data;
@@ -101,6 +227,22 @@
  };
  
  // Returns a new, unique pin id.
+ std::string CreatePinId();
+ 
++// A split as PinnedTabCodec saved it with each of its pins, in lists from
++// before pins had ids.
++struct LegacySplit {
++  std::string id;
++  split_tabs::SplitTabVisualData visual_data;
++};
++
++// Returns the split saved in an entry of a pinned tabs list without pin ids,
++// if it has a valid one.
++std::optional<LegacySplit> ReadLegacySplit(const base::DictValue& entry);
++
+ // The pins of a profile, in the order that all of its windows show them. Kept
+ // in the pinned tabs preference.
+ class PinList {
 --- a/chrome/browser/ui/tabs/helium_pins_service.cc
 +++ b/chrome/browser/ui/tabs/helium_pins_service.cc
 @@ -26,13 +26,16 @@
@@ -403,7 +545,52 @@
  #include "chrome/browser/ui/tabs/pane_settings.h"
  #include "chrome/browser/ui/tabs/tab_strip_model.h"
  #include "chrome/common/pref_names.h"
-@@ -206,7 +208,26 @@ StartupTabs PinnedTabCodec::ReadPinnedTa
+@@ -105,40 +107,10 @@ std::optional<StartupTab> DecodeTab(cons
+       }
+     }
+   }
+-  if (const auto* split = value.FindDict("split")) {
+-    const auto* id = split->FindString("id");
+-    const auto layout = split->FindInt("layout");
+-    const auto arrangement = split->FindInt("arrangement");
+-    const auto ratio = split->FindDouble("ratio");
+-    const auto* weights = split->FindList("weights");
+-    if (id && !id->empty() && layout && *layout >= 0 && *layout <= 1 &&
+-        arrangement && *arrangement >= 0 && *arrangement <= 4 && ratio &&
+-        std::isfinite(*ratio) && *ratio > 0 && *ratio < 1 && weights &&
+-        weights->size() == split_tabs::kLegacySplitPaneWeights) {
+-      std::array<double, split_tabs::kLegacySplitPaneWeights> sizes;
+-      for (size_t i = 0; i < sizes.size(); ++i) {
+-        if (!(*weights)[i].is_double() && !(*weights)[i].is_int()) {
+-          return tab;
+-        }
+-        sizes[i] = (*weights)[i].GetDouble();
+-        if (!std::isfinite(sizes[i]) || sizes[i] < 0.001 || sizes[i] > 1000) {
+-          return tab;
+-        }
+-      }
+-      auto visual = split_tabs::SplitTabVisualData::FromArrangement(
+-          static_cast<split_tabs::SplitTabLayout>(*layout), *ratio,
+-          static_cast<split_tabs::SplitTabArrangement>(*arrangement), sizes);
+-      // Newer versions also save the layout tree, which replaces the
+-      // arrangement.
+-      if (const auto* tree = split->FindString("tree")) {
+-        if (auto parsed = split_tabs::SplitLayoutTree::Parse(
+-                *tree, split_tabs::kMaxSplitPanes)) {
+-          visual.set_tree(std::move(*parsed));
+-        }
+-      }
+-      tab.pinned_split_id = *id;
+-      tab.pinned_split_visual_data = visual;
+-    }
++  if (std::optional<helium_pins::LegacySplit> split =
++          helium_pins::ReadLegacySplit(value)) {
++    tab.pinned_split_id = std::move(split->id);
++    tab.pinned_split_visual_data = std::move(split->visual_data);
+   }
+   return tab;
+ }
+@@ -206,7 +178,26 @@ StartupTabs PinnedTabCodec::ReadPinnedTa
  
    StartupTabs results;
  
