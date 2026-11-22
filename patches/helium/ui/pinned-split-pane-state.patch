@@ -140,22 +140,20 @@
    bool first_tab = true;
    bool process_headless_commands = headless::ShouldProcessHeadlessCommands();
    custom_handlers::ProtocolHandlerRegistry* registry =
-@@ -437,10 +454,10 @@ BrowserWindowInterface* StartupBrowserCr
+@@ -437,10 +454,11 @@ BrowserWindowInterface* StartupBrowserCr
      // Pinned tabs from the startup-tab provider do not pass through the session
      // restore tab loader, so add background ones without loading them.
      if (!first_tab && tab.type == StartupTab::Type::kPinned) {
 -      chrome::AddDeferredTab(
--          browser, tab.url, /*title=*/std::u16string(),
--          browser->tab_strip_model()->IndexOfFirstNonPinnedTab(),
--          /*pin=*/true);
-+      restore_pane(tab, chrome::AddDeferredTab(
-+                            browser, tab.url, /*title=*/std::u16string(),
-+                            browser->tab_strip_model()->IndexOfFirstNonPinnedTab(),
-+                            /*pin=*/true));
++      content::WebContents* const contents = chrome::AddDeferredTab(
+           browser, tab.url, /*title=*/std::u16string(),
+           browser->tab_strip_model()->IndexOfFirstNonPinnedTab(),
+           /*pin=*/true);
++      restore_pane(tab, contents);
        continue;
      }
  
-@@ -475,8 +492,25 @@ BrowserWindowInterface* StartupBrowserCr
+@@ -475,8 +493,25 @@ BrowserWindowInterface* StartupBrowserCr
  #endif  // BUILDFLAG(ENABLE_RLZ)
  
      Navigate(&params);

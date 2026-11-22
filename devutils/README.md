@@ -804,6 +804,30 @@ mobile/refresh setting round trips, and pinned split startup reconstruction with
 custom sizes and per-tab settings. Full regression execution still requires the
 unpruned Chromium test dependencies described above.
 
+### Persistent pins (Helium 0.22.2)
+
+Upstream's persistent pins replace `PinnedTabService`: `HeliumPinsService`
+keeps one pin list per profile in the pinned tabs preference and gives every
+normal window a copy of each pin. `helium/ui/neo-pins-split-state.patch` carries
+Neo's pinned split state into that list:
+
+- Pinned splits keep up to `split_tabs::kMaxSplitPanes` pins instead of two,
+  with the whole layout tree saved as `split_tree` next to upstream's
+  `split_layout` and `split_ratio`. Other windows reorder a split's panes with
+  `TabStripModel::SetSplitPanes()` to follow the pin order.
+- Each pin saves its pane settings (mobile preview, auto-refresh, jitter and
+  the page change monitor selector) as `pane_settings`.
+  `PaneSettings::RegisterChangedCallback()` reports changes, and the other
+  windows' copies take them on their next reconcile.
+- `PinnedTabCodec::ReadPinnedTabs()` reads pin lists with ids through
+  `helium_pins::PinList`, so pinned startup restores these splits and settings.
+  Lists saved by earlier Neo versions have no ids and are migrated by upstream;
+  their pane settings are kept, and their splits come back from the restored
+  session.
+
+The old `PinnedTabService` changes in `pinned-tab-startup.patch` are no longer
+reached, since its factory now builds `HeliumPinsService`.
+
 The modern macOS icon uses 1024-pixel transparent rasters of each layer inside
 Icon Composer. Apple's SVG importer fills stroked shapes and reduces their size,
 so the generator supplies `AppIcon.icon/Assets/*.png` from the matching SVGs. To
