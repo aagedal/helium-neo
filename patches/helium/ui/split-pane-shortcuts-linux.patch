@@ -1,0 +1,22 @@
+--- a/chrome/browser/ui/accelerator_table.cc
++++ b/chrome/browser/ui/accelerator_table.cc
+@@ -256,6 +256,19 @@
+     {ui::VKEY_PRIOR, ui::EF_CONTROL_DOWN | ui::EF_SHIFT_DOWN,
+      IDC_MOVE_TAB_PREVIOUS},
+     {ui::VKEY_N, ui::EF_SHIFT_DOWN | ui::EF_ALT_DOWN, IDC_NEW_SPLIT_TAB},
++    {ui::VKEY_LEFT, ui::EF_SHIFT_DOWN | ui::EF_ALT_DOWN,
++     IDC_HELIUM_FOCUS_SPLIT_PANE_LEFT},
++    {ui::VKEY_RIGHT, ui::EF_SHIFT_DOWN | ui::EF_ALT_DOWN,
++     IDC_HELIUM_FOCUS_SPLIT_PANE_RIGHT},
++    {ui::VKEY_UP, ui::EF_SHIFT_DOWN | ui::EF_ALT_DOWN,
++     IDC_HELIUM_FOCUS_SPLIT_PANE_UP},
++    {ui::VKEY_DOWN, ui::EF_SHIFT_DOWN | ui::EF_ALT_DOWN,
++     IDC_HELIUM_FOCUS_SPLIT_PANE_DOWN},
++#if BUILDFLAG(IS_LINUX)
++    // Windows reserves Ctrl+Alt for AltGr.
++    {ui::VKEY_N, ui::EF_CONTROL_DOWN | ui::EF_SHIFT_DOWN | ui::EF_ALT_DOWN,
++     IDC_HELIUM_NEW_SPLIT_PANE_ON_RIGHT},
++#endif
+ };
+ #endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_WIN)
+ 
