@@ -5,6 +5,7 @@ Download **Helium-Neo-0.22.2.1-macOS-arm64-signed.dmg**, open it, and drag **Hel
 **New in Neo**
 
 - Pinned splits work with upstream's persistent pins. A pinned split keeps all of its panes (up to 16) and its layout, and each pinned pane keeps its settings, such as mobile preview, auto-refresh and page monitoring. Changes to a pinned pane's settings carry over to its copies in other windows.
+- Pinned splits from earlier Neo versions are kept when your pins move to the new shared set.
 
 **From upstream Helium**
 
