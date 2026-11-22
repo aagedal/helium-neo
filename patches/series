@@ -246,6 +246,14 @@ helium/core/ridiculous-google-compat-exceptions.patch
 helium/core/disable-password-manager.patch
 helium/core/web-push-service.patch
 helium/core/ui-density-prefs.patch
+helium/core/pins/pin-state.patch
+helium/core/pins/pin-sync.patch
+helium/core/pins/sync-splits.patch
+helium/core/pins/sync-drags.patch
+helium/core/pins/hibernate-on-close.patch
+helium/core/pins/pinned-url.patch
+helium/core/pins/open-links-outside.patch
+helium/core/pins/migrate-legacy-pins.patch
 
 helium/settings/settings-page-icons.patch
 helium/settings/move-search-suggest.patch
@@ -368,6 +376,7 @@ helium/ui/layout/zen-mode-wiring.patch
 helium/ui/layout/zen-caption-buttons.patch
 helium/ui/layout/zen-mode.patch
 helium/ui/layout/min-window-width.patch
+helium/ui/pins-ui.patch
 
 helium/ui/generate-standard-qr-codes.patch
 helium/ui/pdf-viewer.patch
@@ -439,3 +448,4 @@ helium/ui/split-pane-mover-windows.patch
 helium/ui/split-mute-menu-sites.patch
 helium/ui/save-image-with-context.patch
 helium/ui/neo-browser-public-dependencies.patch
+helium/ui/neo-pins-split-state.patch

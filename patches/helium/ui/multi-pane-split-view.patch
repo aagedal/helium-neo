@@ -108,15 +108,7 @@
        SplitTabLayout::kSideBySide) {
 --- a/chrome/browser/ui/tabs/tab_menu_model.cc
 +++ b/chrome/browser/ui/tabs/tab_menu_model.cc
-@@ -4,6 +4,7 @@
- 
- #include "chrome/browser/ui/tabs/tab_menu_model.h"
- 
-+#include <algorithm>
- #include <memory>
- #include <optional>
- 
-@@ -57,6 +58,7 @@
+@@ -57,6 +57,7 @@
  #include "components/split_tabs/split_tab_visual_data.h"
  #include "components/tabs/public/split_tab_data.h"
  #include "components/tabs/public/tab_context_menu_command.h"
@@ -124,7 +116,7 @@
  #include "components/tabs/public/tab_group.h"
  #include "components/tabs/public/tab_interface.h"
  #include "components/vector_icons/vector_icons.h"
-@@ -350,7 +352,12 @@ void TabMenuModel::Build(int index) {
+@@ -350,7 +351,12 @@ void TabMenuModel::Build(int index) {
                                               : kSplitSceneOldIcon,
                                           ui::kColorMenuIcon, kTabMenuIconSize));
        const int swap_with_split_index = GetItemCount() - 1;
@@ -138,7 +130,7 @@
        SetElementIdentifierAt(swap_with_split_index, kSwapSplitTabsMenuItem);
      } else {
        if (tabs::IsSplitViewHorizontalDirectAccessEnabledForTab()) {
-@@ -390,7 +397,11 @@ void TabMenuModel::Build(int index) {
+@@ -390,7 +396,11 @@ void TabMenuModel::Build(int index) {
                  ui::kColorMenuIcon, kTabMenuIconSize));
        }
        const int add_to_split_index = GetItemCount() - 1;

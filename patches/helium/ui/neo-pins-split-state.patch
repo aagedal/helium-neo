@@ -1,0 +1,620 @@
+--- a/chrome/browser/ui/tabs/helium_pins_list.cc
++++ b/chrome/browser/ui/tabs/helium_pins_list.cc
+@@ -5,9 +5,13 @@
+ #include "chrome/browser/ui/tabs/helium_pins_list.h"
+ 
+ #include <algorithm>
++#include <array>
++#include <cmath>
++#include <optional>
+ #include <utility>
+ 
+ #include "base/uuid.h"
++#include "components/split_tabs/split_layout_tree.h"
+ 
+ namespace helium_pins {
+ 
+@@ -21,6 +25,24 @@ constexpr char kSplitKey[] = "split";
+ constexpr char kSplitLayoutKey[] = "split_layout";
+ constexpr char kSplitRatioKey[] = "split_ratio";
+ constexpr char kStackedLayout[] = "stacked";
++// Neo saves the whole layout of splits with more than two panes, and the
++// settings of each pane.
++constexpr char kSplitTreeKey[] = "split_tree";
++constexpr char kPaneSettingsKey[] = "pane_settings";
++
++std::map<std::string, std::string> ReadPaneSettings(
++    const base::DictValue& dict) {
++  std::map<std::string, std::string> settings;
++  if (const base::DictValue* const values = dict.FindDict(kPaneSettingsKey)) {
++    for (const auto [key, value] : *values) {
++      if (value.is_string()) {
++        settings[key] = value.GetString();
++      }
++    }
++  }
++
++  return settings;
++}
+ 
+ }  // namespace
+ 
+@@ -28,6 +50,52 @@ std::string CreatePinId() {
+   return base::Uuid::GenerateRandomV4().AsLowercaseString();
+ }
+ 
++std::optional<LegacySplit> ReadLegacySplit(const base::DictValue& entry) {
++  const base::DictValue* const split = entry.FindDict(kSplitKey);
++  if (!split) {
++    return std::nullopt;
++  }
++
++  const std::string* const id = split->FindString("id");
++  const std::optional<int> layout = split->FindInt("layout");
++  const std::optional<int> arrangement = split->FindInt("arrangement");
++  const std::optional<double> ratio = split->FindDouble("ratio");
++  const base::ListValue* const weights = split->FindList("weights");
++  if (!id || id->empty() || !layout || *layout < 0 || *layout > 1 ||
++      !arrangement || *arrangement < 0 || *arrangement > 4 || !ratio ||
++      !std::isfinite(*ratio) || *ratio <= 0 || *ratio >= 1 || !weights ||
++      weights->size() != split_tabs::kLegacySplitPaneWeights) {
++    return std::nullopt;
++  }
++
++  std::array<double, split_tabs::kLegacySplitPaneWeights> sizes;
++  for (size_t i = 0; i < sizes.size(); ++i) {
++    if (!(*weights)[i].is_double() && !(*weights)[i].is_int()) {
++      return std::nullopt;
++    }
++    sizes[i] = (*weights)[i].GetDouble();
++    if (!std::isfinite(sizes[i]) || sizes[i] < 0.001 || sizes[i] > 1000) {
++      return std::nullopt;
++    }
++  }
++
++  LegacySplit result{
++      *id, split_tabs::SplitTabVisualData::FromArrangement(
++               static_cast<split_tabs::SplitTabLayout>(*layout), *ratio,
++               static_cast<split_tabs::SplitTabArrangement>(*arrangement),
++               sizes)};
++  // Newer versions also save the layout tree, which replaces the arrangement.
++  if (const std::string* const tree = split->FindString("tree")) {
++    if (std::optional<split_tabs::SplitLayoutTree> parsed =
++            split_tabs::SplitLayoutTree::Parse(*tree,
++                                               split_tabs::kMaxSplitPanes)) {
++      result.visual_data.set_tree(std::move(*parsed));
++    }
++  }
++
++  return result;
++}
++
+ PinList::PinList() = default;
+ PinList::PinList(const PinList&) = default;
+ PinList& PinList::operator=(const PinList&) = default;
+@@ -38,20 +106,25 @@ PinList::~PinList() = default;
+ // static
+ PinList PinList::FromPref(const base::ListValue& value) {
+   PinList list;
++  // The id that PinnedTabCodec gave the split of the last migrated pin.
++  std::string legacy_split;
+   for (const base::Value& entry : value) {
+     const base::DictValue* const dict = entry.GetIfDict();
+     const std::string* const url = dict ? dict->FindString(kUrlKey) : nullptr;
+     if (!url) {
++      legacy_split.clear();
+       continue;
+     }
+ 
+     const GURL pin_url(*url);
+     if (!pin_url.is_valid()) {
++      legacy_split.clear();
+       continue;
+     }
+ 
+     const std::string* const id = dict->FindString(kIdKey);
+     if (id && !id->empty() && list.Find(*id) == list.end()) {
++      legacy_split.clear();
+       list.pins_.push_back({*id, pin_url});
+       if (const std::string* const split = dict->FindString(kSplitKey)) {
+         Pin& pin = list.pins_.back();
+@@ -62,17 +135,64 @@ PinList PinList::FromPref(const base::Li
+                 ? split_tabs::SplitTabLayout::kStacked
+                 : split_tabs::SplitTabLayout::kSideBySide,
+             dict->FindDouble(kSplitRatioKey).value_or(0.5));
++        if (const std::string* const tree = dict->FindString(kSplitTreeKey)) {
++          if (std::optional<split_tabs::SplitLayoutTree> parsed =
++                  split_tabs::SplitLayoutTree::Parse(
++                      *tree, split_tabs::kMaxSplitPanes)) {
++            pin.split_visual_data.set_tree(std::move(*parsed));
++          }
++        }
+       }
+ 
++      list.pins_.back().pane_settings = ReadPaneSettings(*dict);
+       continue;
+     }
+ 
+     // Lists written by PinnedTabCodec have no ids and repeat a URL for every
+     // window that pinned it, so all windows' pins are merged into one set.
+-    if (!std::ranges::contains(list.pins_, pin_url, &Pin::url)) {
+-      const std::string id = CreatePinId();
+-      list.pins_.push_back({id, pin_url});
+-      list.migrated_ids_.insert(id);
++    if (std::ranges::contains(list.pins_, pin_url, &Pin::url)) {
++      legacy_split.clear();
++      continue;
++    }
++
++    const std::string new_id = CreatePinId();
++    list.pins_.push_back({new_id, pin_url});
++    list.pins_.back().pane_settings = ReadPaneSettings(*dict);
++    list.migrated_ids_.insert(new_id);
++
++    // Neo saved each pane of a pinned split with the split's id and layout.
++    // The panes of a split follow each other, so consecutive pins of the same
++    // split become one split, named after its first pin.
++    std::optional<LegacySplit> split = ReadLegacySplit(*dict);
++    if (!split) {
++      legacy_split.clear();
++      continue;
++    }
++
++    Pin& pin = list.pins_.back();
++    if (split->id == legacy_split) {
++      const Pin& previous = list.pins_[list.pins_.size() - 2];
++      pin.split = previous.split;
++      pin.split_visual_data = previous.split_visual_data;
++    } else {
++      pin.split = new_id;
++      pin.split_visual_data = std::move(split->visual_data);
++      legacy_split = std::move(split->id);
++    }
++  }
++
++  // A split needs two panes. Others were pinned in other windows, whose
++  // repeated pins were merged above.
++  std::map<std::string, size_t> split_sizes;
++  for (const Pin& pin : list.pins_) {
++    if (!pin.split.empty()) {
++      ++split_sizes[pin.split];
++    }
++  }
++  for (Pin& pin : list.pins_) {
++    if (!pin.split.empty() && split_sizes[pin.split] < 2) {
++      pin.split.clear();
++      pin.split_visual_data = split_tabs::SplitTabVisualData();
+     }
+   }
+ 
+@@ -92,6 +212,18 @@ base::ListValue PinList::ToPref() const
+       }
+ 
+       entry.Set(kSplitRatioKey, pin.split_visual_data.split_ratio());
++      if (const std::string tree = pin.split_visual_data.SerializedTree();
++          !tree.empty()) {
++        entry.Set(kSplitTreeKey, tree);
++      }
++    }
++
++    if (!pin.pane_settings.empty()) {
++      base::DictValue settings;
++      for (const auto& [key, value] : pin.pane_settings) {
++        settings.Set(key, value);
++      }
++      entry.Set(kPaneSettingsKey, std::move(settings));
+     }
+ 
+     value.Append(std::move(entry));
+--- a/chrome/browser/ui/tabs/helium_pins_list.h
++++ b/chrome/browser/ui/tabs/helium_pins_list.h
+@@ -7,6 +7,8 @@
+ 
+ #include <stddef.h>
+ 
++#include <map>
++#include <optional>
+ #include <set>
+ #include <string>
+ #include <vector>
+@@ -25,11 +27,25 @@ struct Pin {
+   // The id of the first pin of the split that this pin is part of, if any.
+   std::string split;
+   split_tabs::SplitTabVisualData split_visual_data;
++
++  // The settings of the pin's pane, as tabs::PaneSettings saves them.
++  std::map<std::string, std::string> pane_settings;
+ };
+ 
+ // Returns a new, unique pin id.
+ std::string CreatePinId();
+ 
++// A split as PinnedTabCodec saved it with each of its pins, in lists from
++// before pins had ids.
++struct LegacySplit {
++  std::string id;
++  split_tabs::SplitTabVisualData visual_data;
++};
++
++// Returns the split saved in an entry of a pinned tabs list without pin ids,
++// if it has a valid one.
++std::optional<LegacySplit> ReadLegacySplit(const base::DictValue& entry);
++
+ // The pins of a profile, in the order that all of its windows show them. Kept
+ // in the pinned tabs preference.
+ class PinList {
+--- a/chrome/browser/ui/tabs/helium_pins_service.cc
++++ b/chrome/browser/ui/tabs/helium_pins_service.cc
+@@ -26,13 +26,16 @@
+ #include "chrome/browser/ui/tabs/helium_pins_list.h"
+ #include "chrome/browser/ui/tabs/helium_pins_tab_controller.h"
+ #include "chrome/browser/ui/tabs/helium_pins_util.h"
++#include "chrome/browser/ui/tabs/pane_settings.h"
+ #include "chrome/browser/ui/tabs/tab_strip_model.h"
+ #include "chrome/browser/ui/tabs/tab_strip_model_delegate.h"
+ #include "chrome/common/pref_names.h"
+ #include "components/history/core/browser/history_service.h"
+ #include "components/history/core/browser/history_types.h"
+ #include "components/prefs/pref_service.h"
++#include "components/split_tabs/split_layout_tree.h"
+ #include "components/split_tabs/split_tab_id.h"
++#include "components/split_tabs/split_tab_visual_data.h"
+ #include "components/tabs/public/split_tab_data.h"
+ #include "components/tabs/public/tab_interface.h"
+ #include "content/public/browser/invalidate_type.h"
+@@ -205,6 +208,10 @@ HeliumPinsService::HeliumPinsService(Pro
+     return true;
+   });
+   browser_collection_observation_.Observe(browsers);
++
++  pane_settings_subscription_ = tabs::PaneSettings::RegisterChangedCallback(
++      base::BindRepeating(&HeliumPinsService::OnPaneSettingsChanged,
++                          base::Unretained(this)));
+ }
+ 
+ HeliumPinsService::~HeliumPinsService() = default;
+@@ -223,6 +230,7 @@ void HeliumPinsService::Shutdown() {
+   // The profile's remaining windows are destroyed after this, which must not
+   // change the pin list.
+   browser_collection_observation_.Reset();
++  pane_settings_subscription_ = {};
+   TabStripModelObserver::StopObservingAll(this);
+   history_tasks_.TryCancelAll();
+   weak_factory_.InvalidateWeakPtrs();
+@@ -727,7 +735,9 @@ std::string HeliumPinsService::InsertNew
+     BrowserWindowInterface* browser,
+     HeliumPinsTabController* controller) {
+   tabs::TabInterface* const tab = &controller->tab();
+-  const Pin pin{CreatePinId(), GetNewPinUrl(tab->GetContents())};
++  Pin pin{CreatePinId(), GetNewPinUrl(tab->GetContents())};
++  tabs::PaneSettings::PopulateExtraData(tab->GetContents(),
++                                        &pin.pane_settings);
+   pins_.insert(pins_.begin() + GetNewPinPosition(browser, tab), pin);
+   controller->SetPin(pin.id, pin.url);
+ 
+@@ -929,8 +939,18 @@ void HeliumPinsService::Reconcile(Browse
+       }
+ 
+       // The tabs inside the split are in the order of their pins, too.
+-      if (split_tabs.front() != tab) {
++      std::vector<tabs::TabInterface*> ordered = split_tabs;
++      std::ranges::stable_sort(ordered, {}, [this](tabs::TabInterface* member) {
++        return pins_.Find(HeliumPinsTabController::From(member)->pin_id()) -
++               pins_.begin();
++      });
++      if (ordered.size() == 2 && ordered != split_tabs) {
+         model->ReverseTabsInSplit(*split);
++      } else if (ordered != split_tabs) {
++        model->SetSplitPanes(
++            *split, ordered,
++            model->GetSplitData(*split)->visual_data()->GetTree(
++                ordered.size()));
+       }
+ 
+       next_index += split_tabs.size();
+@@ -945,6 +965,7 @@ void HeliumPinsService::Reconcile(Browse
+   }
+ 
+   ReconcileSplits(browser);
++  ReconcilePaneSettings(browser);
+ 
+   if (pins_changed) {
+     SavePins();
+@@ -979,13 +1000,11 @@ void HeliumPinsService::RemoveStaleSplit
+       continue;
+     }
+ 
+-    const split_tabs::SplitTabVisualData& visual_data = pin->split_visual_data;
+-    if (data->visual_data()->split_layout() != visual_data.split_layout()) {
+-      model->UpdateSplitLayout(split_id, visual_data.split_layout());
+-    }
+-
+-    if (data->visual_data()->split_ratio() != visual_data.split_ratio()) {
+-      model->UpdateSplitRatio(split_id, visual_data.split_ratio());
++    // Neo's layout trees hold the axis and sizes of every pane.
++    const split_tabs::SplitLayoutTree tree =
++        pin->split_visual_data.GetTree(members.size());
++    if (data->visual_data()->GetTree(members.size()) != tree) {
++      model->UpdateSplitLayoutTree(split_id, tree);
+     }
+   }
+ }
+@@ -1027,31 +1046,86 @@ void HeliumPinsService::ReconcileSplits(
+     pin_tabs[controller->pin_id()] = &controller->tab();
+   }
+ 
+-  // Split the pins that are split in the pin list.
+-  for (size_t i = 0; i + 1 < pins_.size(); ++i) {
++  // Split the pins that are split in the pin list. Neo's splits can have up to
++  // split_tabs::kMaxSplitPanes pins.
++  for (size_t i = 0; i < pins_.size(); ++i) {
+     const Pin& first = pins_[i];
+-    const Pin& second = pins_[i + 1];
+-    if (first.split != first.id || second.split != first.id) {
++    if (first.split != first.id) {
+       continue;
+     }
+ 
+-    tabs::TabInterface* const first_tab =
+-        base::FindPtrOrNull(pin_tabs, first.id);
+-    tabs::TabInterface* const second_tab =
+-        base::FindPtrOrNull(pin_tabs, second.id);
+-    if (!first_tab || !second_tab || first_tab->IsSplit() ||
+-        second_tab->IsSplit()) {
++    std::vector<tabs::TabInterface*> members;
++    for (size_t j = i; j < pins_.size() && pins_[j].split == first.id; ++j) {
++      members.push_back(base::FindPtrOrNull(pin_tabs, pins_[j].id));
++    }
++
++    if (members.size() < 2 || members.size() > split_tabs::kMaxSplitPanes ||
++        std::ranges::any_of(members, [](tabs::TabInterface* member) {
++          return !member || member->IsSplit();
++        })) {
+       continue;
+     }
+ 
+-    std::vector<int> indices = {model->GetIndexOfTab(first_tab),
+-                                model->GetIndexOfTab(second_tab)};
++    std::vector<int> indices;
++    for (tabs::TabInterface* member : members) {
++      indices.push_back(model->GetIndexOfTab(member));
++    }
+     std::ranges::sort(indices);
+     model->RestoreSplit(split_tabs::SplitTabId::GenerateNew(), indices,
+                         first.split_visual_data);
+   }
+ }
+ 
++void HeliumPinsService::ReconcilePaneSettings(BrowserWindowInterface* browser) {
++  for (HeliumPinsTabController* controller : GetPinnedTabControllers(browser)) {
++    const auto it = pins_.Find(controller->pin_id());
++    if (it == pins_.end() || it->pane_settings.empty()) {
++      continue;
++    }
++
++    content::WebContents* const contents = controller->tab().GetContents();
++    std::map<std::string, std::string> settings;
++    tabs::PaneSettings::PopulateExtraData(contents, &settings);
++    if (settings != it->pane_settings) {
++      tabs::PaneSettings::RestoreFromExtraData(contents, it->pane_settings);
++    }
++  }
++}
++
++void HeliumPinsService::OnPaneSettingsChanged(content::WebContents* contents) {
++  if (applying_changes_) {
++    return;
++  }
++
++  tabs::TabInterface* const tab =
++      tabs::TabInterface::MaybeGetFromContents(contents);
++  if (!tab || !tab->IsPinned()) {
++    return;
++  }
++
++  BrowserWindowInterface* const browser = tab->GetBrowserWindowInterface();
++  HeliumPinsTabController* const controller =
++      HeliumPinsTabController::From(tab);
++  if (!browser || !IsSyncedBrowser(browser) || !controller) {
++    return;
++  }
++
++  const auto it = pins_.Find(controller->pin_id());
++  if (it == pins_.end()) {
++    return;
++  }
++
++  std::map<std::string, std::string> settings;
++  tabs::PaneSettings::PopulateExtraData(contents, &settings);
++  if (settings == it->pane_settings) {
++    return;
++  }
++
++  it->pane_settings = std::move(settings);
++  SavePins();
++  ScheduleReconcileOthers(browser);
++}
++
+ bool HeliumPinsService::ImportLegacySplits(
+     BrowserWindowInterface* browser,
+     const std::vector<HeliumPinsTabController*>& restored) {
+--- a/chrome/browser/ui/tabs/helium_pins_service.h
++++ b/chrome/browser/ui/tabs/helium_pins_service.h
+@@ -10,6 +10,7 @@
+ #include <string>
+ #include <vector>
+ 
++#include "base/callback_list.h"
+ #include "base/memory/raw_ptr.h"
+ #include "base/memory/weak_ptr.h"
+ #include "base/scoped_observation.h"
+@@ -29,6 +30,10 @@ class Profile;
+ class ProfileBrowserCollection;
+ class TabStripModel;
+ 
++namespace content {
++class WebContents;
++}  // namespace content
++
+ namespace history {
+ class HistoryService;
+ }  // namespace history
+@@ -153,6 +158,12 @@ class HeliumPinsService : public KeyedSe
+       BrowserWindowInterface* browser,
+       const std::vector<HeliumPinsTabController*>& restored);
+ 
++  // Gives the pins of browser the pane settings of the pin list.
++  void ReconcilePaneSettings(BrowserWindowInterface* browser);
++
++  // Takes the pane settings of a pin that the user changed into the pin list.
++  void OnPaneSettingsChanged(content::WebContents* contents);
++
+   // Adds a hibernated copy of pin at index of browser.
+   void InsertHibernatedPin(BrowserWindowInterface* browser,
+                            int index,
+@@ -201,6 +212,8 @@ class HeliumPinsService : public KeyedSe
+   base::ScopedObservation<ProfileBrowserCollection, BrowserCollectionObserver>
+       browser_collection_observation_{this};
+ 
++  base::CallbackListSubscription pane_settings_subscription_;
++
+   // History lookups of hibernated pins' titles.
+   base::CancelableTaskTracker history_tasks_;
+ 
+--- a/chrome/browser/ui/tabs/pane_settings.cc
++++ b/chrome/browser/ui/tabs/pane_settings.cc
+@@ -31,6 +31,13 @@
+ 
+ namespace tabs {
+ namespace {
++
++base::RepeatingCallbackList<void(content::WebContents*)>& ChangedCallbacks() {
++  static base::NoDestructor<
++      base::RepeatingCallbackList<void(content::WebContents*)>>
++      callbacks;
++  return *callbacks;
++}
+ constexpr char kMobileKey[] = "helium.mobile_preview";
+ constexpr char kRefreshKey[] = "helium.auto_refresh_seconds";
+ constexpr char kJitterKey[] = "helium.refresh_jitter";
+@@ -310,10 +317,17 @@ void PaneSettings::RefreshImpl(bool from
+   web_contents()->GetController().Reload(content::ReloadType::NORMAL, true);
+ }
+ 
++// static
++base::CallbackListSubscription PaneSettings::RegisterChangedCallback(
++    base::RepeatingCallback<void(content::WebContents*)> callback) {
++  return ChangedCallbacks().Add(std::move(callback));
++}
++
+ void PaneSettings::Save() {
+   if (!web_contents() || web_contents()->IsBeingDestroyed()) {
+     return;
+   }
++  ChangedCallbacks().Notify(web_contents());
+   auto* helper = sessions::SessionTabHelper::FromWebContents(web_contents());
+   if (!helper) {
+     return;
+--- a/chrome/browser/ui/tabs/pane_settings.h
++++ b/chrome/browser/ui/tabs/pane_settings.h
+@@ -37,6 +37,9 @@ class PaneSettings : public content::Web
+   static void RestoreFromExtraData(
+       content::WebContents* contents,
+       const std::map<std::string, std::string>& data);
++  // Runs `callback` with the contents of panes whose settings were saved.
++  static base::CallbackListSubscription RegisterChangedCallback(
++      base::RepeatingCallback<void(content::WebContents*)> callback);
+ 
+   bool mobile_enabled() const { return mobile_enabled_; }
+   bool mobile_full_height() const { return mobile_full_height_; }
+--- a/chrome/browser/ui/tabs/pinned_tab_codec.cc
++++ b/chrome/browser/ui/tabs/pinned_tab_codec.cc
+@@ -6,6 +6,7 @@
+ 
+ #include <stddef.h>
+ 
++#include <algorithm>
+ #include <cmath>
+ #include <utility>
+ 
+@@ -14,6 +15,7 @@
+ #include "chrome/browser/profiles/profile.h"
+ #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
+ #include "chrome/browser/ui/browser_window/public/browser_window_interface_iterator.h"
++#include "chrome/browser/ui/tabs/helium_pins_list.h"
+ #include "chrome/browser/ui/tabs/pane_settings.h"
+ #include "chrome/browser/ui/tabs/tab_strip_model.h"
+ #include "chrome/common/pref_names.h"
+@@ -105,40 +107,10 @@ std::optional<StartupTab> DecodeTab(cons
+       }
+     }
+   }
+-  if (const auto* split = value.FindDict("split")) {
+-    const auto* id = split->FindString("id");
+-    const auto layout = split->FindInt("layout");
+-    const auto arrangement = split->FindInt("arrangement");
+-    const auto ratio = split->FindDouble("ratio");
+-    const auto* weights = split->FindList("weights");
+-    if (id && !id->empty() && layout && *layout >= 0 && *layout <= 1 &&
+-        arrangement && *arrangement >= 0 && *arrangement <= 4 && ratio &&
+-        std::isfinite(*ratio) && *ratio > 0 && *ratio < 1 && weights &&
+-        weights->size() == split_tabs::kLegacySplitPaneWeights) {
+-      std::array<double, split_tabs::kLegacySplitPaneWeights> sizes;
+-      for (size_t i = 0; i < sizes.size(); ++i) {
+-        if (!(*weights)[i].is_double() && !(*weights)[i].is_int()) {
+-          return tab;
+-        }
+-        sizes[i] = (*weights)[i].GetDouble();
+-        if (!std::isfinite(sizes[i]) || sizes[i] < 0.001 || sizes[i] > 1000) {
+-          return tab;
+-        }
+-      }
+-      auto visual = split_tabs::SplitTabVisualData::FromArrangement(
+-          static_cast<split_tabs::SplitTabLayout>(*layout), *ratio,
+-          static_cast<split_tabs::SplitTabArrangement>(*arrangement), sizes);
+-      // Newer versions also save the layout tree, which replaces the
+-      // arrangement.
+-      if (const auto* tree = split->FindString("tree")) {
+-        if (auto parsed = split_tabs::SplitLayoutTree::Parse(
+-                *tree, split_tabs::kMaxSplitPanes)) {
+-          visual.set_tree(std::move(*parsed));
+-        }
+-      }
+-      tab.pinned_split_id = *id;
+-      tab.pinned_split_visual_data = visual;
+-    }
++  if (std::optional<helium_pins::LegacySplit> split =
++          helium_pins::ReadLegacySplit(value)) {
++    tab.pinned_split_id = std::move(split->id);
++    tab.pinned_split_visual_data = std::move(split->visual_data);
+   }
+   return tab;
+ }
+@@ -206,7 +178,26 @@ StartupTabs PinnedTabCodec::ReadPinnedTa
+ 
+   StartupTabs results;
+ 
+-  for (const auto& serialized_tab : prefs->GetList(prefs::kPinnedTabs)) {
++  // Pin lists saved by helium_pins::HeliumPinsService have ids, and keep
++  // their splits and pane settings in its format.
++  const base::ListValue& saved_tabs = prefs->GetList(prefs::kPinnedTabs);
++  if (std::ranges::any_of(saved_tabs, [](const base::Value& saved_tab) {
++        return saved_tab.is_dict() && saved_tab.GetDict().FindString("id");
++      })) {
++    for (const helium_pins::Pin& pin :
++         helium_pins::PinList::FromPref(saved_tabs)) {
++      StartupTab tab(pin.url, StartupTab::Type::kPinned);
++      tab.pane_extra_data = pin.pane_settings;
++      if (!pin.split.empty()) {
++        tab.pinned_split_id = pin.split;
++        tab.pinned_split_visual_data = pin.split_visual_data;
++      }
++      results.push_back(std::move(tab));
++    }
++    return results;
++  }
++
++  for (const auto& serialized_tab : saved_tabs) {
+     if (!serialized_tab.is_dict()) {
+       continue;
+     }

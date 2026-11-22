@@ -1,6 +1,6 @@
 --- a/chrome/browser/prefs/session_startup_pref.h
 +++ b/chrome/browser/prefs/session_startup_pref.h
-@@ -39,6 +39,10 @@
+@@ -39,6 +39,10 @@ struct SessionStartupPref {
      // Indicates the user wants to restore the last session and open a specific
      // set of URLs. The URLs are contained in urls.
      LAST_AND_URLS = 4,
@@ -11,7 +11,7 @@
    };
  
    // For historical reasons the enum and value registered in the prefs don't
-@@ -53,7 +57,8 @@
+@@ -53,7 +57,8 @@ struct SessionStartupPref {
      kPrefValueURLs = 4,
      kPrefValueNewTab = 5,
      kPrefValueLastAndURLs = 6,
@@ -23,7 +23,7 @@
    static void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry);
 --- a/chrome/browser/prefs/session_startup_pref.cc
 +++ b/chrome/browser/prefs/session_startup_pref.cc
-@@ -36,6 +36,8 @@
+@@ -36,6 +36,8 @@ int TypeToPrefValue(SessionStartupPref::
        return SessionStartupPref::kPrefValueURLs;
      case SessionStartupPref::LAST_AND_URLS:
        return SessionStartupPref::kPrefValueLastAndURLs;
@@ -32,7 +32,7 @@
      default:
        return SessionStartupPref::kPrefValueNewTab;
    }
-@@ -73,6 +75,7 @@
+@@ -73,6 +75,7 @@ SessionStartupPref::Type SessionStartupP
    if (features::kSetDefaultToContinueSession.Get()) {
      return SessionStartupPref::LAST;
    }
@@ -40,7 +40,7 @@
  #elif BUILDFLAG(IS_ANDROID)
    // On Android desktop, restoring the last session is the default startup
    // behavior when the restore-on-startup pref is synced.
-@@ -185,6 +188,8 @@
+@@ -185,6 +188,8 @@ SessionStartupPref::Type SessionStartupP
        return SessionStartupPref::URLS;
      case kPrefValueLastAndURLs:
        return SessionStartupPref::LAST_AND_URLS;
@@ -62,7 +62,7 @@
  namespace user_prefs {
  class PrefRegistrySyncable;
  }
-@@ -37,6 +41,11 @@
+@@ -37,6 +41,11 @@ class PinnedTabCodec {
    // Reads and returns the set of pinned tabs to restore from preferences.
    static StartupTabs ReadPinnedTabs(Profile* profile);
  
@@ -84,7 +84,7 @@
  #include "base/values.h"
  #include "chrome/browser/profiles/profile.h"
  #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
-@@ -31,6 +32,9 @@
+@@ -31,6 +32,9 @@ namespace {
  // Key used in dictionaries for the url.
  const char kURL[] = "url";
  
@@ -94,7 +94,7 @@
  // Returns a base::DictValue representing the supplied StartupTab.
  base::DictValue EncodeTab(const StartupTab& tab) {
    base::DictValue dict;
-@@ -174,6 +178,17 @@
+@@ -174,6 +178,17 @@ void PinnedTabCodec::WritePinnedTabs(Pro
  }
  
  // static
@@ -122,7 +122,7 @@
  #include "chrome/browser/ui/browser_window/public/browser_collection_observer.h"
  #include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
  #include "components/keyed_service/core/keyed_service.h"
-@@ -42,8 +43,15 @@
+@@ -42,8 +43,15 @@ class PinnedTabService : public BrowserC
        const TabStripModelChange& change,
        const TabStripSelectionChange& selection) override;
    void OnTabPinnedStateChanged(tabs::TabInterface* tab, int index) override;
@@ -138,7 +138,7 @@
    // Writes the pinned tabs for `profile_`, but only if a new tab or browser
    // window has been added since the last time the method was called.
    void WritePinnedTabsIfNecessary();
-@@ -55,6 +63,12 @@
+@@ -55,6 +63,12 @@ class PinnedTabService : public BrowserC
    // and set back to true when new tabs or windows are added.
    bool need_to_write_pinned_tabs_ = true;
  
@@ -169,7 +169,7 @@
  
  PinnedTabService::PinnedTabService(Profile* profile) : profile_(profile) {
    closing_all_browsers_subscription_ = chrome::AddClosingAllBrowsersCallback(
-@@ -46,6 +54,10 @@
+@@ -46,6 +54,10 @@ void PinnedTabService::OnClosingAllBrows
    //   * pinned tabs are saved, without the window with the pinned tabs,
    //     over-writing the correct state.
    // Saving is re-enabled if a new tab or window is opened.
@@ -180,7 +180,7 @@
    if (closing && TabStripModelObserver::IsObservingAny(this)) {
      WritePinnedTabsIfNecessary();
    }
-@@ -86,11 +98,25 @@
+@@ -86,11 +98,25 @@ void PinnedTabService::OnTabStripModelCh
    if (change.type() == TabStripModelChange::kInserted) {
      need_to_write_pinned_tabs_ = true;
    }
@@ -206,7 +206,7 @@
  }
  
  void PinnedTabService::WillCloseAllTabs(TabStripModel* tab_strip_model) {
-@@ -100,6 +126,22 @@
+@@ -100,6 +126,22 @@ void PinnedTabService::WillCloseAllTabs(
    }
  }
  
@@ -231,7 +231,7 @@
      PinnedTabCodec::WritePinnedTabs(profile_);
 --- a/chrome/browser/ui/startup/startup_browser_creator.cc
 +++ b/chrome/browser/ui/startup/startup_browser_creator.cc
-@@ -1476,7 +1476,8 @@
+@@ -1500,7 +1500,8 @@ void StartupBrowserCreator::ProcessLastO
      SessionStartupPref startup_pref =
          GetSessionStartupPref(command_line, profile);
      if (profile != last_used_profile &&
@@ -243,7 +243,7 @@
      }
 --- a/chrome/browser/ui/startup/startup_browser_creator_impl.cc
 +++ b/chrome/browser/ui/startup/startup_browser_creator_impl.cc
-@@ -53,6 +53,7 @@
+@@ -52,6 +52,7 @@
  #include "chrome/browser/ui/startup/startup_tab_provider.h"
  #include "chrome/browser/ui/startup/startup_types.h"
  #include "chrome/browser/ui/tabs/pane_settings.h"
@@ -251,7 +251,7 @@
  #include "chrome/browser/ui/tabs/shared_tab_group_version_upgrade_modal.h"
  #include "chrome/browser/ui/tabs/tab_enums.h"
  #include "chrome/browser/ui/tabs/tab_strip_model.h"
-@@ -221,6 +222,18 @@
+@@ -218,6 +219,18 @@ BrowserWindowInterface* GetExistingBrows
    return workspace_browser;
  }
  
@@ -267,10 +267,10 @@
 +  return found;
 +}
 +
- content::WebContents* AddDeferredPinnedStartupTab(
-     BrowserWindowInterface* browser,
-     const GURL& url) {
-@@ -403,6 +416,7 @@
+ }  // namespace
+ 
+ StartupBrowserCreatorImpl::StartupBrowserCreatorImpl(
+@@ -378,6 +391,7 @@ BrowserWindowInterface* StartupBrowserCr
      if (!contents || tab.type != StartupTab::Type::kPinned) {
        return;
      }
@@ -278,7 +278,7 @@
      tabs::PaneSettings::RestoreFromExtraData(contents, tab.pane_extra_data);
      if (!tab.pinned_split_id.empty() && tab.pinned_split_visual_data) {
        pinned_splits[tab.pinned_split_id].push_back(contents);
-@@ -720,12 +734,17 @@
+@@ -698,12 +712,17 @@ StartupBrowserCreatorImpl::DetermineStar
    // A similar policy exists for crash recovery launches, to prevent getting the
    // user stuck in a crash loop.
    if (is_incognito_or_guest || is_post_crash_launch) {
@@ -301,7 +301,7 @@
    }
  
    // A trigger on a profile may indicate that we should show a tab which
-@@ -791,8 +810,12 @@
+@@ -769,8 +788,12 @@ StartupBrowserCreatorImpl::DetermineStar
  
      // Potentially add the New Tab Page.
      // Note that URLs from preferences are explicitly meant to override showing
@@ -326,7 +326,7 @@
  #include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_utils.h"
  #include "chrome/browser/ui/tabs/tab_enums.h"
  #include "chrome/browser/ui/tabs/tab_group_model.h"
-@@ -1663,6 +1664,18 @@
+@@ -1670,6 +1671,18 @@ void SessionRestore::RestoreSessionAfter
    browser = nullptr;
  #endif
  
@@ -347,7 +347,7 @@
        (browser && HasSingleNewTabPage(browser)
 --- a/chrome/browser/profile_resetter/resettable_settings_snapshot.cc
 +++ b/chrome/browser/profile_resetter/resettable_settings_snapshot.cc
-@@ -179,6 +179,7 @@
+@@ -179,6 +179,7 @@ std::unique_ptr<reset_report::ChromeRese
      }
      switch (snapshot.startup_type()) {
        case SessionStartupPref::DEFAULT:
@@ -355,7 +355,7 @@
          report->set_startup_type(
              reset_report::ChromeResetReport_SessionStartupType_DEFAULT);
          break;
-@@ -270,6 +271,10 @@
+@@ -270,6 +271,10 @@ base::ListValue GetReadableFeedbackForSn
        startup_type =
            l10n_util::GetStringUTF16(IDS_SETTINGS_ON_STARTUP_OPEN_NEW_TAB);
        break;
@@ -368,7 +368,7 @@
            l10n_util::GetStringUTF16(IDS_SETTINGS_ON_STARTUP_CONTINUE);
 --- a/chrome/browser/ui/webui/settings/settings_startup_pages_handler.cc
 +++ b/chrome/browser/ui/webui/settings/settings_startup_pages_handler.cc
-@@ -196,7 +196,7 @@
+@@ -196,7 +196,7 @@ void StartupPagesHandler::SaveStartupPag
    SessionStartupPref pref = SessionStartupPref::GetStartupPref(prefs);
    pref.urls = startup_custom_pages_table_model_.GetURLs();
  
@@ -379,9 +379,9 @@
  
 --- a/chrome/app/settings_strings.grdp
 +++ b/chrome/app/settings_strings.grdp
-@@ -1130,6 +1130,9 @@
+@@ -1199,6 +1199,9 @@
      <message name="IDS_SETTINGS_ON_STARTUP_OPEN_NEW_TAB" desc="Radio button option to open the new tab page.">
-       Open the New Tab page
+       Open the new tab page
      </message>
 +    <message name="IDS_SETTINGS_ON_STARTUP_OPEN_PINNED" desc="Radio button option to open the pinned tabs with the first one selected, or the new tab page when no tabs are pinned.">
 +      Open the first pinned tab, or the New Tab page if no tabs are pinned
@@ -391,7 +391,7 @@
      </message>
 --- a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
 +++ b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
-@@ -1579,6 +1579,7 @@
+@@ -1606,6 +1606,7 @@ void AddOnStartupStrings(content::WebUID
    static constexpr webui::LocalizedString kLocalizedStrings[] = {
        {"onStartup", IDS_SETTINGS_ON_STARTUP},
        {"onStartupOpenNewTab", IDS_SETTINGS_ON_STARTUP_OPEN_NEW_TAB},
@@ -401,7 +401,7 @@
        {"onStartupContinueAndOpenSpecific",
 --- a/chrome/browser/resources/settings/on_startup_page/on_startup_page.ts
 +++ b/chrome/browser/resources/settings/on_startup_page/on_startup_page.ts
-@@ -40,6 +40,7 @@
+@@ -40,6 +40,7 @@ export enum PrefValues {
    OPEN_NEW_TAB = 5,
    OPEN_SPECIFIC = 4,
    CONTINUE_AND_OPEN_SPECIFIC = 6,
@@ -411,7 +411,7 @@
  const SettingsOnStartupPageElementBase =
 --- a/chrome/browser/resources/settings/on_startup_page/on_startup_page.html.ts
 +++ b/chrome/browser/resources/settings/on_startup_page/on_startup_page.html.ts
-@@ -16,6 +16,10 @@
+@@ -16,6 +16,10 @@ export function getHtml(this: SettingsOn
          class="flex"
          pref-key="session.restore_on_startup"
          group-aria-label="$i18n{onStartup}">
