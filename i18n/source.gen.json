@@ -684,6 +684,18 @@
     "message": "Use Current URL as Pinned URL"
   },
   {
+    "name": "IDS_SETTINGS_KEEP_PINS",
+    "source": "chrome/app/settings_strings.grdp",
+    "context": "Label for the toggle which makes all windows and sessions keep the same pinned tabs.",
+    "message": "Keep pinned tabs across windows and sessions"
+  },
+  {
+    "name": "IDS_SETTINGS_KEEP_PINS_DESCRIPTION",
+    "source": "chrome/app/settings_strings.grdp",
+    "context": "Description for the toggle which makes all windows and sessions keep the same pinned tabs.",
+    "message": "Pinned tabs show up in every window and stay pinned when closed. When disabled, each window keeps its own pinned tabs."
+  },
+  {
     "name": "IDS_SETTINGS_SUGGEST_PREF_DESC_HELIUM",
     "source": "chrome/app/settings_chromium_strings.grdp",
     "context": "The description of the checkbox to enable/disable sending omnibox input to the user's default search engine to get additional suggestions.",
@@ -2141,6 +2153,18 @@
     "source": "chrome/app/generated_resources.grd",
     "context": "An automatic change export exceeded its timeout.",
     "message": "Automatic export timed out and has been turned off. Text monitoring continues."
+  },
+  {
+    "name": "IDS_HELIUM_APPROVE_UPDATE_MENU_ITEM",
+    "source": "chrome/app/chromium_strings.grd",
+    "context": "App menu item that installs a Helium update that couldn't be installed automatically. macOS may ask for an administrator password. Mac-only.",
+    "message": "Update Helium"
+  },
+  {
+    "name": "IDS_HELIUM_APPROVE_UPDATE_STATUS",
+    "source": "chrome/app/chromium_strings.grd",
+    "context": "Status on the About page when a Helium update is waiting for the user to install it from the app menu. Mac-only.",
+    "message": "Version <ph name=\"VERSION\">$1<ex>0.22.1.1</ex></ph> needs your approval to install. Choose \"Update Helium\" in the menu to continue."
   },
   {
     "name": "IDS_CONTENT_CONTEXT_SYSTEM_TRANSLATE",

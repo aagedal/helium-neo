@@ -31,7 +31,7 @@
  #if BUILDFLAG(IS_WIN)
 --- a/chrome/browser/helium_flag_choices.h
 +++ b/chrome/browser/helium_flag_choices.h
-@@ -42,6 +42,8 @@ constexpr const char kDisableEchCommandL
+@@ -45,6 +45,8 @@ constexpr const char kDisableEchCommandL
  constexpr const char kHeliumSplitClientHelloCommandLine[] =
      "helium-split-clienthello";
  
@@ -42,7 +42,7 @@
  #endif /* CHROME_BROWSER_HELIUM_FLAG_CHOICES_H_ */
 --- a/chrome/browser/helium_flag_entries.h
 +++ b/chrome/browser/helium_flag_entries.h
-@@ -75,5 +75,9 @@
+@@ -85,5 +85,9 @@
       "prevent access to networks that require a proxy. Helium flag.",
       kOsAll, SINGLE_VALUE_TYPE(switches::kNoProxyServer)},
      // ui
@@ -90,7 +90,7 @@
    (*s_allowlist)[::embedder_support::kAlternateErrorPagesEnabled] =
 --- a/chrome/app/settings_strings.grdp
 +++ b/chrome/app/settings_strings.grdp
-@@ -342,6 +342,12 @@
+@@ -348,6 +348,12 @@
      <message name="IDS_SETTINGS_ROUNDED_FRAME" desc="Label for the toggle which enables or disables a rounded frame around web contents.">
        Show a rounded frame around web contents
      </message>
@@ -105,7 +105,7 @@
      </message>
 --- a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
 +++ b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
-@@ -635,6 +635,9 @@ void AddAppearanceStrings(content::WebUI
+@@ -638,6 +638,9 @@ void AddAppearanceStrings(content::WebUI
        {"openNewTabNextToActive", IDS_SETTINGS_NEW_TAB_NEXT_TO_ACTIVE_BUTTON},
        {"cycleTabsInMRUOrder", IDS_SETTINGS_CYCLE_TABS_IN_MRU_ORDER},
        {"roundedFrame", IDS_SETTINGS_ROUNDED_FRAME},
@@ -115,7 +115,7 @@
        {"layoutPageTitle", IDS_SETTINGS_LAYOUT},
        {"browserLayout", IDS_SETTINGS_BROWSER_LAYOUT},
        {"browserLayoutClassic", IDS_SETTINGS_BROWSER_LAYOUT_CLASSIC},
-@@ -739,6 +742,8 @@ void AddAppearanceStrings(content::WebUI
+@@ -742,6 +745,8 @@ void AddAppearanceStrings(content::WebUI
        "showEverythingMenuEnabled",
        tab_groups::SavedTabGroupUtils::IsEnabledForProfile(profile));
  
