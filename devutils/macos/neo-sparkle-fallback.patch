@@ -1,10 +1,16 @@
 --- a/chrome/browser/mac/sparkle_glue.mm
 +++ b/chrome/browser/mac/sparkle_glue.mm
-@@ -41,6 +41,143 @@
- @interface SparkleDriver : SPUHeadlessUserDriver {}
- @end
+@@ -33,12 +33,28 @@
+ #include "content/public/browser/browser_thread.h"
+ #include "third_party/sparkle/Sparkle/Sparkle.h"
+ #include "ui/base/l10n/l10n_util.h"
++#include "url/gurl.h"
  
-+namespace {
+ @class HeliumSparkleDelegate;
+ @class HeliumSparkleUserDriver;
+ 
+ namespace {
+ 
 +// Aborts a check while both download hosts are measured; never shown as a
 +// failure. The check is then repeated and downloads from the faster host.
 +NSString* const kNeoSourceProbeErrorDomain = @"NeoUpdateSourceProbe";
@@ -19,8 +25,14 @@
 +// Fail a download that receives nothing for this long, instead of the default
 +// 60 seconds, so the mirror retry starts sooner.
 +constexpr NSTimeInterval kNeoDownloadIdleTimeout = 30;
-+}  // namespace
 +
+ const PrefService* GetUpdatePrefs() {
+   ProfileManager* profile_manager = g_browser_process->profile_manager();
+   if (!profile_manager) {
+@@ -167,10 +183,157 @@ class VersionUpdaterSparkle : public VersionUpdater {
+ 
+ }  // namespace
+ 
 +// Measures download speed from several URLs in parallel. Each result is in
 +// bytes per second, or 0 if the host failed.
 +@interface NeoDownloadProbe : NSObject <NSURLSessionDataDelegate>
@@ -66,16 +78,18 @@
 +    tasks_ = tasks;
 +    remaining_ = tasks.count;
 +    start_ = [NSDate date];
-+    for (NSURLSessionDataTask* task in tasks_)
++    for (NSURLSessionDataTask* task in tasks_) {
 +      [task resume];
++    }
 +    __weak NeoDownloadProbe* weakSelf = self;
 +    dispatch_after(
 +        dispatch_time(DISPATCH_TIME_NOW,
 +                      (int64_t)(kNeoProbeSeconds * NSEC_PER_SEC)),
 +        dispatch_get_main_queue(), ^{
 +          NeoDownloadProbe* probe = weakSelf;
-+          for (NSUInteger i = 0; probe && i < probe->tasks_.count; ++i)
++          for (NSUInteger i = 0; probe && i < probe->tasks_.count; ++i) {
 +            [probe recordTaskAtIndex:i failed:NO];
++          }
 +        });
 +  }
 +  return self;
@@ -83,22 +97,25 @@
 +
 +// Records the rate for one host once, and cancels its transfer.
 +- (void)recordTaskAtIndex:(NSUInteger)index failed:(BOOL)failed {
-+  if (rates_[index].doubleValue >= 0)
++  if (rates_[index].doubleValue >= 0) {
 +    return;
++  }
 +  const int64_t bytes = bytes_[index].longLongValue;
 +  const double seconds = MAX(-start_.timeIntervalSinceNow, 0.001);
 +  rates_[index] = @(failed || bytes < kNeoProbeMinBytes ? 0 : bytes / seconds);
 +  [tasks_[index] cancel];
-+  if (--remaining_ == 0)
++  if (--remaining_ == 0) {
 +    [self finish];
++  }
 +}
 +
 +- (void)finish {
 +  [session_ invalidateAndCancel];
 +  auto completion = completion_;
 +  completion_ = nil;
-+  if (completion)
++  if (completion) {
 +    completion([rates_ copy]);
++  }
 +}
 +
 +- (void)URLSession:(NSURLSession*)session
@@ -114,8 +131,9 @@
 +                       : NSURLSessionResponseCancel);
 +  if (!ok) {
 +    NSUInteger index = [tasks_ indexOfObject:task];
-+    if (index != NSNotFound)
++    if (index != NSNotFound) {
 +      [self recordTaskAtIndex:index failed:YES];
++    }
 +  }
 +}
 +
@@ -123,31 +141,33 @@
 +          dataTask:(NSURLSessionDataTask*)task
 +    didReceiveData:(NSData*)data {
 +  NSUInteger index = [tasks_ indexOfObject:task];
-+  if (index == NSNotFound)
++  if (index == NSNotFound) {
 +    return;
++  }
 +  const int64_t bytes = bytes_[index].longLongValue + data.length;
 +  bytes_[index] = @(bytes);
 +  // A server that ignores Range sends the whole installer; stop at the limit.
-+  if (bytes >= kNeoProbeBytes)
++  if (bytes >= kNeoProbeBytes) {
 +    [self recordTaskAtIndex:index failed:NO];
++  }
 +}
 +
 +- (void)URLSession:(NSURLSession*)session
 +                    task:(NSURLSessionTask*)task
 +    didCompleteWithError:(NSError*)error {
 +  NSUInteger index = [tasks_ indexOfObject:task];
-+  if (index != NSNotFound)
++  if (index != NSNotFound) {
 +    [self recordTaskAtIndex:index failed:error != nil];
++  }
 +}
 +@end
 +
- // SparkleObserver is a simple notification observer for Sparkle status.
- @interface SparkleObserver : NSObject <SPUUpdaterDelegate> {
-   SparkleUpdaterCallbackList status_callbacks_;
-@@ -57,6 +194,18 @@
+ @interface HeliumSparkleDelegate : NSObject <SPUUpdaterDelegate>
++- (BOOL)isProbing;
+ @end
  
- @implementation SparkleObserver {
-   base::WeakPtr<Profile> profile_;
+-@implementation HeliumSparkleDelegate
++@implementation HeliumSparkleDelegate {
 +  BOOL usingMirror_;
 +  // The GitHub installer URL whose hosts were measured, and the result.
 +  NSURL* probedURL_;
@@ -160,21 +180,37 @@
 +  BOOL skipProbe_;
 +  BOOL downloadingFromMirror_;
 +  BOOL retriedPrimary_;
++}
++
++- (BOOL)isProbing {
++  return probe_ != nil || probeUpdater_ != nil;
++}
+ 
+ - (BOOL)updater:(SPUUpdater*)updater
+     mayPerformUpdateCheck:(SPUUpdateCheck)updateCheck
+@@ -181,7 +344,7 @@ class VersionUpdaterSparkle : public VersionUpdater {
+ - (NSString*)feedURLStringForUpdater:(SPUUpdater*)updater {
+   const PrefService* prefs = GetUpdatePrefs();
+   return prefs ? base::SysUTF8ToNSString(
+-                     helium::GetBrowserUpdateURL(*prefs).spec())
++                     helium::GetBrowserUpdateURL(*prefs, usingMirror_).spec())
+                : nil;
  }
  
- @synthesize invocationBlock = invocationBlock_;
-@@ -145,16 +294,157 @@
-   [self updateStatus:VersionUpdater::UPDATED error_string:nil];
+@@ -198,21 +361,179 @@ class VersionUpdaterSparkle : public VersionUpdater {
+   SparkleUpdater::Get().SetStatus(VersionUpdater::UPDATED);
  }
  
--// Delegated method. Error handler for the Sparkle messages.
 +// The mirror copy of the installer that |item| downloads from GitHub, or nil.
 +- (NSURL*)mirrorURLForItem:(SUAppcastItem*)item {
-+  if (!profile_ || !item.fileURL.lastPathComponent.length)
++  const PrefService* prefs = GetUpdatePrefs();
++  if (!prefs || !item.fileURL.lastPathComponent.length) {
 +    return nil;
-+  GURL feed = helium::GetBrowserUpdateURL(*profile_->GetPrefs(), true);
-+  if (feed == helium::GetDummyURL() || !feed.is_valid())
++  }
++  GURL feed = helium::GetBrowserUpdateURL(*prefs, true);
++  if (feed == helium::GetDummyURL() || !feed.is_valid()) {
 +    return nil;
++  }
 +  GURL mirror =
 +      feed.Resolve(base::SysNSStringToUTF8(item.fileURL.lastPathComponent));
 +  return mirror.is_valid()
@@ -189,24 +225,27 @@
 +    shouldProceedWithUpdate:(SUAppcastItem*)item
 +                updateCheck:(SPUUpdateCheck)updateCheck
 +                      error:(NSError* __autoreleasing*)error {
-+  if (usingMirror_ || skipProbe_ || [probedURL_ isEqual:item.fileURL])
++  if (usingMirror_ || skipProbe_ || [probedURL_ isEqual:item.fileURL]) {
 +    return YES;
++  }
 +  NSURL* mirror = [self mirrorURLForItem:item];
-+  if (!mirror || !item.fileURL)
++  if (!mirror || !item.fileURL) {
 +    return YES;
++  }
 +
 +  probedURL_ = nil;
 +  preferMirror_ = NO;
 +  probeUpdater_ = updater;
 +  probeCycleFinished_ = NO;
 +  NSURL* primary = item.fileURL;
-+  __weak SparkleObserver* weakSelf = self;
++  __weak HeliumSparkleDelegate* weakSelf = self;
 +  probe_ = [[NeoDownloadProbe alloc]
 +      initWithURLs:@[ primary, mirror ]
 +        completion:^(NSArray<NSNumber*>* rates) {
-+          SparkleObserver* strongSelf = weakSelf;
-+          if (strongSelf)
++          HeliumSparkleDelegate* strongSelf = weakSelf;
++          if (strongSelf) {
 +            [strongSelf probeFinishedForURL:primary rates:rates];
++          }
 +        }];
 +  if (error) {
 +    *error = [NSError
@@ -234,11 +273,12 @@
 +// done, so Sparkle is idle and accepts it.
 +- (void)restartAfterProbeIfReady {
 +  SPUUpdater* updater = probeUpdater_;
-+  if (probe_ || !probeCycleFinished_ || !updater)
++  if (probe_ || !probeCycleFinished_ || !updater) {
 +    return;
++  }
 +  probeUpdater_ = nil;
 +  skipProbe_ = YES;
-+  [self updateStatus:VersionUpdater::CHECKING error_string:nil];
++  SparkleUpdater::Get().SetStatus(VersionUpdater::CHECKING);
 +  [updater checkForUpdatesInBackground];
 +}
 +
@@ -247,8 +287,9 @@
 +           withRequest:(NSMutableURLRequest*)request {
 +  request.timeoutInterval = kNeoDownloadIdleTimeout;
 +  downloadingFromMirror_ = NO;
-+  if (usingMirror_ || !preferMirror_ || ![probedURL_ isEqual:item.fileURL])
++  if (usingMirror_ || !preferMirror_ || ![probedURL_ isEqual:item.fileURL]) {
 +    return;
++  }
 +  if (NSURL* mirror = [self mirrorURLForItem:item]) {
 +    request.URL = mirror;
 +    downloadingFromMirror_ = YES;
@@ -259,37 +300,51 @@
 +- (BOOL)canRetryOnPrimary:(NSError*)error {
 +  return downloadingFromMirror_ && !retriedPrimary_ &&
 +         [error.domain isEqualToString:SUSparkleErrorDomain] &&
-+         error.code == SUDownloadError && [self shouldAccessUpdateService];
++         error.code == SUDownloadError && GetUpdatePrefs() != nullptr;
 +}
 +
 +// Retry availability failures once through the independently hosted mirror.
 +// Validation, signature, extraction and installation failures must remain errors.
 +- (BOOL)canRetryOnMirror:(NSError*)error {
-+  return !usingMirror_ && [error.domain isEqualToString:SUSparkleErrorDomain] &&
++  const PrefService* prefs = GetUpdatePrefs();
++  return !usingMirror_ &&
++         [error.domain isEqualToString:SUSparkleErrorDomain] &&
 +         (error.code == SUAppcastError || error.code == SUAppcastParseError ||
-+          error.code == SUDownloadError) && [self shouldAccessUpdateService] &&
-+         helium::GetBrowserUpdateURL(*profile_->GetPrefs(), true) !=
-+             helium::GetDummyURL();
++          error.code == SUDownloadError) &&
++         prefs != nullptr &&
++         helium::GetBrowserUpdateURL(*prefs, true) != helium::GetDummyURL();
 +}
 +
- - (void)updater:(SPUUpdater*)updater didAbortWithError:(NSError*)error {
--  if (error.code == SUNoUpdateError) {
--    // Handled by notifications
-+  if ([error.domain isEqualToString:SUSparkleErrorDomain] &&
-+      error.code == SUNoUpdateError) {
+ - (void)updater:(SPUUpdater*)updater
+     failedToDownloadUpdate:(SUAppcastItem*)item
+                      error:(NSError*)error {
++  if ([self canRetryOnPrimary:error] || [self canRetryOnMirror:error]) {
 +    return;
 +  }
-+  if ([error.domain isEqualToString:kNeoSourceProbeErrorDomain] ||
-+      [self canRetryOnPrimary:error] || [self canRetryOnMirror:error]) {
-     return;
+   SparkleUpdater::Get().ReportError(error);
+ }
+ 
+ - (void)updater:(SPUUpdater*)updater didAbortWithError:(NSError*)error {
+-  if (error.code == SUInstallationCanceledError) {
++  if ([error.domain isEqualToString:SUSparkleErrorDomain] &&
++      error.code == SUInstallationCanceledError) {
+     // The password prompt was canceled, so offer the update again.
+     SparkleUpdater::Get().CheckForUpdates();
+-  } else if (error.code != SUNoUpdateError) {
++  } else if ([error.domain isEqualToString:SUSparkleErrorDomain] &&
++             error.code == SUNoUpdateError) {
++    return;
++  } else if ([error.domain isEqualToString:kNeoSourceProbeErrorDomain] ||
++             [self canRetryOnPrimary:error] || [self canRetryOnMirror:error]) {
++    return;
++  } else {
+     SparkleUpdater::Get().ReportError(error);
    }
-   [self updateStatus:VersionUpdater::FAILED
-         error_string:[error.localizedDescription copy]];
  }
  
 +- (void)updater:(SPUUpdater*)updater
 +    didFinishUpdateCycleForUpdateCheck:(SPUUpdateCheck)updateCheck
-+                                error:(NSError*)error {
++                                 error:(NSError*)error {
 +  if ([error.domain isEqualToString:kNeoSourceProbeErrorDomain]) {
 +    probeCycleFinished_ = YES;
 +    [self restartAfterProbeIfReady];
@@ -301,12 +356,12 @@
 +    preferMirror_ = NO;
 +    downloadingFromMirror_ = NO;
 +    skipProbe_ = YES;
-+    [self updateStatus:VersionUpdater::CHECKING error_string:nil];
++    SparkleUpdater::Get().SetStatus(VersionUpdater::CHECKING);
 +    [updater checkForUpdatesInBackground];
 +  } else if (error && [self canRetryOnMirror:error]) {
 +    usingMirror_ = YES;
 +    downloadingFromMirror_ = NO;
-+    [self updateStatus:VersionUpdater::CHECKING error_string:nil];
++    SparkleUpdater::Get().SetStatus(VersionUpdater::CHECKING);
 +    // Start here while Sparkle is idle. Queuing this lets its scheduler reserve
 +    // another session first, causing checkForUpdatesInBackground to be ignored.
 +    [updater checkForUpdatesInBackground];
@@ -321,36 +376,18 @@
 +  }
 +}
 +
- // Delegated method. Return the appcast URL for the installed channel.
- - (NSString*)feedURLStringForUpdater:(SPUUpdater*)updater {
-   helium::TryAcquireProfilePtr();
-@@ -164,12 +454,7 @@
-   }
- 
-   return base::SysUTF8ToNSString(
--    helium::GetBrowserUpdateURL(*profile_->GetPrefs()).spec());
--}
--
--- (void)updater:(SPUUpdater*)updater failedToDownloadUpdate:(NSError*)error {
--  [self updateStatus:VersionUpdater::FAILED
--        error_string:[error.localizedDescription copy]];
-+    helium::GetBrowserUpdateURL(*profile_->GetPrefs(), usingMirror_).spec());
- }
- 
- - (nonnull NSSet<NSString *> *)allowedChannelsForUpdater:
-@@ -372,12 +657,14 @@ void InitializeSparkleFramework() {
+ // Install right away, but hold the relaunch until the user restarts.
+ - (BOOL)updater:(SPUUpdater*)updater
+        willInstallUpdateOnQuit:(SUAppcastItem*)item
+@@ -365,8 +686,9 @@ void SparkleUpdater::CheckForUpdates() {
      return;
    }
  
--  if (updater) {
-+  static bool updater_started = false;
-+  if (updater && !updater_started) {
-     NSError* err = nullptr;
-     updater.automaticallyChecksForUpdates = YES;
-     updater.automaticallyDownloadsUpdates = YES;
- 
-     if ([updater startUpdater:&err]) {
-+      updater_started = true;
-       [updater checkForUpdatesInBackground];
-     } else if (err && observer) {
-       [observer updateStatus:VersionUpdater::FAILED
+-  // Don't interrupt a pending update or a running session.
+-  if (install_handler_ || updater_.sessionInProgress) {
++  // Don't interrupt a pending update, a speed probe, or a running session.
++  if (install_handler_ || updater_.sessionInProgress ||
++      [delegate_ isProbing]) {
+     status_callbacks_.Notify(status_, progress_, message_);
+     return;
+   }

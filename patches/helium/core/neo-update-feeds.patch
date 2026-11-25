@@ -57,7 +57,7 @@
  #endif
 --- a/components/helium_services/helium_services_helpers.h
 +++ b/components/helium_services/helium_services_helpers.h
-@@ -30,7 +30,8 @@
+@@ -33,7 +33,8 @@
  COMPONENT_EXPORT(HELIUM) GURL GetExtensionUpdateURL(const PrefService& prefs);
  COMPONENT_EXPORT(HELIUM) GURL GetWebstoreSnippetURL(const PrefService& prefs, std::string_view id);
  COMPONENT_EXPORT(HELIUM) GURL GetSpellcheckURL(const PrefService& prefs);
@@ -66,4 +66,4 @@
 +                                                         bool fallback = false);
  COMPONENT_EXPORT(HELIUM) GURL GetComponentUpdateURL(const PrefService* prefs);
  COMPONENT_EXPORT(HELIUM) GURL GetUBlockAssetsURL(const PrefService& prefs);
- COMPONENT_EXPORT(HELIUM) std::optional<GURL> GetValidUserOverridenURL(std::string_view user_url_);
+ COMPONENT_EXPORT(HELIUM) GURL GetPushServiceURL(const PrefService& prefs);

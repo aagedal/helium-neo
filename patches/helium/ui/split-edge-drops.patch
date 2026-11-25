@@ -105,7 +105,7 @@
  
 --- a/chrome/browser/ui/views/frame/browser_view.h
 +++ b/chrome/browser/ui/views/frame/browser_view.h
-@@ -872,6 +872,8 @@ class BrowserView : public BrowserWindow,
+@@ -876,6 +876,8 @@ class BrowserView : public BrowserWindow,
  
    // Returns a `TabDragHandler`, if any available, to handle a tab drag.
    TabDragTarget* GetTabDragTarget(const gfx::Point& point_in_screen);
@@ -113,7 +113,7 @@
 +  bool IsActiveSplitFull() const;
  
  #if BUILDFLAG(IS_CHROMEOS)
-   // This is used only for SWA/PWA scenario.
+   // This is used only for SWA/PWA scenario. Not used when
 --- a/chrome/browser/ui/views/frame/multi_contents_view_delegate.cc
 +++ b/chrome/browser/ui/views/frame/multi_contents_view_delegate.cc
 @@ -5,6 +5,7 @@

@@ -237,9 +237,9 @@
    if (!profile_allowed)
 --- a/chrome/browser/ui/tabs/BUILD.gn
 +++ b/chrome/browser/ui/tabs/BUILD.gn
-@@ -212,6 +212,10 @@ if (!is_android) {
-       "//components/commerce/core:feature_list",
+@@ -219,6 +219,10 @@ if (!is_android) {
        "//components/feed:feature_list",
+       "//third_party/omnibox_proto",
      ]
 +
 +    if (is_mac) {

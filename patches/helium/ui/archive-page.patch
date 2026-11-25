@@ -850,14 +850,16 @@
 +}  // namespace helium
 --- a/chrome/app/chrome_command_ids.h
 +++ b/chrome/app/chrome_command_ids.h
-@@ -289,6 +289,7 @@
- #define IDC_SHOW_TTC_MENU 40306
+@@ -297,6 +297,9 @@
+ #define IDC_SPELLCHECK_MULTI_LINGUAL    41111
+ #define IDC_SPELLCHECK_REMOVE_FROM_DICTIONARY 41112
  
- #define IDC_HELIUM_SERVICES_OPEN 40700
-+#define IDC_HELIUM_ARCHIVE_PAGE 40701
- 
- // Spell-check
- #define IDC_SPELLCHECK_SUGGESTION_0     41000
++// Helium Neo
++#define IDC_HELIUM_ARCHIVE_PAGE 40751
++
+ // Writing direction
+ #define IDC_WRITING_DIRECTION_LTR        41122
+ #define IDC_WRITING_DIRECTION_RTL        41123
 --- a/chrome/app/generated_resources.grd
 +++ b/chrome/app/generated_resources.grd
 @@ -331,6 +331,8 @@ are declared in tools/grit/grit_args.gni

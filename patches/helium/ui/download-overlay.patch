@@ -430,8 +430,8 @@
      "history.icon",
 --- a/chrome/app/generated_resources.grd
 +++ b/chrome/app/generated_resources.grd
-@@ -3264,6 +3264,12 @@
-       <message name="IDS_DOWNLOAD_BUBBLE_OPEN_QUICK_ACTION_ACCESSIBILITY" desc="Accessibility label for action to open a download.">
+@@ -3580,6 +3580,12 @@
+               desc="Accessibility label for action to open a download.">
          Open <ph name="FILE_NAME">$1<ex>bla.exe</ex></ph>
        </message>
 +      <message name="IDS_HELIUM_DOWNLOAD_OVERLAY_DRAG" desc="Tooltip for the handle that drags a finished download into another app.">
@@ -441,8 +441,8 @@
 +        Drag <ph name="FILE_NAME">$1<ex>bla.exe</ex></ph> to another app
 +      </message>
        <if expr="is_macosx">
-             <message name="IDS_DOWNLOAD_BUBBLE_SHOW_IN_FOLDER_QUICK_ACTION" desc="Mac: Tooltip label for showing the file in the Finder">
-               Show in Finder
+             <message name="IDS_DOWNLOAD_BUBBLE_SHOW_IN_FOLDER_QUICK_ACTION"
+                   desc="Mac: Tooltip label for showing the file in the Finder">
 --- a/chrome/browser/download/bubble/download_bubble_ui_controller.h
 +++ b/chrome/browser/download/bubble/download_bubble_ui_controller.h
 @@ -79,6 +79,10 @@

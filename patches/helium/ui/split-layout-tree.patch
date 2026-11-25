@@ -693,8 +693,8 @@
    TabGroupModel* group_model() const { return group_model_.get(); }
  
    bool SupportsTabGroups() const { return group_model_.get() != nullptr; }
-@@ -1197,6 +1220,16 @@ class TabStripModel {
-           get_tabs_to_close,
+@@ -1204,6 +1227,16 @@ class TabStripModel {
+       base::RepeatingCallback<std::vector<tabs::TabHandle>()> get_tabs_to_close,
        uint32_t close_types);
  
 +  // A split losing some of its panes to CloseTabs().
@@ -2446,9 +2446,9 @@
  }  // namespace split_tabs
 --- a/components/tabs/public/tab_context_menu_command.h
 +++ b/components/tabs/public/tab_context_menu_command.h
-@@ -43,6 +43,7 @@ enum TabContextMenuCommand {
-   CommandDiscard,
-   CommandToggleTabMuted,
+@@ -48,6 +48,7 @@ enum TabContextMenuCommand {
+   CommandReturnToPinnedUrl,
+   CommandUseCurrentUrlAsPinnedUrl,
    CommandCreateFourPaneSplit,
 +  CommandAddToActiveSplit,
  };
