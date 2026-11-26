@@ -1,0 +1,1982 @@
+--- /dev/null
++++ b/chrome/browser/ui/tabs/archived_tabs_service.h
+@@ -0,0 +1,167 @@
++// Copyright 2026 The Helium Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_TABS_ARCHIVED_TABS_SERVICE_H_
++#define CHROME_BROWSER_UI_TABS_ARCHIVED_TABS_SERVICE_H_
++
++#include <cstddef>
++#include <cstdint>
++#include <string>
++#include <vector>
++
++#include "base/containers/flat_map.h"
++#include "base/containers/flat_set.h"
++#include "base/memory/raw_ptr.h"
++#include "base/observer_list.h"
++#include "base/observer_list_types.h"
++#include "base/scoped_observation.h"
++#include "base/time/time.h"
++#include "base/timer/timer.h"
++#include "chrome/browser/ui/browser_window/public/browser_collection_observer.h"
++#include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
++#include "components/keyed_service/core/keyed_service.h"
++#include "components/prefs/pref_change_registrar.h"
++#include "ui/base/window_open_disposition.h"
++#include "url/gurl.h"
++
++class BrowserWindowInterface;
++class PrefService;
++class Profile;
++class ProfileBrowserCollection;
++class TabStripModel;
++
++namespace content {
++class WebContents;
++}  // namespace content
++
++// Automatically closes inactive tabs after a configurable number of days
++// (excluding pinned, active/visible, and audio/media-active tabs) and keeps
++// them in a persistent archived list so users can browse, search, and restore
++// them later.
++class ArchivedTabsService : public KeyedService,
++                            public BrowserCollectionObserver,
++                            public TabStripModelObserver {
++ public:
++  struct ArchivedTab {
++    ArchivedTab();
++    ArchivedTab(const ArchivedTab&);
++    ArchivedTab& operator=(const ArchivedTab&);
++    ArchivedTab(ArchivedTab&&);
++    ArchivedTab& operator=(ArchivedTab&&);
++    ~ArchivedTab();
++
++    int32_t id = 0;
++    GURL url;
++    std::u16string title;
++    base::Time archived_time;
++    base::Time last_active_time;
++  };
++
++  class Observer : public base::CheckedObserver {
++   public:
++    virtual void OnArchivedTabsChanged() = 0;
++  };
++
++  static constexpr size_t kMaxArchivedTabs = 500;
++  static constexpr int kDefaultAutoArchiveDays = 7;
++
++  ArchivedTabsService(Profile* profile, PrefService* prefs);
++  ArchivedTabsService(const ArchivedTabsService&) = delete;
++  ArchivedTabsService& operator=(const ArchivedTabsService&) = delete;
++  ~ArchivedTabsService() override;
++
++  void AddObserver(Observer* observer);
++  void RemoveObserver(Observer* observer);
++
++  // Returns archived tabs ordered newest archived first.
++  const std::vector<ArchivedTab>& archived_tabs() const {
++    return archived_tabs_;
++  }
++
++  // Restores the archived tab with `id` into `browser` (or the most recent
++  // normal browser of this profile if `browser` is null) and removes it from
++  // the archived list. Returns true if an entry with `id` was found.
++  bool RestoreArchivedTab(
++      int32_t id,
++      BrowserWindowInterface* browser,
++      WindowOpenDisposition disposition =
++          WindowOpenDisposition::kNewForegroundTab);
++
++  // Permanently removes the archived tab with `id` without opening it.
++  bool RemoveArchivedTab(int32_t id);
++
++  // Clears all archived tabs.
++  void ClearArchivedTabs();
++
++  // Scans all normal browser windows of this profile and archives tabs whose
++  // inactivity exceeds the configured threshold. Returns the number of tabs
++  // archived.
++  size_t ArchiveInactiveTabsNow(base::Time now = base::Time::Now());
++
++  // KeyedService:
++  void Shutdown() override;
++
++ private:
++  // BrowserCollectionObserver:
++  void OnBrowserCreated(BrowserWindowInterface* browser) override;
++  void OnBrowserClosed(BrowserWindowInterface* browser) override;
++
++  // TabStripModelObserver:
++  void OnTabStripModelChanged(
++      TabStripModel* tab_strip_model,
++      const TabStripModelChange& change,
++      const TabStripSelectionChange& selection) override;
++
++  bool IsTrackedBrowser(BrowserWindowInterface* browser) const;
++  void TrackExistingBrowsers();
++  void TrackBrowser(BrowserWindowInterface* browser);
++
++  void RecordFallbackActiveTimeIfMissing(content::WebContents* contents,
++                                         base::Time now);
++  base::Time GetEffectiveLastActiveTime(content::WebContents* contents,
++                                        base::Time now);
++
++  bool IsSingleTabEligibleForAutoArchive(TabStripModel* tab_strip,
++                                         int index,
++                                         base::Time now,
++                                         base::TimeDelta max_inactivity);
++  bool CanAutoArchiveTab(TabStripModel* tab_strip,
++                         int index,
++                         base::Time now,
++                         base::TimeDelta max_inactivity);
++
++  void LoadFromPrefs();
++  void SaveToPrefs();
++  void NotifyObservers();
++  void AddArchivedEntry(const GURL& url,
++                        const std::u16string& title,
++                        base::Time archived_time,
++                        base::Time last_active_time);
++
++  void OnAutoArchivePrefChanged();
++  void ScheduleTimers(base::TimeDelta initial_delay);
++  void RunScheduledCheck();
++
++  const raw_ptr<Profile> profile_;
++  const raw_ptr<PrefService> prefs_;
++
++  std::vector<ArchivedTab> archived_tabs_;
++  int32_t next_id_ = 1;
++
++  // Fallback timestamps for tabs whose WebContents::GetLastActiveTime() is
++  // null (e.g., newly opened background tabs that were never activated).
++  base::flat_map<content::WebContents*, base::Time> fallback_active_times_;
++
++  base::ScopedObservation<ProfileBrowserCollection, BrowserCollectionObserver>
++      browser_collection_observation_{this};
++  base::flat_set<raw_ptr<TabStripModel>> observed_tab_strips_;
++
++  PrefChangeRegistrar pref_change_registrar_;
++  base::OneShotTimer initial_check_timer_;
++  base::RepeatingTimer periodic_check_timer_;
++
++  base::ObserverList<Observer> observers_;
++};
++
++#endif  // CHROME_BROWSER_UI_TABS_ARCHIVED_TABS_SERVICE_H_
+--- /dev/null
++++ b/chrome/browser/ui/tabs/archived_tabs_service.cc
+@@ -0,0 +1,607 @@
++// Copyright 2026 The Helium Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#include "chrome/browser/ui/tabs/archived_tabs_service.h"
++
++#include <algorithm>
++#include <utility>
++
++#include "base/functional/bind.h"
++#include "base/strings/utf_string_conversions.h"
++#include "base/values.h"
++#include "build/build_config.h"
++#include "chrome/browser/lifetime/browser_shutdown.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_interface_iterator.h"
++#include "chrome/browser/ui/browser_window/public/profile_browser_collection.h"
++#include "chrome/browser/ui/navigator/browser_navigator.h"
++#include "chrome/browser/ui/navigator/browser_navigator_params.h"
++#include "chrome/browser/ui/tabs/alert/tab_alert_controller.h"
++#include "chrome/browser/ui/tabs/tab_enums.h"
++#include "chrome/browser/ui/tabs/tab_strip_model.h"
++#include "chrome/browser/ui/tabs/tab_strip_model_delegate.h"
++#include "chrome/browser/ui/tabs/tab_strip_prefs.h"
++#include "chrome/common/webui_url_constants.h"
++#include "components/prefs/pref_service.h"
++#include "components/prefs/scoped_user_pref_update.h"
++#include "components/tabs/public/split_tab_data.h"
++#include "components/tabs/public/tab_alert.h"
++#include "components/tabs/public/tab_interface.h"
++#include "content/public/browser/web_contents.h"
++#include "content/public/common/url_constants.h"
++#include "ui/base/base_window.h"
++#include "ui/base/page_transition_types.h"
++#include "url/url_constants.h"
++
++#if BUILDFLAG(IS_MAC)
++#include "chrome/browser/helium_webkit_streaming_mac.h"
++#endif
++
++namespace {
++
++constexpr base::TimeDelta kInitialCheckDelay = base::Seconds(60);
++constexpr base::TimeDelta kPrefChangeCheckDelay = base::Seconds(5);
++constexpr base::TimeDelta kPeriodicCheckInterval = base::Minutes(15);
++
++constexpr char kKeyId[] = "id";
++constexpr char kKeyUrl[] = "url";
++constexpr char kKeyTitle[] = "title";
++constexpr char kKeyArchivedTime[] = "archived_time";
++constexpr char kKeyLastActiveTime[] = "last_active_time";
++
++GURL GetArchivableUrl(content::WebContents* contents) {
++  if (!contents) {
++    return GURL();
++  }
++#if BUILDFLAG(IS_MAC)
++  if (GURL webkit_url = helium::GetWebKitStreamingTabURL(contents);
++      webkit_url.is_valid()) {
++    return webkit_url;
++  }
++#endif
++  const GURL& committed = contents->GetLastCommittedURL();
++  return committed.is_valid() && !committed.is_empty()
++             ? committed
++             : contents->GetVisibleURL();
++}
++
++bool IsNewTabOrBlankUrl(const GURL& url) {
++  if (!url.is_valid() || url.is_empty() || url.IsAboutBlank()) {
++    return true;
++  }
++  if (url.spec() == chrome::kChromeUISplitViewNewTabPageURL) {
++    return true;
++  }
++  if (url.SchemeIs(content::kChromeUIScheme) &&
++      (url.host() == chrome::kChromeUINewTabHost ||
++       url.host() == chrome::kChromeUINewTabPageHost)) {
++    return true;
++  }
++  return false;
++}
++
++bool HasBlockingTabAlert(tabs::TabInterface* tab) {
++  content::WebContents* contents = tab->GetContents();
++  if (contents && contents->IsCurrentlyAudible()) {
++    return true;
++  }
++  const tabs::TabAlertController* alert_controller =
++      tabs::TabAlertController::From(tab);
++  if (!alert_controller) {
++    return false;
++  }
++  for (tabs::TabAlert alert : alert_controller->GetAllActiveAlerts()) {
++    switch (alert) {
++      case tabs::TabAlert::kAudioPlaying:
++      case tabs::TabAlert::kMediaRecording:
++      case tabs::TabAlert::kAudioRecording:
++      case tabs::TabAlert::kVideoRecording:
++      case tabs::TabAlert::kTabCapturing:
++      case tabs::TabAlert::kDesktopCapturing:
++      case tabs::TabAlert::kPipPlaying:
++      case tabs::TabAlert::kBluetoothConnected:
++      case tabs::TabAlert::kBluetoothScanActive:
++      case tabs::TabAlert::kUsbConnected:
++      case tabs::TabAlert::kHidConnected:
++      case tabs::TabAlert::kSerialConnected:
++      case tabs::TabAlert::kVrPresentingInHeadset:
++      case tabs::TabAlert::kGlicAccessing:
++      case tabs::TabAlert::kActorAccessing:
++      case tabs::TabAlert::kActorWaitingOnUser:
++        return true;
++      case tabs::TabAlert::kNone:
++      case tabs::TabAlert::kAudioMuting:
++      case tabs::TabAlert::kGlicSharing:
++      case tabs::TabAlert::kAiModeSharing:
++        break;
++    }
++  }
++  return false;
++}
++
++}  // namespace
++
++ArchivedTabsService::ArchivedTab::ArchivedTab() = default;
++ArchivedTabsService::ArchivedTab::ArchivedTab(const ArchivedTab&) = default;
++ArchivedTabsService::ArchivedTab& ArchivedTabsService::ArchivedTab::operator=(
++    const ArchivedTab&) = default;
++ArchivedTabsService::ArchivedTab::ArchivedTab(ArchivedTab&&) = default;
++ArchivedTabsService::ArchivedTab& ArchivedTabsService::ArchivedTab::operator=(
++    ArchivedTab&&) = default;
++ArchivedTabsService::ArchivedTab::~ArchivedTab() = default;
++
++ArchivedTabsService::ArchivedTabsService(Profile* profile, PrefService* prefs)
++    : profile_(profile), prefs_(prefs) {
++  LoadFromPrefs();
++
++  if (profile_) {
++    if (ProfileBrowserCollection* collection =
++            ProfileBrowserCollection::GetForProfile(profile_)) {
++      browser_collection_observation_.Observe(collection);
++    }
++    TrackExistingBrowsers();
++  }
++
++  if (prefs_) {
++    pref_change_registrar_.Init(prefs_);
++    pref_change_registrar_.Add(
++        prefs::kHeliumAutoArchiveTabsAfterDays,
++        base::BindRepeating(&ArchivedTabsService::OnAutoArchivePrefChanged,
++                            base::Unretained(this)));
++    ScheduleTimers(kInitialCheckDelay);
++  }
++}
++
++ArchivedTabsService::~ArchivedTabsService() {
++  Shutdown();
++}
++
++void ArchivedTabsService::AddObserver(Observer* observer) {
++  observers_.AddObserver(observer);
++}
++
++void ArchivedTabsService::RemoveObserver(Observer* observer) {
++  observers_.RemoveObserver(observer);
++}
++
++bool ArchivedTabsService::RestoreArchivedTab(
++    int32_t id,
++    BrowserWindowInterface* browser,
++    WindowOpenDisposition disposition) {
++  auto it = std::ranges::find(archived_tabs_, id, &ArchivedTab::id);
++  if (it == archived_tabs_.end()) {
++    return false;
++  }
++
++  const GURL url = it->url;
++  archived_tabs_.erase(it);
++  SaveToPrefs();
++  NotifyObservers();
++
++  BrowserWindowInterface* target_browser = browser;
++  if (!target_browser && profile_) {
++    ForEachCurrentBrowserWindowInterfaceOrderedByActivation(
++        [&](BrowserWindowInterface* candidate) {
++          if (IsTrackedBrowser(candidate)) {
++            target_browser = candidate;
++            return false;
++          }
++          return true;
++        });
++  }
++
++  if (!target_browser || !url.is_valid()) {
++    return true;
++  }
++
++  NavigateParams params(target_browser, url, ui::PAGE_TRANSITION_AUTO_BOOKMARK);
++  params.disposition = disposition;
++  params.window_action = NavigateParams::WindowAction::kShowWindow;
++  Navigate(&params);
++  if (target_browser->GetWindow()) {
++    target_browser->GetWindow()->Activate();
++  }
++  return true;
++}
++
++bool ArchivedTabsService::RemoveArchivedTab(int32_t id) {
++  const size_t erased =
++      std::erase_if(archived_tabs_, [id](const ArchivedTab& tab) {
++        return tab.id == id;
++      });
++  if (erased == 0) {
++    return false;
++  }
++  SaveToPrefs();
++  NotifyObservers();
++  return true;
++}
++
++void ArchivedTabsService::ClearArchivedTabs() {
++  if (archived_tabs_.empty()) {
++    return;
++  }
++  archived_tabs_.clear();
++  SaveToPrefs();
++  NotifyObservers();
++}
++
++size_t ArchivedTabsService::ArchiveInactiveTabsNow(base::Time now) {
++  if (!profile_ || !prefs_ || browser_shutdown::HasShutdownStarted()) {
++    return 0;
++  }
++
++  const int archive_after_days =
++      prefs_->GetInteger(prefs::kHeliumAutoArchiveTabsAfterDays);
++  if (archive_after_days <= 0) {
++    return 0;
++  }
++
++  const base::TimeDelta max_inactivity = base::Days(archive_after_days);
++  std::vector<std::pair<BrowserWindowInterface*, tabs::TabHandle>> candidates;
++
++  ForEachCurrentBrowserWindowInterfaceOrderedByActivation(
++      [&](BrowserWindowInterface* browser) {
++        if (!IsTrackedBrowser(browser)) {
++          return true;
++        }
++        TabStripModel* tab_strip = browser->GetTabStripModel();
++        if (!tab_strip || tab_strip->count() <= 1 ||
++            tab_strip->closing_all() || !tab_strip->delegate() ||
++            !tab_strip->delegate()->IsTabStripEditable()) {
++          return true;
++        }
++
++        for (int i = 0; i < tab_strip->count(); ++i) {
++          if (CanAutoArchiveTab(tab_strip, i, now, max_inactivity)) {
++            candidates.emplace_back(browser,
++                                    tab_strip->GetTabAtIndex(i)->GetHandle());
++          }
++        }
++        return true;
++      });
++
++  size_t archived_count = 0;
++  for (const auto& [browser, handle] : candidates) {
++    tabs::TabInterface* tab = handle.Get();
++    if (!tab || !IsTrackedBrowser(browser)) {
++      continue;
++    }
++    TabStripModel* tab_strip = browser->GetTabStripModel();
++    if (!tab_strip || tab_strip->count() <= 1 || tab_strip->closing_all()) {
++      continue;
++    }
++    const int index = tab_strip->GetIndexOfTab(tab);
++    if (index == TabStripModel::kNoTab ||
++        !IsSingleTabEligibleForAutoArchive(tab_strip, index, now,
++                                           max_inactivity)) {
++      continue;
++    }
++
++    content::WebContents* contents = tab->GetContents();
++    const GURL url = GetArchivableUrl(contents);
++    std::u16string title = contents->GetTitle();
++    if (title.empty()) {
++      title = base::UTF8ToUTF16(url.spec());
++    }
++    const base::Time last_active = GetEffectiveLastActiveTime(contents, now);
++
++    AddArchivedEntry(url, title, now, last_active);
++    fallback_active_times_.erase(contents);
++    tab_strip->CloseWebContentsAt(index, TabCloseTypes::CLOSE_NONE);
++    ++archived_count;
++  }
++
++  if (archived_count > 0) {
++    SaveToPrefs();
++    NotifyObservers();
++  }
++  return archived_count;
++}
++
++void ArchivedTabsService::Shutdown() {
++  initial_check_timer_.Stop();
++  periodic_check_timer_.Stop();
++  pref_change_registrar_.Reset();
++  browser_collection_observation_.Reset();
++  for (TabStripModel* tab_strip : observed_tab_strips_) {
++    tab_strip->RemoveObserver(this);
++  }
++  observed_tab_strips_.clear();
++  fallback_active_times_.clear();
++}
++
++void ArchivedTabsService::OnBrowserCreated(BrowserWindowInterface* browser) {
++  TrackBrowser(browser);
++}
++
++void ArchivedTabsService::OnBrowserClosed(BrowserWindowInterface* browser) {
++  if (!browser) {
++    return;
++  }
++  TabStripModel* tab_strip = browser->GetTabStripModel();
++  if (tab_strip && observed_tab_strips_.erase(tab_strip) > 0) {
++    for (int i = 0; i < tab_strip->count(); ++i) {
++      if (content::WebContents* contents = tab_strip->GetWebContentsAt(i)) {
++        fallback_active_times_.erase(contents);
++      }
++    }
++    tab_strip->RemoveObserver(this);
++  }
++}
++
++void ArchivedTabsService::OnTabStripModelChanged(
++    TabStripModel* tab_strip_model,
++    const TabStripModelChange& change,
++    const TabStripSelectionChange& selection) {
++  const base::Time now = base::Time::Now();
++  switch (change.type()) {
++    case TabStripModelChange::kInserted:
++      for (const auto& contents : change.GetInsert()->contents) {
++        RecordFallbackActiveTimeIfMissing(contents.contents, now);
++      }
++      break;
++    case TabStripModelChange::kRemoved:
++      for (const auto& contents : change.GetRemove()->contents) {
++        fallback_active_times_.erase(contents.contents);
++      }
++      break;
++    case TabStripModelChange::kReplaced: {
++      const auto* replace = change.GetReplace();
++      fallback_active_times_.erase(replace->old_contents);
++      RecordFallbackActiveTimeIfMissing(replace->new_contents, now);
++      break;
++    }
++    case TabStripModelChange::kMoved:
++    case TabStripModelChange::kSelectionOnly:
++      break;
++  }
++
++  if (selection.active_tab_changed() && selection.new_contents) {
++    fallback_active_times_[selection.new_contents] = now;
++  }
++}
++
++bool ArchivedTabsService::IsTrackedBrowser(
++    BrowserWindowInterface* browser) const {
++  return browser && browser->GetProfile() == profile_ &&
++         browser->GetType() == BrowserWindowInterface::TYPE_NORMAL &&
++         !browser->IsDeleteScheduled();
++}
++
++void ArchivedTabsService::TrackExistingBrowsers() {
++  ForEachCurrentBrowserWindowInterfaceOrderedByActivation(
++      [&](BrowserWindowInterface* browser) {
++        TrackBrowser(browser);
++        return true;
++      });
++}
++
++void ArchivedTabsService::TrackBrowser(BrowserWindowInterface* browser) {
++  if (!IsTrackedBrowser(browser)) {
++    return;
++  }
++  TabStripModel* tab_strip = browser->GetTabStripModel();
++  if (!tab_strip || !observed_tab_strips_.insert(tab_strip).second) {
++    return;
++  }
++  tab_strip->AddObserver(this);
++  const base::Time now = base::Time::Now();
++  for (int i = 0; i < tab_strip->count(); ++i) {
++    RecordFallbackActiveTimeIfMissing(tab_strip->GetWebContentsAt(i), now);
++  }
++}
++
++void ArchivedTabsService::RecordFallbackActiveTimeIfMissing(
++    content::WebContents* contents,
++    base::Time now) {
++  if (!contents) {
++    return;
++  }
++  if (contents->GetLastActiveTime().is_null()) {
++    fallback_active_times_.try_emplace(contents, now);
++  }
++}
++
++base::Time ArchivedTabsService::GetEffectiveLastActiveTime(
++    content::WebContents* contents,
++    base::Time now) {
++  if (!contents) {
++    return now;
++  }
++  base::Time last_active = contents->GetLastActiveTime();
++  if (!last_active.is_null()) {
++    return last_active;
++  }
++  auto [it, inserted] = fallback_active_times_.try_emplace(contents, now);
++  return it->second;
++}
++
++bool ArchivedTabsService::IsSingleTabEligibleForAutoArchive(
++    TabStripModel* tab_strip,
++    int index,
++    base::Time now,
++    base::TimeDelta max_inactivity) {
++  tabs::TabInterface* tab = tab_strip->GetTabAtIndex(index);
++  if (!tab) {
++    return false;
++  }
++  if (tab->IsPinned() || tab->IsActivated() || tab->IsVisible() ||
++      tab_strip->IsTabInForeground(index)) {
++    return false;
++  }
++  content::WebContents* contents = tab->GetContents();
++  if (!contents || HasBlockingTabAlert(tab)) {
++    return false;
++  }
++  const GURL url = GetArchivableUrl(contents);
++  if (IsNewTabOrBlankUrl(url)) {
++    return false;
++  }
++  const base::Time last_active = GetEffectiveLastActiveTime(contents, now);
++  return now - last_active >= max_inactivity;
++}
++
++bool ArchivedTabsService::CanAutoArchiveTab(TabStripModel* tab_strip,
++                                            int index,
++                                            base::Time now,
++                                            base::TimeDelta max_inactivity) {
++  if (!IsSingleTabEligibleForAutoArchive(tab_strip, index, now,
++                                         max_inactivity)) {
++    return false;
++  }
++
++  // If the tab belongs to a split view, only archive it when every pane in the
++  // split is eligible so an active or recently used split isn't half-closed.
++  tabs::TabInterface* tab = tab_strip->GetTabAtIndex(index);
++  if (const std::optional<split_tabs::SplitTabId> split_id = tab->GetSplit();
++      split_id.has_value()) {
++    const split_tabs::SplitTabData* split_data =
++        tab_strip->GetSplitData(*split_id);
++    if (!split_data) {
++      return false;
++    }
++    for (tabs::TabInterface* sibling : split_data->ListTabs()) {
++      const int sibling_index = tab_strip->GetIndexOfTab(sibling);
++      if (sibling_index == TabStripModel::kNoTab ||
++          !IsSingleTabEligibleForAutoArchive(tab_strip, sibling_index, now,
++                                             max_inactivity)) {
++        return false;
++      }
++    }
++  }
++  return true;
++}
++
++void ArchivedTabsService::LoadFromPrefs() {
++  archived_tabs_.clear();
++  next_id_ = 1;
++  if (!prefs_) {
++    return;
++  }
++
++  const base::ListValue& list = prefs_->GetList(prefs::kHeliumArchivedTabs);
++  int32_t max_id = 0;
++  for (const base::Value& value : list) {
++    const base::DictValue* dict = value.GetIfDict();
++    if (!dict) {
++      continue;
++    }
++    const std::string* url_str = dict->FindString(kKeyUrl);
++    if (!url_str) {
++      continue;
++    }
++    GURL url(*url_str);
++    if (!url.is_valid()) {
++      continue;
++    }
++
++    ArchivedTab tab;
++    tab.id = dict->FindInt(kKeyId).value_or(0);
++    if (tab.id <= 0) {
++      tab.id = ++max_id;
++    } else {
++      max_id = std::max(max_id, tab.id);
++    }
++    tab.url = std::move(url);
++    if (const std::string* title = dict->FindString(kKeyTitle)) {
++      tab.title = base::UTF8ToUTF16(*title);
++    }
++    if (tab.title.empty()) {
++      tab.title = base::UTF8ToUTF16(tab.url.spec());
++    }
++    if (const std::optional<double> archived_sec =
++            dict->FindDouble(kKeyArchivedTime)) {
++      tab.archived_time =
++          base::Time::FromSecondsSinceUnixEpoch(*archived_sec);
++    }
++    if (const std::optional<double> last_active_sec =
++            dict->FindDouble(kKeyLastActiveTime)) {
++      tab.last_active_time =
++          base::Time::FromSecondsSinceUnixEpoch(*last_active_sec);
++    }
++    archived_tabs_.push_back(std::move(tab));
++    if (archived_tabs_.size() >= kMaxArchivedTabs) {
++      break;
++    }
++  }
++  next_id_ = max_id + 1;
++}
++
++void ArchivedTabsService::SaveToPrefs() {
++  if (!prefs_) {
++    return;
++  }
++
++  ScopedListPrefUpdate update(prefs_, prefs::kHeliumArchivedTabs);
++  base::ListValue& list = update.Get();
++  list.clear();
++  for (const ArchivedTab& tab : archived_tabs_) {
++    base::DictValue dict;
++    dict.Set(kKeyId, tab.id);
++    dict.Set(kKeyUrl, tab.url.spec());
++    dict.Set(kKeyTitle, base::UTF16ToUTF8(tab.title));
++    dict.Set(kKeyArchivedTime, tab.archived_time.InSecondsFSinceUnixEpoch());
++    dict.Set(kKeyLastActiveTime,
++             tab.last_active_time.InSecondsFSinceUnixEpoch());
++    list.Append(std::move(dict));
++  }
++}
++
++void ArchivedTabsService::NotifyObservers() {
++  for (Observer& observer : observers_) {
++    observer.OnArchivedTabsChanged();
++  }
++}
++
++void ArchivedTabsService::AddArchivedEntry(const GURL& url,
++                                           const std::u16string& title,
++                                           base::Time archived_time,
++                                           base::Time last_active_time) {
++  // Replace any older archived entry for the exact same URL so the archive
++  // stays tidy and reflects the most recent archival timestamp.
++  std::erase_if(archived_tabs_, [&url](const ArchivedTab& existing) {
++    return existing.url == url;
++  });
++
++  ArchivedTab entry;
++  entry.id = next_id_++;
++  entry.url = url;
++  entry.title = title;
++  entry.archived_time = archived_time;
++  entry.last_active_time = last_active_time;
++  archived_tabs_.insert(archived_tabs_.begin(), std::move(entry));
++
++  if (archived_tabs_.size() > kMaxArchivedTabs) {
++    archived_tabs_.resize(kMaxArchivedTabs);
++  }
++}
++
++void ArchivedTabsService::OnAutoArchivePrefChanged() {
++  ScheduleTimers(kPrefChangeCheckDelay);
++}
++
++void ArchivedTabsService::ScheduleTimers(base::TimeDelta initial_delay) {
++  initial_check_timer_.Stop();
++  periodic_check_timer_.Stop();
++
++  if (!prefs_ ||
++      prefs_->GetInteger(prefs::kHeliumAutoArchiveTabsAfterDays) <= 0) {
++    return;
++  }
++
++  initial_check_timer_.Start(
++      FROM_HERE, initial_delay,
++      base::BindOnce(&ArchivedTabsService::RunScheduledCheck,
++                     base::Unretained(this)));
++  periodic_check_timer_.Start(
++      FROM_HERE, kPeriodicCheckInterval,
++      base::BindRepeating(&ArchivedTabsService::RunScheduledCheck,
++                          base::Unretained(this)));
++}
++
++void ArchivedTabsService::RunScheduledCheck() {
++  ArchiveInactiveTabsNow(base::Time::Now());
++}
+--- /dev/null
++++ b/chrome/browser/ui/tabs/archived_tabs_service_factory.h
+@@ -0,0 +1,36 @@
++// Copyright 2026 The Helium Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_TABS_ARCHIVED_TABS_SERVICE_FACTORY_H_
++#define CHROME_BROWSER_UI_TABS_ARCHIVED_TABS_SERVICE_FACTORY_H_
++
++#include "base/no_destructor.h"
++#include "chrome/browser/profiles/profile_keyed_service_factory.h"
++
++class ArchivedTabsService;
++class Profile;
++
++class ArchivedTabsServiceFactory : public ProfileKeyedServiceFactory {
++ public:
++  static ArchivedTabsService* GetForProfile(Profile* profile);
++  static ArchivedTabsServiceFactory* GetInstance();
++
++  ArchivedTabsServiceFactory(const ArchivedTabsServiceFactory&) = delete;
++  ArchivedTabsServiceFactory& operator=(const ArchivedTabsServiceFactory&) =
++      delete;
++
++ private:
++  friend base::NoDestructor<ArchivedTabsServiceFactory>;
++
++  ArchivedTabsServiceFactory();
++  ~ArchivedTabsServiceFactory() override;
++
++  // BrowserContextKeyedServiceFactory:
++  std::unique_ptr<KeyedService> BuildServiceInstanceForBrowserContext(
++      content::BrowserContext* context) const override;
++  bool ServiceIsCreatedWithBrowserContext() const override;
++  bool ServiceIsNULLWhileTesting() const override;
++};
++
++#endif  // CHROME_BROWSER_UI_TABS_ARCHIVED_TABS_SERVICE_FACTORY_H_
+--- /dev/null
++++ b/chrome/browser/ui/tabs/archived_tabs_service_factory.cc
+@@ -0,0 +1,51 @@
++// Copyright 2026 The Helium Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#include "chrome/browser/ui/tabs/archived_tabs_service_factory.h"
++
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/ui/browser_manager_service_factory.h"
++#include "chrome/browser/ui/tabs/archived_tabs_service.h"
++
++// static
++ArchivedTabsService* ArchivedTabsServiceFactory::GetForProfile(
++    Profile* profile) {
++  return static_cast<ArchivedTabsService*>(
++      GetInstance()->GetServiceForBrowserContext(profile, true));
++}
++
++// static
++ArchivedTabsServiceFactory* ArchivedTabsServiceFactory::GetInstance() {
++  static base::NoDestructor<ArchivedTabsServiceFactory> instance;
++  return instance.get();
++}
++
++ArchivedTabsServiceFactory::ArchivedTabsServiceFactory()
++    : ProfileKeyedServiceFactory(
++          "ArchivedTabsService",
++          ProfileSelections::Builder()
++              .WithRegular(ProfileSelection::kOriginalOnly)
++              .WithGuest(ProfileSelection::kNone)
++              .WithSystem(ProfileSelection::kNone)
++              .WithAshInternals(ProfileSelection::kNone)
++              .Build()) {
++  DependsOn(BrowserManagerServiceFactory::GetInstance());
++}
++
++ArchivedTabsServiceFactory::~ArchivedTabsServiceFactory() = default;
++
++std::unique_ptr<KeyedService>
++ArchivedTabsServiceFactory::BuildServiceInstanceForBrowserContext(
++    content::BrowserContext* context) const {
++  Profile* const profile = Profile::FromBrowserContext(context);
++  return std::make_unique<ArchivedTabsService>(profile, profile->GetPrefs());
++}
++
++bool ArchivedTabsServiceFactory::ServiceIsCreatedWithBrowserContext() const {
++  return true;
++}
++
++bool ArchivedTabsServiceFactory::ServiceIsNULLWhileTesting() const {
++  return true;
++}
+--- a/chrome/browser/ui/tabs/tab_strip_prefs.h
++++ b/chrome/browser/ui/tabs/tab_strip_prefs.h
+@@ -33,4 +33,17 @@
+ 
+ }  // namespace tabs
+ 
++namespace prefs {
++
++// Number of days of inactivity after which unpinned, inactive, non-audio tabs
++// are automatically archived. 0 disables automatic tab archival.
++inline constexpr char kHeliumAutoArchiveTabsAfterDays[] =
++    "helium.tabs.auto_archive_after_days";
++
++// A list pref storing automatically archived tabs so they can be searched and
++// restored later.
++inline constexpr char kHeliumArchivedTabs[] = "helium.tabs.archived_tabs";
++
++}  // namespace prefs
++
+ #endif  // CHROME_BROWSER_UI_TABS_TAB_STRIP_PREFS_H_
+--- a/chrome/browser/ui/tabs/tab_strip_prefs.cc
++++ b/chrome/browser/ui/tabs/tab_strip_prefs.cc
+@@ -42,6 +42,8 @@
+   registry->RegisterBooleanPref(prefs::kHeliumZenModeSidebarPinned, false);
+   registry->RegisterBooleanPref(prefs::kHeliumZenModeTopChromePinned, false);
+   registry->RegisterListPref(prefs::kHeliumSplitLayoutTemplates);
++  registry->RegisterIntegerPref(prefs::kHeliumAutoArchiveTabsAfterDays, 7);
++  registry->RegisterListPref(prefs::kHeliumArchivedTabs);
+ }
+ 
+ void MigrateHoverCardMemoryPref(PrefService* local_prefs) {
+--- a/chrome/browser/extensions/api/settings_private/prefs_util.cc
++++ b/chrome/browser/extensions/api/settings_private/prefs_util.cc
+@@ -330,6 +330,8 @@
+       settings_api::PrefType::kBoolean;
+   (*s_allowlist)[::prefs::kHeliumPersistentPins] =
+       settings_api::PrefType::kBoolean;
++  (*s_allowlist)[::prefs::kHeliumAutoArchiveTabsAfterDays] =
++      settings_api::PrefType::kNumber;
+   (*s_allowlist)[::prefs::kShiftRightClickContextMenu] =
+       settings_api::PrefType::kBoolean;
+   (*s_allowlist)[::prefs::kShowZoomIndicator] =
+--- a/chrome/browser/ui/tabs/BUILD.gn
++++ b/chrome/browser/ui/tabs/BUILD.gn
+@@ -517,6 +517,8 @@
+ 
+   source_set("tabs") {
+     sources = [
++      "archived_tabs_service.h",
++      "archived_tabs_service_factory.h",
+       "features.h",
+       "helium_pins_navigation_throttle.h",
+       "helium_pins_drag_tracker.h",
+@@ -597,6 +599,8 @@
+     ]
+ 
+     sources = [
++      "archived_tabs_service.cc",
++      "archived_tabs_service_factory.cc",
+       "helium_pins_navigation_throttle.cc",
+       "helium_pins_drag_tracker.cc",
+       "helium_pins_list.cc",
+@@ -753,6 +757,7 @@
+       "//chrome/browser/ui/interaction",
+       "//chrome/browser/ui/javascript_dialogs",
+       "//chrome/browser/ui/lens",
++      "//chrome/browser/ui/navigator",
+       "//chrome/browser/ui/passwords",
+       "//chrome/browser/ui/performance_controls",
+       "//chrome/browser/ui/prefs",
+@@ -893,6 +898,10 @@
+       ]
+     }
+ 
++    if (is_mac) {
++      deps += [ "//chrome/browser:helium_webkit_streaming" ]
++    }
++
+     if (is_chromeos) {
+       deps += [
+         "//chrome/browser/apps/app_service",
+--- a/chrome/browser/profiles/chrome_browser_main_extra_parts_profiles.cc
++++ b/chrome/browser/profiles/chrome_browser_main_extra_parts_profiles.cc
+@@ -274,6 +274,7 @@
+ #include "chrome/browser/ui/safety_hub/revoked_permissions_os_notification_display_manager_factory.h"
+ #include "chrome/browser/ui/safety_hub/revoked_permissions_service_factory.h"
+ #include "chrome/browser/ui/signin/dice_migration_service_factory.h"
++#include "chrome/browser/ui/tabs/archived_tabs_service_factory.h"
+ #include "chrome/browser/ui/tabs/pinned_tab_service_factory.h"
+ #include "chrome/browser/ui/toolbar/pinned_toolbar/pinned_toolbar_actions_model_factory.h"
+ #include "chrome/browser/ui/toolbar/toolbar_actions_model_factory.h"
+@@ -1290,6 +1291,7 @@
+   PersonalContextFirstRunServiceFactory::GetInstance();
+   PersonalContextServiceFactory::GetInstance();
+ #if !BUILDFLAG(IS_ANDROID)
++  ArchivedTabsServiceFactory::GetInstance();
+   PinnedTabServiceFactory::GetInstance();
+   PinnedToolbarActionsModelFactory::GetInstance();
+ #endif
+--- a/chrome/browser/ui/webui/tab_search/tab_search.mojom
++++ b/chrome/browser/ui/webui/tab_search/tab_search.mojom
+@@ -27,6 +27,8 @@
+   array<RecentlyClosedTabGroup> recently_closed_tab_groups;
+   array<RecentlyClosedSplitView> recently_closed_split_views;
+   bool recently_closed_section_expanded;
++  array<ArchivedTab> archived_tabs;
++  bool archived_section_expanded;
+ };
+ 
+ struct TokenRange {
+@@ -128,6 +130,24 @@
+   mojo_base.mojom.Time last_active_time;
+ 
+   // String representing the elapsed time since the tab was closed.
++  string last_active_elapsed_text;
++};
++
++// Information about an automatically archived tab.
++struct ArchivedTab {
++  // Unique identifier of the archived tab entry.
++  int32 tab_id;
++
++  // The title of the tab.
++  string title;
++
++  // The URL of the tab.
++  url.mojom.Url url;
++
++  // Timestamp when the tab was archived.
++  mojo_base.mojom.Time archived_time;
++
++  // String representing the elapsed time since the tab was archived.
+   string last_active_elapsed_text;
+ };
+ 
+@@ -274,6 +294,16 @@
+   // list section.
+   SaveRecentlyClosedExpandedPref(bool expanded);
+ 
++  // Restore an archived tab and remove it from the archive list.
++  RestoreArchivedTab(int32 tab_id);
++
++  // Permanently remove an archived tab from the archive list.
++  RemoveArchivedTab(int32 tab_id);
++
++  // Save a user's preference for the state of the expandable 'Archived Tabs'
++  // list section.
++  SaveArchivedSectionExpandedPref(bool expanded);
++
+   // Force trigger the tab group tutorial.
+   StartTabGroupTutorial();
+ 
+--- a/chrome/browser/ui/webui/tab_search/tab_search_prefs.h
++++ b/chrome/browser/ui/webui/tab_search/tab_search_prefs.h
+@@ -16,6 +16,7 @@
+ namespace tab_search_prefs {
+ 
+ extern const char kTabSearchRecentlyClosedSectionExpanded[];
++extern const char kTabSearchArchivedSectionExpanded[];
+ 
+ void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry);
+ 
+--- a/chrome/browser/ui/webui/tab_search/tab_search_prefs.cc
++++ b/chrome/browser/ui/webui/tab_search/tab_search_prefs.cc
+@@ -17,8 +17,14 @@
+ const char kTabSearchRecentlyClosedSectionExpanded[] =
+     "tab_search.recently_closed_expanded";
+ 
++// Boolean pref indicating whether the Tab Search archived tabs section is in
++// an expanded state.
++const char kTabSearchArchivedSectionExpanded[] =
++    "tab_search.archived_expanded";
++
+ void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry) {
+   registry->RegisterBooleanPref(kTabSearchRecentlyClosedSectionExpanded, true);
++  registry->RegisterBooleanPref(kTabSearchArchivedSectionExpanded, true);
+ }
+ 
+ }  // namespace tab_search_prefs
+--- a/chrome/browser/ui/webui/tab_search/tab_search_page_handler.h
++++ b/chrome/browser/ui/webui/tab_search/tab_search_page_handler.h
+@@ -9,8 +9,10 @@
+ 
+ #include "base/callback_list.h"
+ #include "base/memory/raw_ptr.h"
++#include "base/scoped_observation.h"
+ #include "base/timer/timer.h"
+ #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
++#include "chrome/browser/ui/tabs/archived_tabs_service.h"
+ #include "chrome/browser/ui/tabs/tab_group_model.h"
+ #include "chrome/browser/ui/tabs/tab_group_theme.h"
+ #include "chrome/browser/ui/webui/tab_search/tab_search.mojom.h"
+@@ -69,6 +71,7 @@
+ class TabSearchPageHandler
+     : public tab_search::mojom::PageHandler,
+       public tabs_api::observation::TabStripApiBatchedObserver,
++      public ArchivedTabsService::Observer,
+       public content::WebContentsObserver {
+  public:
+   TabSearchPageHandler(
+@@ -92,8 +95,14 @@
+   void OpenRecentlyClosedEntry(int32_t session_id) override;
+   void ReplaceActiveSplitTab(int32_t replacement_tab_id) override;
+   void SaveRecentlyClosedExpandedPref(bool expanded) override;
++  void RestoreArchivedTab(int32_t tab_id) override;
++  void RemoveArchivedTab(int32_t tab_id) override;
++  void SaveArchivedSectionExpandedPref(bool expanded) override;
+   void StartTabGroupTutorial() override;
+   void MaybeShowUI() override;
++
++  // ArchivedTabsService::Observer:
++  void OnArchivedTabsChanged() override;
+ 
+   // TabStripApiBatchedObserver:
+   void OnTabEvents(
+@@ -223,6 +232,9 @@
+   base::CallbackListSubscription browser_window_changed_subscription_;
+ 
+   std::unique_ptr<tabs_api::TabStripServiceAggregator> aggregator_;
++
++  base::ScopedObservation<ArchivedTabsService, ArchivedTabsService::Observer>
++      archived_tabs_observation_{this};
+ };
+ 
+ #endif  // CHROME_BROWSER_UI_WEBUI_TAB_SEARCH_TAB_SEARCH_PAGE_HANDLER_H_
+--- a/chrome/browser/ui/webui/tab_search/tab_search_page_handler.cc
++++ b/chrome/browser/ui/webui/tab_search/tab_search_page_handler.cc
+@@ -36,6 +36,7 @@
+ #include "chrome/browser/ui/navigator/browser_navigator.h"
+ #include "chrome/browser/ui/tab_ui_helper.h"
+ #include "chrome/browser/ui/tabs/alert/tab_alert_controller.h"
++#include "chrome/browser/ui/tabs/archived_tabs_service_factory.h"
+ #include "chrome/browser/ui/tabs/features.h"
+ #include "chrome/browser/ui/tabs/tab_data.h"
+ #include "chrome/browser/ui/tabs/tab_enums.h"
+@@ -203,6 +204,10 @@
+   if (IsWebContentsVisible()) {
+     bubble_showing_ = true;
+   }
++  if (ArchivedTabsService* archived_service =
++          ArchivedTabsServiceFactory::GetForProfile(profile_)) {
++    archived_tabs_observation_.Observe(archived_service);
++  }
+   BrowserWindowInterfaceChanged();
+ }
+ 
+@@ -426,6 +431,37 @@
+                : TabSearchRecentlyClosedToggleAction::kCollapse);
+ }
+ 
++void TabSearchPageHandler::RestoreArchivedTab(int32_t tab_id) {
++  ArchivedTabsService* archived_service =
++      ArchivedTabsServiceFactory::GetForProfile(profile_);
++  if (!archived_service) {
++    return;
++  }
++
++  action_ = action_ == TabSearchCloseAction::kCloseTab
++                ? TabSearchCloseAction::kOpenRecentTabAndCloseTab
++                : TabSearchCloseAction::kOpenRecentTab;
++
++  archived_service->RestoreArchivedTab(
++      tab_id, browser_, WindowOpenDisposition::kNewForegroundTab);
++}
++
++void TabSearchPageHandler::RemoveArchivedTab(int32_t tab_id) {
++  if (ArchivedTabsService* archived_service =
++          ArchivedTabsServiceFactory::GetForProfile(profile_)) {
++    archived_service->RemoveArchivedTab(tab_id);
++  }
++}
++
++void TabSearchPageHandler::SaveArchivedSectionExpandedPref(bool expanded) {
++  profile_->GetPrefs()->SetBoolean(
++      tab_search_prefs::kTabSearchArchivedSectionExpanded, expanded);
++}
++
++void TabSearchPageHandler::OnArchivedTabsChanged() {
++  ScheduleDebounce();
++}
++
+ void TabSearchPageHandler::StartTabGroupTutorial() {
+   // Close the tab search bubble if showing.
+   auto embedder = webui_controller_->embedder();
+@@ -497,6 +533,27 @@
+   profile_data->recently_closed_section_expanded =
+       profile_->GetPrefs()->GetBoolean(
+           tab_search_prefs::kTabSearchRecentlyClosedSectionExpanded);
++
++  if (ArchivedTabsService* archived_service =
++          ArchivedTabsServiceFactory::GetForProfile(profile_)) {
++    for (const ArchivedTabsService::ArchivedTab& entry :
++         archived_service->archived_tabs()) {
++      auto archived_tab = tab_search::mojom::ArchivedTab::New();
++      archived_tab->tab_id = entry.id;
++      archived_tab->url = entry.url;
++      archived_tab->title = entry.title.empty()
++                                ? entry.url.spec()
++                                : base::UTF16ToUTF8(entry.title);
++      archived_tab->archived_time = entry.archived_time;
++      archived_tab->last_active_elapsed_text =
++          disable_last_active_time_for_testing_
++              ? "0"
++              : GetLastActiveElapsedText(entry.archived_time);
++      profile_data->archived_tabs.push_back(std::move(archived_tab));
++    }
++  }
++  profile_data->archived_section_expanded = profile_->GetPrefs()->GetBoolean(
++      tab_search_prefs::kTabSearchArchivedSectionExpanded);
+   return profile_data;
+ }
+ 
+--- a/chrome/browser/ui/webui/tab_search/tab_search_ui.cc
++++ b/chrome/browser/ui/webui/tab_search/tab_search_ui.cc
+@@ -79,7 +79,15 @@
+       {"a11yRecentlyClosedTab", IDS_TAB_SEARCH_A11Y_RECENTLY_CLOSED_TAB},
+       {"a11yRecentlyClosedTabGroup",
+        IDS_TAB_SEARCH_A11Y_RECENTLY_CLOSED_TAB_GROUP},
++      {"a11yArchivedTab", IDS_TAB_SEARCH_A11Y_ARCHIVED_TAB},
++      {"a11yArchivedTabRemoved", IDS_TAB_SEARCH_A11Y_ARCHIVED_TAB_REMOVED},
+       {"a11ySplitView", IDS_TAB_SEARCH_A11Y_SPLIT_VIEW},
++      {"archivedTabs", IDS_TAB_SEARCH_ARCHIVED_TABS},
++      {"archivedTabsExpandA11yLabel",
++       IDS_TAB_SEARCH_EXPAND_ARCHIVED_TABS_ITEMS},
++      {"collapseArchivedTabs", IDS_TAB_SEARCH_COLLAPSE_ARCHIVED_TABS},
++      {"expandArchivedTabs", IDS_TAB_SEARCH_EXPAND_ARCHIVED_TABS},
++      {"removeArchivedTab", IDS_TAB_SEARCH_REMOVE_ARCHIVED_TAB},
+       {"audioMuting", IDS_TAB_AX_LABEL_AUDIO_MUTING_FORMAT},
+       {"audioPlaying", IDS_TAB_AX_LABEL_AUDIO_PLAYING_FORMAT},
+       {"blobUrlSource", IDS_HOVER_CARD_BLOB_URL_SOURCE},
+--- a/chrome/browser/ui/webui/tab_search/BUILD.gn
++++ b/chrome/browser/ui/webui/tab_search/BUILD.gn
+@@ -53,6 +53,7 @@
+     "//chrome/browser/ui:ui_features",
+     "//chrome/browser/ui/interaction",
+     "//chrome/browser/ui/navigator",
++    "//chrome/browser/ui/tabs",
+     "//chrome/browser/ui/tabs:tab_strip",
+     "//chrome/browser/ui/tabs/alert:tab_alert",
+     "//chrome/browser/ui/tabs/tab_strip_api",
+--- a/chrome/browser/resources/tab_search/title_item.ts
++++ b/chrome/browser/resources/tab_search/title_item.ts
+@@ -6,11 +6,19 @@
+   title: string;
+   expandable: boolean;
+   expanded: boolean;
++  expandA11yLabel: string;
++  expandTitle: string;
++  collapseTitle: string;
+ 
+   constructor(
+-      title: string, expandable: boolean = false, expanded: boolean = false) {
++      title: string, expandable: boolean = false, expanded: boolean = false,
++      expandA11yLabel: string = '', expandTitle: string = '',
++      collapseTitle: string = '') {
+     this.title = title;
+     this.expandable = expandable;
+     this.expanded = expanded;
++    this.expandA11yLabel = expandA11yLabel;
++    this.expandTitle = expandTitle;
++    this.collapseTitle = collapseTitle;
+   }
+ }
+--- a/chrome/browser/resources/tab_search/tab_data.ts
++++ b/chrome/browser/resources/tab_search/tab_data.ts
+@@ -6,7 +6,7 @@
+ import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
+ import type {Token} from 'chrome://resources/mojo/mojo/public/mojom/base/token.mojom-webui.js';
+ 
+-import type {RecentlyClosedSplitView, RecentlyClosedTab, RecentlyClosedTabGroup, Tab, TabGroup} from './tab_search.mojom-webui.js';
++import type {ArchivedTab, RecentlyClosedSplitView, RecentlyClosedTab, RecentlyClosedTabGroup, Tab, TabGroup} from './tab_search.mojom-webui.js';
+ import {SplitTabLayout} from './tab_search.mojom-webui.js';
+ import {tabHasMediaAlerts} from './tab_search_utils.js';
+ import {TabAlertState} from './tabs.mojom-webui.js';
+@@ -17,6 +17,7 @@
+   RECENTLY_CLOSED_TAB_GROUP = 3,
+   OPEN_SPLIT = 4,
+   RECENTLY_CLOSED_SPLIT = 5,
++  ARCHIVED_TAB = 6,
+ }
+ 
+ export class ItemData {
+@@ -33,10 +34,12 @@
+  * checking.
+  */
+ export class TabData extends ItemData {
+-  tab: Tab|RecentlyClosedTab;
++  tab: Tab|RecentlyClosedTab|ArchivedTab;
+   hostname: string;
+ 
+-  constructor(tab: Tab|RecentlyClosedTab, type: TabItemType, hostname: string) {
++  constructor(
++      tab: Tab|RecentlyClosedTab|ArchivedTab, type: TabItemType,
++      hostname: string) {
+     super();
+     this.tab = tab;
+     this.type = type;
+--- a/chrome/browser/resources/tab_search/tab_search_api_proxy.ts
++++ b/chrome/browser/resources/tab_search/tab_search_api_proxy.ts
+@@ -40,6 +40,12 @@
+   replaceActiveSplitTab(replacementTabId: number): void;
+ 
+   saveRecentlyClosedExpandedPref(expanded: boolean): void;
++
++  restoreArchivedTab(tabId: number): void;
++
++  removeArchivedTab(tabId: number): void;
++
++  saveArchivedSectionExpandedPref(expanded: boolean): void;
+ 
+   maybeShowUi(): void;
+ 
+@@ -103,6 +109,18 @@
+     this.handler.saveRecentlyClosedExpandedPref(expanded);
+   }
+ 
++  restoreArchivedTab(tabId: number) {
++    this.handler.restoreArchivedTab(tabId);
++  }
++
++  removeArchivedTab(tabId: number) {
++    this.handler.removeArchivedTab(tabId);
++  }
++
++  saveArchivedSectionExpandedPref(expanded: boolean) {
++    this.handler.saveArchivedSectionExpandedPref(expanded);
++  }
++
+   maybeShowUi() {
+     this.handler.maybeShowUI();
+   }
+--- a/chrome/browser/resources/tab_search/tab_search_item.ts
++++ b/chrome/browser/resources/tab_search/tab_search_item.ts
+@@ -132,7 +132,9 @@
+    * @return Whether a close action can be performed on the item.
+    */
+   protected isCloseable_(): boolean {
+-    return !this.hideCloseButton && this.data.type === TabItemType.OPEN_TAB;
++    return !this.hideCloseButton &&
++        (this.data.type === TabItemType.OPEN_TAB ||
++         this.data.type === TabItemType.ARCHIVED_TAB);
+   }
+ 
+   /**
+@@ -225,14 +227,20 @@
+     if (this.closeButtonAriaLabel) {
+       return this.closeButtonAriaLabel;
+     }
+-    return `${loadTimeData.getString('closeTab')} ${this.data.tab.title}`;
++    const labelKey = this.data.type === TabItemType.ARCHIVED_TAB ?
++        'removeArchivedTab' :
++        'closeTab';
++    return `${loadTimeData.getString(labelKey)} ${this.data.tab.title}`;
+   }
+ 
+   protected tooltipForButton_(): string {
+     if (this.closeButtonTooltip) {
+       return this.closeButtonTooltip;
+     }
+-    return loadTimeData.getString('closeTab');
++    const labelKey = this.data.type === TabItemType.ARCHIVED_TAB ?
++        'removeArchivedTab' :
++        'closeTab';
++    return loadTimeData.getString(labelKey);
+   }
+ }
+ 
+--- a/chrome/browser/resources/tab_search/tab_search_page.ts
++++ b/chrome/browser/resources/tab_search/tab_search_page.ts
+@@ -29,7 +29,7 @@
+ import {NO_SELECTION, selectorNavigationKeys} from './selectable_lazy_list.js';
+ import {ariaLabel, getDisplayHostnameForUrl, getHostname, getTabGroupTitle, getTitle, normalizeURL, SplitViewData, TabData, TabGroupData, TabItemType, tokenEquals, tokenToString} from './tab_data.js';
+ import type {ItemData} from './tab_data.js';
+-import type {ProfileData, RecentlyClosedTab, Tab, TabGroup, TabsRemovedInfo, TabUpdateInfo} from './tab_search.mojom-webui.js';
++import type {ArchivedTab, ProfileData, RecentlyClosedTab, Tab, TabGroup, TabsRemovedInfo, TabUpdateInfo} from './tab_search.mojom-webui.js';
+ import type {TabSearchApiProxy} from './tab_search_api_proxy.js';
+ import {TabSearchApiProxyImpl} from './tab_search_api_proxy.js';
+ import type {TabSearchGroupItemElement} from './tab_search_group_item.js';
+@@ -180,10 +180,12 @@
+   private recentlyClosedTabGroups_: TabGroupData[] = [];
+   private openTabs_: Array<TabData|SplitViewData> = [];
+   private recentlyClosedTabs_: Array<TabData|SplitViewData> = [];
++  private archivedTabs_: TabData[] = [];
+   private windowShownTimestamp_: number = Date.now();
+   private mediaTabsTitleItem_: TitleItem;
+   private openTabsTitleItem_: TitleItem;
+   private recentlyClosedTitleItem_: TitleItem;
++  private archivedTabsTitleItem_: TitleItem;
+   private filteredOpenTabsCount_: number = 0;
+   private filteredOpenHeaderIndices_: number[] = [];
+   private initiallySelectedIndex_: number = NO_SELECTION;
+@@ -217,7 +219,17 @@
+ 
+     this.recentlyClosedTitleItem_ = new TitleItem(
+         loadTimeData.getString('recentlyClosed'), true /*expandable*/,
+-        true /*expanded*/);
++        true /*expanded*/,
++        loadTimeData.getString('recentlyClosedExpandA11yLabel'),
++        loadTimeData.getString('expandRecentlyClosed'),
++        loadTimeData.getString('collapseRecentlyClosed'));
++
++    this.archivedTabsTitleItem_ = new TitleItem(
++        loadTimeData.getString('archivedTabs'), true /*expandable*/,
++        true /*expanded*/,
++        loadTimeData.getString('archivedTabsExpandA11yLabel'),
++        loadTimeData.getString('expandArchivedTabs'),
++        loadTimeData.getString('collapseArchivedTabs'));
+   }
+ 
+   get metricsReporter(): MetricsReporter {
+@@ -395,8 +407,8 @@
+       const matchingIndices: number[] = [];
+       for (let i = 0; i < this.openTabs_.length; ++i) {
+         const item = this.openTabs_[i]!;
+-        if (item instanceof TabData && item.tab.splitId &&
+-            tokenEquals(item.tab.splitId, tab.splitId)) {
++        if (item instanceof TabData && 'splitId' in item.tab &&
++            item.tab.splitId && tokenEquals(item.tab.splitId, tab.splitId)) {
+           matchingIndices.push(i);
+         }
+       }
+@@ -630,6 +642,9 @@
+             (itemData as SplitViewData).sessionId, !!this.searchText_, false);
+         action = 'OpenRecentlyClosedEntry';
+         break;
++      case TabItemType.ARCHIVED_TAB:
++        this.apiProxy_.restoreArchivedTab((itemData as TabData).tab.tabId);
++        return;
+       default:
+         throw new Error('ItemData is of invalid type.');
+     }
+@@ -643,6 +658,12 @@
+     const target =
+         e.currentTarget as TabSearchItemElement | TabSearchSplitItemElement;
+     const tabItem = target.data;
++    if (tabItem instanceof TabData &&
++        tabItem.type === TabItemType.ARCHIVED_TAB) {
++      this.apiProxy_.removeArchivedTab(tabItem.tab.tabId);
++      this.announceA11y_(loadTimeData.getString('a11yArchivedTabRemoved'));
++      return;
++    }
+     const tabIndex = this.itemIndexToTabIndex_(Number(target.dataset['index']));
+     this.recordMetricsForAction('CloseTab', tabIndex);
+     if (tabItem instanceof SplitViewData && tabItem.tabs) {
+@@ -744,7 +765,14 @@
+     this.recentlyClosedTitleItem_.expanded =
+         profileData.recentlyClosedSectionExpanded;
+ 
+-    this.$.tabsList.expandedList = profileData.recentlyClosedSectionExpanded;
++    this.archivedTabs_ = (profileData.archivedTabs || []).map(
++        tab => this.tabData_(
++            tab, false, TabItemType.ARCHIVED_TAB, this.tabGroupsMap_));
++    this.archivedTabsTitleItem_.expanded =
++        profileData.archivedSectionExpanded;
++
++    this.$.tabsList.expandedList = profileData.recentlyClosedSectionExpanded ||
++        profileData.archivedSectionExpanded;
+ 
+     this.updateFilteredTabs_();
+   }
+@@ -771,6 +799,7 @@
+       this.mediaTabsTitleItem_,
+       this.openTabsTitleItem_,
+       this.recentlyClosedTitleItem_,
++      this.archivedTabsTitleItem_,
+     ].find(item => item.title === title);
+     assert(item);
+     return item;
+@@ -792,9 +821,16 @@
+       return;
+     }
+     titleItem.expanded = expanded;
+-    this.apiProxy_.saveRecentlyClosedExpandedPref(expanded);
+-
+-    this.$.tabsList.toggleAttribute('expanded-list', expanded);
++    if (titleItem === this.archivedTabsTitleItem_) {
++      this.apiProxy_.saveArchivedSectionExpandedPref(expanded);
++    } else {
++      this.apiProxy_.saveRecentlyClosedExpandedPref(expanded);
++    }
++
++    this.$.tabsList.toggleAttribute(
++        'expanded-list',
++        this.recentlyClosedTitleItem_.expanded ||
++            this.archivedTabsTitleItem_.expanded);
+ 
+     e.stopPropagation();
+     await this.updateFilteredTabs_();
+@@ -879,12 +915,12 @@
+   }
+ 
+   private tabData_(
+-      tab: Tab|RecentlyClosedTab, inActiveWindow: boolean, type: TabItemType,
+-      tabGroupsMap: Map<string, TabGroup>): TabData {
++      tab: Tab|RecentlyClosedTab|ArchivedTab, inActiveWindow: boolean,
++      type: TabItemType, tabGroupsMap: Map<string, TabGroup>): TabData {
+     const tabData = new TabData(
+         tab, type, getDisplayHostnameForUrl(new URL(normalizeURL(tab.url))));
+ 
+-    if (tab.groupId) {
++    if ('groupId' in tab && tab.groupId) {
+       tabData.tabGroup = tabGroupsMap.get(tokenToString(tab.groupId));
+     }
+     if (type === TabItemType.OPEN_TAB) {
+@@ -893,7 +929,8 @@
+ 
+     tabData.a11yTypeText = loadTimeData.getString(
+         type === TabItemType.OPEN_TAB ? 'a11yOpenTab' :
+-                                        'a11yRecentlyClosedTab');
++        type === TabItemType.ARCHIVED_TAB ? 'a11yArchivedTab' :
++                                            'a11yRecentlyClosedTab');
+ 
+     return tabData;
+   }
+@@ -1039,7 +1076,8 @@
+                   return true;
+                 }
+ 
+-                const recentlyClosedTab = recentlyClosedItem.tab;
++                const recentlyClosedTab =
++                    recentlyClosedItem.tab as RecentlyClosedTab;
+                 return (
+                     !recentlyClosedTab.groupId ||
+                     !recentlyClosedTabGroupIds.some(
+@@ -1049,32 +1087,28 @@
+               .slice(0, this.recentlyClosedDefaultItemDisplayCount_);
+     }
+ 
++    const filteredArchivedTabs = await search<TabData|TabGroupData|SplitViewData>(
++        this.searchText_, this.archivedTabs_, this.searchOptions_);
++
++    const sections:
++        Array<[TitleItem, Array<TabData|TabGroupData|SplitViewData>]> = [
++      [this.mediaTabsTitleItem_, filteredMediaTabs],
++      [this.openTabsTitleItem_, filteredOpenTabs],
++      [this.recentlyClosedTitleItem_, filteredRecentlyClosedItems],
++      [this.archivedTabsTitleItem_, filteredArchivedTabs],
++    ];
++
+     this.filteredOpenHeaderIndices_ = [];
+-    let numItems = 0;
+-    [filteredMediaTabs, filteredOpenTabs, filteredRecentlyClosedItems].forEach(
+-        list => {
+-          if (list.length > 0) {
+-            this.filteredOpenHeaderIndices_.push(numItems);
+-            numItems += list.length + 1;
+-          }
+-        });
+-
+-    this.filteredItems_ =
+-        ([
+-          [this.mediaTabsTitleItem_, filteredMediaTabs],
+-          [this.openTabsTitleItem_, filteredOpenTabs],
+-          [this.recentlyClosedTitleItem_, filteredRecentlyClosedItems],
+-        ] as Array<[TitleItem, Array<TabData|TabGroupData|SplitViewData>]>)
+-            .reduce((acc, [sectionTitle, sectionItems]) => {
+-              if (sectionItems.length !== 0) {
+-                acc.push(sectionTitle);
+-                if (!sectionTitle.expandable ||
+-                    sectionTitle.expandable && sectionTitle.expanded) {
+-                  acc.push(...sectionItems);
+-                }
+-              }
+-              return acc;
+-            }, [] as Array<TitleItem|TabData|TabGroupData|SplitViewData>);
++    this.filteredItems_ = sections.reduce((acc, [sectionTitle, sectionItems]) => {
++      if (sectionItems.length !== 0) {
++        this.filteredOpenHeaderIndices_.push(acc.length);
++        acc.push(sectionTitle);
++        if (!sectionTitle.expandable || sectionTitle.expanded) {
++          acc.push(...sectionItems);
++        }
++      }
++      return acc;
++    }, [] as Array<TitleItem|TabData|TabGroupData|SplitViewData>);
+     this.searchResultText_ = this.getA11ySearchResultText_();
+ 
+     // If there was no previously selected index, set the selected index to be
+@@ -1105,7 +1139,9 @@
+           {item: (TabSearchItemElement | TabSearchGroupItemElement | null)}>) {
+     const itemData = e.detail.item ? e.detail.item.data : null;
+     this.activeSelectionId_ = (itemData && itemData instanceof TabData) ?
+-        itemData.tab.tabId.toString() :
++        (itemData.type === TabItemType.ARCHIVED_TAB ?
++             `archived-${itemData.tab.tabId}` :
++             itemData.tab.tabId.toString()) :
+         undefined;
+   }
+ 
+--- a/chrome/browser/resources/tab_search/tab_search_page.html.ts
++++ b/chrome/browser/resources/tab_search/tab_search_page.html.ts
+@@ -5,7 +5,7 @@
+ import {html, nothing} from '//resources/lit/v3_0/lit.rollup.js';
+ 
+ import type {SplitViewData, TabData, TabGroupData} from './tab_data.js';
+-import {tokenToString} from './tab_data.js';
++import {TabItemType, tokenToString} from './tab_data.js';
+ import type {TabSearchPageElement} from './tab_search_page.js';
+ import type {TitleItem} from './title_item.js';
+ 
+@@ -51,13 +51,13 @@
+               <div>${item.title}</div>
+               ${item.expandable ? html`
+                 <cr-expand-button
+-                    aria-label="$i18n{recentlyClosedExpandA11yLabel}"
++                    aria-label="${item.expandA11yLabel}"
+                     data-title="${item.title}" data-index="${index}"
+                     expand-icon="cr:keyboard-arrow-down"
+                     collapse-icon="cr:keyboard-arrow-up"
+                     ?expanded="${item.expanded}"
+-                    expand-title="$i18n{expandRecentlyClosed}"
+-                    collapse-title="$i18n{collapseRecentlyClosed}"
++                    expand-title="${item.expandTitle}"
++                    collapse-title="${item.collapseTitle}"
+                     @expanded-changed="${this.onTitleExpandedChanged_}"
+                     no-hover>
+                 </cr-expand-button>
+@@ -65,7 +65,9 @@
+             </div>
+           ` : ''}
+           ${this.isTabData_(item) ? html`
+-            <tab-search-item id="${item.tab.tabId}"
++            <tab-search-item
++                id="${item.type === TabItemType.ARCHIVED_TAB ?
++                    `archived-${item.tab.tabId}` : item.tab.tabId}"
+                 aria-label="${this.ariaLabel_(item)}"
+                 class="mwb-list-item selectable" .data="${item}"
+                 data-index="${index}" @click="${this.onItemClick_}"
+--- a/chrome/browser/ui/views/helium/command_bar_view.h
++++ b/chrome/browser/ui/views/helium/command_bar_view.h
+@@ -95,6 +95,8 @@
+ 
+     // Set when the entry switches to an open tab.
+     tabs::TabHandle tab;
++    // Set when the entry restores an archived tab.
++    std::optional<int32_t> archived_tab_id;
+     // Set when the entry opens an autocomplete match.
+     std::optional<AutocompleteMatch> match;
+     // Set when the entry runs a browser command.
+@@ -149,6 +151,10 @@
+   // Open tabs in this profile, most recently used first. The active tab of
+   // this window is skipped.
+   std::vector<ScoredTab> GetTabs(const std::u16string& query) const;
++  std::vector<Entry> GetArchivedTabEntries(
++      const std::u16string& query,
++      const std::vector<std::pair<GURL, tabs::TabHandle>>& open_urls,
++      TemplateURLService* template_url_service) const;
+   Entry CreateTabEntry(tabs::TabInterface* tab) const;
+   Entry CreateMatchEntry(const AutocompleteMatch& match) const;
+   // An entry that opens the page of `tab` again rather than switching to it.
+--- a/chrome/browser/ui/views/helium/command_bar_view.cc
++++ b/chrome/browser/ui/views/helium/command_bar_view.cc
+@@ -30,6 +30,8 @@
+ #include "chrome/browser/ui/location_bar/location_bar.h"
+ #include "chrome/browser/ui/navigator/browser_navigator.h"
+ #include "chrome/browser/ui/navigator/browser_navigator_params.h"
++#include "chrome/browser/ui/tabs/archived_tabs_service.h"
++#include "chrome/browser/ui/tabs/archived_tabs_service_factory.h"
+ #include "chrome/browser/ui/tabs/tab_strip_model.h"
+ #include "chrome/browser/ui/views/frame/browser_view.h"
+ #include "chrome/browser/ui/views/helium/command_bar_commands.h"
+@@ -101,6 +103,7 @@
+ constexpr int kQrCodeSize = 148;
+ constexpr size_t kMaxEntries = 8;
+ constexpr size_t kMaxTabsWithQuery = 4;
++constexpr size_t kMaxArchivedTabsWithQuery = 3;
+ constexpr size_t kMaxTabsWithoutQuery = 6;
+ constexpr size_t kMaxCommandEntries = 10;
+ constexpr size_t kMaxCommandsWithQuery = 2;
+@@ -958,6 +961,32 @@
+     tabs.resize(kMaxTabsWithQuery);
+   }
+ 
++  std::vector<Entry> archived_entries =
++      GetArchivedTabEntries(query, open_urls, template_url_service);
++  if (!archived_entries.empty()) {
++    std::vector<GURL> archived_urls;
++    archived_urls.reserve(archived_entries.size());
++    for (const Entry& entry : archived_entries) {
++      archived_urls.push_back(AutocompleteMatch::GURLToStrippedGURL(
++          entry.favicon_url, input_, template_url_service, std::u16string(),
++          /*keep_search_intent_params=*/true));
++    }
++    // Avoid duplicating a URL as both an archived tab and a history match.
++    std::erase_if(match_entries, [&](const Entry& entry) {
++      if (!entry.match || AutocompleteMatch::IsSearchType(entry.match->type) ||
++          entry.match->extra_headers.contains(kHeliumWebKitHeader)) {
++        return false;
++      }
++      const GURL stripped =
++          entry.match->stripped_destination_url.is_valid()
++              ? entry.match->stripped_destination_url
++              : AutocompleteMatch::GURLToStrippedGURL(
++                    entry.match->destination_url, input_, template_url_service,
++                    std::u16string(), /*keep_search_intent_params=*/true);
++      return std::ranges::contains(archived_urls, stripped);
++    });
++  }
++
+   // Tabs whose title or host matches every term are listed before a default
+   // search, so typing part of a tab's name and pressing Enter switches to it.
+   // A default URL match stays first, as in the address bar.
+@@ -980,6 +1009,9 @@
+   }
+   if (default_entry) {
+     entries_.push_back(std::move(*default_entry));
++  }
++  for (Entry& entry : archived_entries) {
++    entries_.push_back(std::move(entry));
+   }
+   for (Entry& entry : match_entries) {
+     entries_.push_back(std::move(entry));
+@@ -1194,6 +1226,15 @@
+     Dismiss();
+     return;
+   }
++  if (entry.archived_tab_id) {
++    if (ArchivedTabsService* archived_service =
++            ArchivedTabsServiceFactory::GetForProfile(browser_->GetProfile())) {
++      archived_service->RestoreArchivedTab(*entry.archived_tab_id, browser_,
++                                           disposition);
++    }
++    Dismiss();
++    return;
++  }
+   if (entry.command) {
+     // Run once the overlay has closed, so commands that move focus, such as
+     // find in page, keep it.
+@@ -1336,6 +1377,72 @@
+   return tabs;
+ }
+ 
++std::vector<CommandBarView::Entry> CommandBarView::GetArchivedTabEntries(
++    const std::u16string& query,
++    const std::vector<std::pair<GURL, tabs::TabHandle>>& open_urls,
++    TemplateURLService* template_url_service) const {
++  ArchivedTabsService* archived_service =
++      ArchivedTabsServiceFactory::GetForProfile(browser_->GetProfile());
++  if (!archived_service) {
++    return {};
++  }
++  const std::vector<std::u16string> terms =
++      base::SplitString(base::i18n::ToLower(query), base::kWhitespaceUTF16,
++                        base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
++  if (terms.empty()) {
++    return {};
++  }
++
++  struct ScoredArchived {
++    raw_ptr<const ArchivedTabsService::ArchivedTab> tab;
++    int score = 0;
++  };
++  std::vector<ScoredArchived> matches;
++  for (const ArchivedTabsService::ArchivedTab& archived :
++       archived_service->archived_tabs()) {
++    const GURL stripped = AutocompleteMatch::GURLToStrippedGURL(
++        archived.url, input_, template_url_service, std::u16string(),
++        /*keep_search_intent_params=*/true);
++    if (std::ranges::contains(open_urls, stripped,
++                              &std::pair<GURL, tabs::TabHandle>::first)) {
++      continue;
++    }
++    const int score = ScoreTab(terms, archived.title, archived.url);
++    if (score > 0) {
++      matches.push_back({&archived, score});
++    }
++  }
++  std::ranges::sort(matches, [](const ScoredArchived& a,
++                                const ScoredArchived& b) {
++    if (a.score != b.score) {
++      return a.score > b.score;
++    }
++    return a.tab->archived_time > b.tab->archived_time;
++  });
++  if (matches.size() > kMaxArchivedTabsWithQuery) {
++    matches.resize(kMaxArchivedTabsWithQuery);
++  }
++
++  std::vector<Entry> entries;
++  entries.reserve(matches.size());
++  for (const ScoredArchived& scored : matches) {
++    const ArchivedTabsService::ArchivedTab& archived = *scored.tab;
++    Entry entry;
++    entry.archived_tab_id = archived.id;
++    entry.title = archived.title.empty() ? FormatUrlForDisplay(archived.url)
++                                         : archived.title;
++    entry.detail = FormatUrlForDisplay(archived.url);
++    entry.favicon_url = archived.url;
++    entry.icon = ui::ImageModel::FromVectorIcon(
++        vector_icons::kHistoryIcon, kColorOmniboxResultsIcon, kIconSize);
++    entry.action = l10n_util::GetStringUTF16(
++        IDS_HELIUM_COMMAND_BAR_RESTORE_ARCHIVED_TAB);
++    entry.always_show_action = true;
++    entries.push_back(std::move(entry));
++  }
++  return entries;
++}
++
+ CommandBarView::Entry CommandBarView::CreateTabEntry(
+     tabs::TabInterface* tab) const {
+   Entry entry;
+@@ -1561,6 +1668,10 @@
+   if (entry.tab.Get()) {
+     return base::StrCat({"tab:", base::NumberToString(entry.tab.raw_value())});
+   }
++  if (entry.archived_tab_id) {
++    return base::StrCat(
++        {"archived:", base::NumberToString(*entry.archived_tab_id)});
++  }
+   if (entry.match) {
+     return base::StrCat({"url:", entry.match->destination_url.spec()});
+   }
+--- a/chrome/browser/ui/views/helium/command_bar_commands.cc
++++ b/chrome/browser/ui/views/helium/command_bar_commands.cc
+@@ -38,6 +38,10 @@
+      .lists_bangs = true},
+ 
+     // Tabs.
++    {.command_id = IDC_TAB_SEARCH,
++     .label_id = IDS_HELIUM_COMMAND_BAR_CMD_SEARCH_TABS,
++     .keywords = "tabs archived search find open",
++     .icon = &omnibox::kTabIcon},
+     {.command_id = IDC_RESTORE_TAB,
+      .label_id = IDS_HELIUM_COMMAND_BAR_CMD_REOPEN_TAB,
+      .keywords = "undo restore recently closed",
+--- a/chrome/browser/ui/views/helium/BUILD.gn
++++ b/chrome/browser/ui/views/helium/BUILD.gn
+@@ -18,6 +18,7 @@
+ 
+   deps = [
+     "//chrome/app:generated_resources",
++    "//chrome/browser/ui/tabs",
+     "//components/helium_services",
+     "//components/strings",
+   ]
+--- a/chrome/browser/resources/settings/appearance_page/appearance_behavior_page.html
++++ b/chrome/browser/resources/settings/appearance_page/appearance_behavior_page.html
+@@ -47,6 +47,19 @@
+       sub-label="$i18n{keepPinsDescription}">
+   </settings-toggle-button>
+ 
++  <div class="cr-row hr">
++    <div class="flex cr-padded-text" aria-hidden="true">
++      <div>$i18n{autoArchiveTabs}</div>
++      <div class="secondary">$i18n{autoArchiveTabsDescription}</div>
++    </div>
++    <settings-dropdown-menu id="autoArchiveTabs"
++        label="$i18n{autoArchiveTabs}"
++        sub-label="$i18n{autoArchiveTabsDescription}"
++        pref-key="helium.tabs.auto_archive_after_days"
++        menu-options="[[autoArchiveTabsOptions_]]">
++    </settings-dropdown-menu>
++  </div>
++
+ <if expr="is_macosx">
+   <settings-toggle-button class="hr" id="openExternalLinksInProfile"
+       pref="[[opensExternalLinksPref_]]"
+--- a/chrome/browser/resources/settings/appearance_page/appearance_behavior_page.ts
++++ b/chrome/browser/resources/settings/appearance_page/appearance_behavior_page.ts
+@@ -2,15 +2,19 @@
+ // You can use, redistribute, and/or modify this source code under
+ // the terms of the GPL-3.0 license that can be found in the LICENSE file.
+ 
++import '../controls/settings_dropdown_menu.js';
+ import '../controls/settings_toggle_button.js';
+ import '../settings_page/settings_section.js';
+ 
+ import {WebUiListenerMixin} from '/shared/settings/web_ui_listener_mixin.js';
+ import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+ 
++import type {DropdownMenuOptionList} from '../controls/settings_dropdown_menu.js';
+ // <if expr="is_macosx">
+ import type {SettingsToggleButtonElement} from '../controls/settings_toggle_button.js';
+-
++// </if>
++import {loadTimeData} from '../i18n_setup.js';
++// <if expr="is_macosx">
+ import {AppearanceBrowserProxyImpl} from './appearance_browser_proxy.js';
+ // </if>
+ import {getTemplate} from './appearance_behavior_page.html.js';
+@@ -27,13 +31,30 @@
+     return getTemplate();
+   }
+ 
+-  // <if expr="is_macosx">
+   static get properties() {
+     return {
++      autoArchiveTabsOptions_: {
++        readOnly: true,
++        type: Array,
++        value() {
++          return [
++            {value: 0, name: loadTimeData.getString('autoArchiveTabsNever')},
++            {value: 1, name: loadTimeData.getString('autoArchiveTabs1Day')},
++            {value: 3, name: loadTimeData.getString('autoArchiveTabs3Days')},
++            {value: 7, name: loadTimeData.getString('autoArchiveTabs7Days')},
++            {value: 14, name: loadTimeData.getString('autoArchiveTabs14Days')},
++            {value: 30, name: loadTimeData.getString('autoArchiveTabs30Days')},
++          ];
++        },
++      },
++      // <if expr="is_macosx">
+       opensExternalLinksPref_: Object,
++      // </if>
+     };
+   }
+ 
++  declare private autoArchiveTabsOptions_: DropdownMenuOptionList;
++  // <if expr="is_macosx">
+   declare private opensExternalLinksPref_:
+       chrome.settingsPrivate.PrefObject<boolean>;
+ 
+--- a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
++++ b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
+@@ -621,6 +621,15 @@
+       {"keepPins", IDS_SETTINGS_KEEP_PINS},
+       {"keepPinsDescription",
+        IDS_SETTINGS_KEEP_PINS_DESCRIPTION},
++      {"autoArchiveTabs", IDS_SETTINGS_AUTO_ARCHIVE_TABS},
++      {"autoArchiveTabsDescription",
++       IDS_SETTINGS_AUTO_ARCHIVE_TABS_DESCRIPTION},
++      {"autoArchiveTabsNever", IDS_SETTINGS_AUTO_ARCHIVE_TABS_NEVER},
++      {"autoArchiveTabs1Day", IDS_SETTINGS_AUTO_ARCHIVE_TABS_1_DAY},
++      {"autoArchiveTabs3Days", IDS_SETTINGS_AUTO_ARCHIVE_TABS_3_DAYS},
++      {"autoArchiveTabs7Days", IDS_SETTINGS_AUTO_ARCHIVE_TABS_7_DAYS},
++      {"autoArchiveTabs14Days", IDS_SETTINGS_AUTO_ARCHIVE_TABS_14_DAYS},
++      {"autoArchiveTabs30Days", IDS_SETTINGS_AUTO_ARCHIVE_TABS_30_DAYS},
+       {"ctrlTabMru", IDS_SETTINGS_CTRL_TAB_MRU},
+       {"glassEffect", IDS_SETTINGS_TAB_STYLING},
+       {"glassEffectClassic", IDS_SETTINGS_TAB_STYLING_CLASSIC},
+--- a/chrome/app/settings_strings.grdp
++++ b/chrome/app/settings_strings.grdp
+@@ -343,6 +343,30 @@
+     </message>
+     <message name="IDS_SETTINGS_KEEP_PINS_DESCRIPTION" desc="Description for the toggle which makes all windows and sessions keep the same pinned tabs.">
+       Pinned tabs show up in every window and stay pinned when closed. When disabled, each window keeps its own pinned tabs.
++    </message>
++    <message name="IDS_SETTINGS_AUTO_ARCHIVE_TABS" desc="Label for the dropdown which configures automatic archival of inactive tabs.">
++      Automatically archive inactive tabs
++    </message>
++    <message name="IDS_SETTINGS_AUTO_ARCHIVE_TABS_DESCRIPTION" desc="Description for the dropdown which configures automatic archival of inactive tabs.">
++      Closes tabs you haven't opened recently and moves them to Archived Tabs in Tab Search. Pinned, active, and audio tabs are never archived.
++    </message>
++    <message name="IDS_SETTINGS_AUTO_ARCHIVE_TABS_NEVER" desc="Option to disable automatic tab archival.">
++      Never
++    </message>
++    <message name="IDS_SETTINGS_AUTO_ARCHIVE_TABS_1_DAY" desc="Option to archive inactive tabs after 1 day.">
++      After 1 day
++    </message>
++    <message name="IDS_SETTINGS_AUTO_ARCHIVE_TABS_3_DAYS" desc="Option to archive inactive tabs after 3 days.">
++      After 3 days
++    </message>
++    <message name="IDS_SETTINGS_AUTO_ARCHIVE_TABS_7_DAYS" desc="Option to archive inactive tabs after 7 days.">
++      After 7 days
++    </message>
++    <message name="IDS_SETTINGS_AUTO_ARCHIVE_TABS_14_DAYS" desc="Option to archive inactive tabs after 14 days.">
++      After 14 days
++    </message>
++    <message name="IDS_SETTINGS_AUTO_ARCHIVE_TABS_30_DAYS" desc="Option to archive inactive tabs after 30 days.">
++      After 30 days
+     </message>
+     <message name="IDS_SETTINGS_SHIFT_RIGHT_CLICK_CONTEXT_MENU" desc="Label for the checkbox which makes Shift+right click show the browser context menu even when a page blocks it.">
+       Force context menu with Shift+Right Click
+--- a/chrome/app/generated_resources.grd
++++ b/chrome/app/generated_resources.grd
+@@ -331,6 +331,7 @@
+       <message name="IDS_HELIUM_CREATE_PREVIEW_WORKSPACE" desc="Create a pinned tab group containing desktop and mobile copies of this page.">Create desktop/mobile workspace</message>
+       <message name="IDS_HELIUM_PREVIEW_WORKSPACE_TITLE" desc="Default name for a desktop and mobile preview tab group.">Desktop + mobile</message>
+       <message name="IDS_HELIUM_COMMAND_BAR_SWITCH_TO_TAB" desc="Action shown on a search overlay result that switches to a tab that is already open.">Switch to tab</message>
++      <message name="IDS_HELIUM_COMMAND_BAR_RESTORE_ARCHIVED_TAB" desc="Action shown on a search overlay result that restores an automatically archived tab.">Restore archived tab</message>
+       <message name="IDS_HELIUM_COMMAND_BAR_OPEN_IN_NEW_TAB" desc="Action shown on a search overlay result that opens a page in a new tab.">Open in new tab</message>
+       <message name="IDS_HELIUM_COMMAND_BAR_OPEN" desc="Action shown on a search overlay result that opens a page in the current tab.">Open</message>
+       <message name="IDS_HELIUM_COMMAND_BAR_SEARCH_IN_NEW_TAB" desc="Action shown on a search overlay result that searches in a new tab.">Search in new tab</message>
+@@ -342,6 +343,7 @@
+       <message name="IDS_HELIUM_COMMAND_BAR_QR_CODE_HINT" desc="Shown next to a QR code for the current page in the search overlay.">Scan to open this page on your phone</message>
+       <message name="IDS_HELIUM_COMMAND_BAR_RUN" desc="Action shown on a search overlay result that runs a browser command.">Run</message>
+       <message name="IDS_HELIUM_COMMAND_BAR_CMD_REOPEN_TAB" desc="Search overlay command that reopens the most recently closed tab.">Reopen closed tab</message>
++      <message name="IDS_HELIUM_COMMAND_BAR_CMD_SEARCH_TABS" desc="Search overlay command that opens Tab Search to browse open, recently closed, and archived tabs.">Search tabs and archived tabs</message>
+       <message name="IDS_HELIUM_COMMAND_BAR_CMD_DUPLICATE_TAB" desc="Search overlay command that duplicates the current tab.">Duplicate tab</message>
+       <message name="IDS_HELIUM_COMMAND_BAR_CMD_PIN_TAB" desc="Search overlay command that pins the current tab.">Pin tab</message>
+       <message name="IDS_HELIUM_COMMAND_BAR_CMD_UNPIN_TAB" desc="Search overlay command that unpins the current tab.">Unpin tab</message>
+@@ -12857,6 +12859,27 @@
+       <message name="IDS_TAB_SEARCH_COLLAPSE_RECENTLY_CLOSED" desc="The tooltip for the RECENTLY CLOSED button when it's expanded">
+         Collapse recently closed
+       </message>
++      <message name="IDS_TAB_SEARCH_ARCHIVED_TABS" desc="The label on the tab search list section corresponding to automatically archived tabs.">
++        Archived Tabs
++      </message>
++      <message name="IDS_TAB_SEARCH_A11Y_ARCHIVED_TAB" is_accessibility_with_no_ui="true" desc="Singular form of a11y message announced after user selects an archived tab.">
++        Archived tab
++      </message>
++      <message name="IDS_TAB_SEARCH_A11Y_ARCHIVED_TAB_REMOVED" is_accessibility_with_no_ui="true" desc="A11y message announced after user removes an archived tab.">
++        Archived tab removed
++      </message>
++      <message name="IDS_TAB_SEARCH_EXPAND_ARCHIVED_TABS_ITEMS" desc="The label for the button that toggles showing the archived tabs list section.">
++        Toggle Archived Tabs
++      </message>
++      <message name="IDS_TAB_SEARCH_EXPAND_ARCHIVED_TABS" desc="The tooltip for the ARCHIVED TABS button when it's collapsed.">
++        Expand archived tabs
++      </message>
++      <message name="IDS_TAB_SEARCH_COLLAPSE_ARCHIVED_TABS" desc="The tooltip for the ARCHIVED TABS button when it's expanded.">
++        Collapse archived tabs
++      </message>
++      <message name="IDS_TAB_SEARCH_REMOVE_ARCHIVED_TAB" desc="The tooltip and accessible label for the button that removes an archived tab.">
++        Remove archived tab
++      </message>
+       <message name="IDS_TAB_SEARCH_TAB_NAME" desc="The tab title for tab search in the tab search bubble">
+         Search
+       </message>
