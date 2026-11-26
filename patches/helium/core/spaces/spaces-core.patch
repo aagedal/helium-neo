@@ -1,0 +1,2334 @@
+--- /dev/null
++++ b/chrome/browser/ui/tabs/helium_spaces_list.h
+@@ -0,0 +1,78 @@
++// Copyright 2026 The Helium Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_TABS_HELIUM_SPACES_LIST_H_
++#define CHROME_BROWSER_UI_TABS_HELIUM_SPACES_LIST_H_
++
++#include <stddef.h>
++
++#include <optional>
++#include <string>
++#include <vector>
++
++#include "base/values.h"
++
++namespace helium_spaces {
++
++// An entry of the spaces list.
++struct Space {
++  std::string id;
++  std::u16string name;
++  // Color token or hex string used for space tinting.
++  std::string color;
++  // Optional icon identifier or emoji for sidebar presentation.
++  std::string icon;
++};
++
++// Returns a new, unique space id.
++std::string CreateSpaceId();
++
++// The ordered spaces of a profile, persisted in profile prefs. Always contains
++// at least one space after EnsureDefaultSpace().
++class SpaceList {
++ public:
++  using iterator = std::vector<Space>::iterator;
++  using const_iterator = std::vector<Space>::const_iterator;
++
++  SpaceList();
++  SpaceList(const SpaceList&);
++  SpaceList& operator=(const SpaceList&);
++  SpaceList(SpaceList&&);
++  SpaceList& operator=(SpaceList&&);
++  ~SpaceList();
++
++  static SpaceList FromPref(const base::ListValue& value);
++  base::ListValue ToPref() const;
++
++  // Guarantees at least one space exists. Returns true if a default space was
++  // created.
++  bool EnsureDefaultSpace(const std::u16string& default_name);
++
++  iterator Find(const std::string& id);
++  const_iterator Find(const std::string& id) const;
++  std::optional<size_t> IndexOf(const std::string& id) const;
++
++  iterator begin() { return spaces_.begin(); }
++  iterator end() { return spaces_.end(); }
++  const_iterator begin() const { return spaces_.begin(); }
++  const_iterator end() const { return spaces_.end(); }
++  bool empty() const { return spaces_.empty(); }
++  size_t size() const { return spaces_.size(); }
++  Space& operator[](size_t index) { return spaces_[index]; }
++  const Space& operator[](size_t index) const { return spaces_[index]; }
++  Space& front() { return spaces_.front(); }
++  const Space& front() const { return spaces_.front(); }
++
++  void push_back(Space space);
++  iterator insert(const_iterator position, Space space);
++  iterator erase(const_iterator position);
++  bool Move(const std::string& id, size_t new_index);
++
++ private:
++  std::vector<Space> spaces_;
++};
++
++}  // namespace helium_spaces
++
++#endif  // CHROME_BROWSER_UI_TABS_HELIUM_SPACES_LIST_H_
+--- /dev/null
++++ b/chrome/browser/ui/tabs/helium_spaces_list.cc
+@@ -0,0 +1,134 @@
++// Copyright 2026 The Helium Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#include "chrome/browser/ui/tabs/helium_spaces_list.h"
++
++#include <algorithm>
++#include <utility>
++
++#include "base/strings/utf_string_conversions.h"
++#include "base/uuid.h"
++
++namespace helium_spaces {
++
++namespace {
++
++constexpr char kIdKey[] = "id";
++constexpr char kNameKey[] = "name";
++constexpr char kColorKey[] = "color";
++constexpr char kIconKey[] = "icon";
++
++}  // namespace
++
++std::string CreateSpaceId() {
++  return base::Uuid::GenerateRandomV4().AsLowercaseString();
++}
++
++SpaceList::SpaceList() = default;
++SpaceList::SpaceList(const SpaceList&) = default;
++SpaceList& SpaceList::operator=(const SpaceList&) = default;
++SpaceList::SpaceList(SpaceList&&) = default;
++SpaceList& SpaceList::operator=(SpaceList&&) = default;
++SpaceList::~SpaceList() = default;
++
++// static
++SpaceList SpaceList::FromPref(const base::ListValue& value) {
++  SpaceList list;
++  for (const base::Value& entry : value) {
++    const base::DictValue* const dict = entry.GetIfDict();
++    if (!dict) {
++      continue;
++    }
++
++    const std::string* const id = dict->FindString(kIdKey);
++    if (!id || id->empty() || list.Find(*id) != list.end()) {
++      continue;
++    }
++
++    Space space;
++    space.id = *id;
++    if (const std::string* const name = dict->FindString(kNameKey)) {
++      space.name = base::UTF8ToUTF16(*name);
++    }
++    if (const std::string* const color = dict->FindString(kColorKey)) {
++      space.color = *color;
++    }
++    if (const std::string* const icon = dict->FindString(kIconKey)) {
++      space.icon = *icon;
++    }
++    list.spaces_.push_back(std::move(space));
++  }
++  return list;
++}
++
++base::ListValue SpaceList::ToPref() const {
++  base::ListValue value;
++  for (const Space& space : spaces_) {
++    base::DictValue entry;
++    entry.Set(kIdKey, space.id);
++    entry.Set(kNameKey, base::UTF16ToUTF8(space.name));
++    if (!space.color.empty()) {
++      entry.Set(kColorKey, space.color);
++    }
++    if (!space.icon.empty()) {
++      entry.Set(kIconKey, space.icon);
++    }
++    value.Append(std::move(entry));
++  }
++  return value;
++}
++
++bool SpaceList::EnsureDefaultSpace(const std::u16string& default_name) {
++  if (!spaces_.empty()) {
++    return false;
++  }
++  spaces_.push_back({CreateSpaceId(), default_name, {}, {}});
++  return true;
++}
++
++SpaceList::iterator SpaceList::Find(const std::string& id) {
++  return std::ranges::find(spaces_, id, &Space::id);
++}
++
++SpaceList::const_iterator SpaceList::Find(const std::string& id) const {
++  return std::ranges::find(spaces_, id, &Space::id);
++}
++
++std::optional<size_t> SpaceList::IndexOf(const std::string& id) const {
++  const auto it = Find(id);
++  if (it == spaces_.end()) {
++    return std::nullopt;
++  }
++  return static_cast<size_t>(it - spaces_.begin());
++}
++
++void SpaceList::push_back(Space space) {
++  spaces_.push_back(std::move(space));
++}
++
++SpaceList::iterator SpaceList::insert(const_iterator position, Space space) {
++  return spaces_.insert(position, std::move(space));
++}
++
++SpaceList::iterator SpaceList::erase(const_iterator position) {
++  return spaces_.erase(position);
++}
++
++bool SpaceList::Move(const std::string& id, size_t new_index) {
++  const auto it = Find(id);
++  if (it == spaces_.end() || spaces_.size() < 2) {
++    return false;
++  }
++  const size_t old_index = static_cast<size_t>(it - spaces_.begin());
++  new_index = std::min(new_index, spaces_.size() - 1);
++  if (old_index == new_index) {
++    return false;
++  }
++  Space moved = std::move(*it);
++  spaces_.erase(it);
++  spaces_.insert(spaces_.begin() + new_index, std::move(moved));
++  return true;
++}
++
++}  // namespace helium_spaces
+--- /dev/null
++++ b/chrome/browser/ui/tabs/helium_spaces_tab_controller.h
+@@ -0,0 +1,74 @@
++// Copyright 2026 The Helium Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_TABS_HELIUM_SPACES_TAB_CONTROLLER_H_
++#define CHROME_BROWSER_UI_TABS_HELIUM_SPACES_TAB_CONTROLLER_H_
++
++#include <map>
++#include <string>
++#include <vector>
++
++#include "base/callback_list.h"
++#include "base/memory/raw_ref.h"
++#include "ui/base/unowned_user_data/scoped_unowned_user_data.h"
++
++namespace content {
++class WebContents;
++}  // namespace content
++
++namespace tabs {
++class TabInterface;
++}  // namespace tabs
++
++namespace helium_spaces {
++
++// Persistent space assignment of a tab. Kept on the tab so it survives
++// discards, and mirrored into session extra data.
++class HeliumSpacesTabController {
++ public:
++  static constexpr char kSpaceIdKey[] = "helium.space_id";
++
++  explicit HeliumSpacesTabController(tabs::TabInterface& tab);
++  HeliumSpacesTabController(const HeliumSpacesTabController&) = delete;
++  HeliumSpacesTabController& operator=(const HeliumSpacesTabController&) =
++      delete;
++  ~HeliumSpacesTabController();
++
++  DECLARE_USER_DATA(HeliumSpacesTabController);
++
++  static HeliumSpacesTabController* From(tabs::TabInterface* tab);
++  static const HeliumSpacesTabController* From(const tabs::TabInterface* tab);
++
++  // Holds the space id from a restored tab's extra_data until the tab's
++  // controller is created.
++  static void StashRestoredState(
++      content::WebContents* contents,
++      const std::map<std::string, std::string>& extra_data);
++
++  // Returns the session extra data for the tab holding contents, or an empty
++  // map if it has no space id.
++  static std::map<std::string, std::string> GetSessionExtraData(
++      content::WebContents* contents);
++
++  tabs::TabInterface& tab() { return *tab_; }
++
++  const std::string& space_id() const { return space_id_; }
++
++  // Updates the tab's space id and persists it to SessionService.
++  void SetSpaceId(const std::string& space_id);
++
++ private:
++  void OnDidInsert(tabs::TabInterface* tab);
++  void PersistSessionData();
++
++  const raw_ref<tabs::TabInterface> tab_;
++  std::string space_id_;
++  std::vector<base::CallbackListSubscription> tab_subscriptions_;
++  ui::ScopedUnownedUserData<HeliumSpacesTabController>
++      scoped_unowned_user_data_;
++};
++
++}  // namespace helium_spaces
++
++#endif  // CHROME_BROWSER_UI_TABS_HELIUM_SPACES_TAB_CONTROLLER_H_
+--- /dev/null
++++ b/chrome/browser/ui/tabs/helium_spaces_tab_controller.cc
+@@ -0,0 +1,161 @@
++// Copyright 2026 The Helium Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#include "chrome/browser/ui/tabs/helium_spaces_tab_controller.h"
++
++#include <utility>
++
++#include "base/containers/map_util.h"
++#include "base/functional/bind.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/sessions/session_restore.h"
++#include "chrome/browser/sessions/session_service.h"
++#include "chrome/browser/sessions/session_service_factory.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
++#include "chrome/browser/ui/tabs/helium_window_spaces_controller.h"
++#include "components/sessions/content/session_tab_helper.h"
++#include "components/sessions/core/session_id.h"
++#include "components/tabs/public/tab_interface.h"
++#include "content/public/browser/web_contents.h"
++#include "content/public/browser/web_contents_user_data.h"
++
++namespace helium_spaces {
++
++namespace {
++
++std::string FindValue(const std::map<std::string, std::string>& extra_data,
++                      const char* key) {
++  const std::string* const value = base::FindOrNull(extra_data, key);
++  return value ? *value : std::string();
++}
++
++// Carries a restored tab's space extra data until its controller is created.
++class RestoredSpaceState
++    : public content::WebContentsUserData<RestoredSpaceState> {
++ public:
++  ~RestoredSpaceState() override = default;
++
++  const std::string& space_id() const { return space_id_; }
++
++ private:
++  friend class content::WebContentsUserData<RestoredSpaceState>;
++
++  RestoredSpaceState(content::WebContents* contents, std::string space_id)
++      : content::WebContentsUserData<RestoredSpaceState>(*contents),
++        space_id_(std::move(space_id)) {}
++
++  const std::string space_id_;
++
++  WEB_CONTENTS_USER_DATA_KEY_DECL();
++};
++
++WEB_CONTENTS_USER_DATA_KEY_IMPL(RestoredSpaceState);
++
++}  // namespace
++
++DEFINE_USER_DATA(HeliumSpacesTabController);
++
++HeliumSpacesTabController::HeliumSpacesTabController(tabs::TabInterface& tab)
++    : tab_(tab),
++      scoped_unowned_user_data_(tab.GetUnownedUserDataHost(), *this) {
++  content::WebContents* const contents = tab.GetContents();
++  if (const RestoredSpaceState* state =
++          RestoredSpaceState::FromWebContents(contents)) {
++    space_id_ = state->space_id();
++    contents->RemoveUserData(RestoredSpaceState::UserDataKey());
++  }
++
++  // Assign newly created tabs to the window's active space immediately so
++  // TabCollectionObserver and TabStripModelObserver (which can run before
++  // HeliumWindowSpacesController) already see the tab in the right Space.
++  if (space_id_.empty() && contents) {
++    Profile* const profile =
++        Profile::FromBrowserContext(contents->GetBrowserContext());
++    if (!SessionRestore::IsRestoring(profile)) {
++      if (const HeliumWindowSpacesController* win_ctrl =
++              HeliumWindowSpacesController::From(
++                  tab.GetBrowserWindowInterface());
++          win_ctrl && !win_ctrl->active_space_id().empty()) {
++        space_id_ = win_ctrl->active_space_id();
++      }
++    }
++  }
++
++  tab_subscriptions_.push_back(tab.RegisterDidInsert(base::BindRepeating(
++      &HeliumSpacesTabController::OnDidInsert, base::Unretained(this))));
++}
++
++HeliumSpacesTabController::~HeliumSpacesTabController() = default;
++
++// static
++HeliumSpacesTabController* HeliumSpacesTabController::From(
++    tabs::TabInterface* tab) {
++  return tab ? Get(tab->GetUnownedUserDataHost()) : nullptr;
++}
++
++// static
++const HeliumSpacesTabController* HeliumSpacesTabController::From(
++    const tabs::TabInterface* tab) {
++  return tab ? Get(const_cast<tabs::TabInterface*>(tab)
++                       ->GetUnownedUserDataHost())
++             : nullptr;
++}
++
++// static
++void HeliumSpacesTabController::StashRestoredState(
++    content::WebContents* contents,
++    const std::map<std::string, std::string>& extra_data) {
++  const std::string space_id = FindValue(extra_data, kSpaceIdKey);
++  if (!space_id.empty()) {
++    RestoredSpaceState::CreateForWebContents(contents, space_id);
++  }
++}
++
++// static
++std::map<std::string, std::string>
++HeliumSpacesTabController::GetSessionExtraData(content::WebContents* contents) {
++  const HeliumSpacesTabController* const controller =
++      From(tabs::TabInterface::MaybeGetFromContents(contents));
++  if (!controller || controller->space_id().empty()) {
++    return {};
++  }
++  return {{kSpaceIdKey, controller->space_id()}};
++}
++
++void HeliumSpacesTabController::SetSpaceId(const std::string& space_id) {
++  if (space_id_ == space_id) {
++    return;
++  }
++  space_id_ = space_id;
++  PersistSessionData();
++}
++
++void HeliumSpacesTabController::OnDidInsert(tabs::TabInterface* tab) {
++  if (!space_id_.empty()) {
++    PersistSessionData();
++  }
++}
++
++void HeliumSpacesTabController::PersistSessionData() {
++  content::WebContents* const contents = tab_->GetContents();
++  if (!contents) {
++    return;
++  }
++  SessionService* const session_service = SessionServiceFactory::GetForProfile(
++      Profile::FromBrowserContext(contents->GetBrowserContext()));
++  if (!session_service) {
++    return;
++  }
++
++  const SessionID window_id =
++      sessions::SessionTabHelper::IdForWindowContainingTab(contents);
++  const SessionID tab_id = sessions::SessionTabHelper::IdForTab(contents);
++  if (!window_id.is_valid() || !tab_id.is_valid()) {
++    return;
++  }
++
++  session_service->AddTabExtraData(window_id, tab_id, kSpaceIdKey, space_id_);
++}
++
++}  // namespace helium_spaces
+--- /dev/null
++++ b/chrome/browser/ui/tabs/helium_spaces_service.h
+@@ -0,0 +1,79 @@
++// Copyright 2026 The Helium Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_TABS_HELIUM_SPACES_SERVICE_H_
++#define CHROME_BROWSER_UI_TABS_HELIUM_SPACES_SERVICE_H_
++
++#include <optional>
++#include <string>
++
++#include "base/memory/raw_ptr.h"
++#include "base/observer_list.h"
++#include "base/observer_list_types.h"
++#include "chrome/browser/ui/tabs/helium_spaces_list.h"
++#include "components/keyed_service/core/keyed_service.h"
++#include "components/prefs/pref_change_registrar.h"
++
++class PrefService;
++class Profile;
++
++namespace helium_spaces {
++
++// Manages the ordered list of Spaces for a profile, persisted in profile prefs.
++class HeliumSpacesService : public KeyedService {
++ public:
++  class Observer : public base::CheckedObserver {
++   public:
++    virtual void OnSpacesChanged() {}
++    virtual void OnSpaceDeleted(const std::string& deleted_space_id,
++                                const std::string& fallback_space_id) {}
++    virtual void OnPinsPerSpaceChanged() {}
++  };
++
++  HeliumSpacesService(Profile* profile, PrefService* prefs);
++  HeliumSpacesService(const HeliumSpacesService&) = delete;
++  HeliumSpacesService& operator=(const HeliumSpacesService&) = delete;
++  ~HeliumSpacesService() override;
++
++  void AddObserver(Observer* observer);
++  void RemoveObserver(Observer* observer);
++
++  const SpaceList& spaces() const { return spaces_; }
++  const std::string& GetDefaultSpaceId() const;
++  const Space* FindSpace(const std::string& id) const;
++  std::optional<size_t> GetSpaceIndex(const std::string& id) const;
++
++  bool PinsArePerSpace() const;
++
++  std::string CreateSpace(const std::u16string& name = {},
++                          const std::string& color = {},
++                          const std::string& icon = {});
++
++  bool RenameSpace(const std::string& id, const std::u16string& name);
++  bool SetSpaceColor(const std::string& id, const std::string& color);
++  bool SetSpaceIcon(const std::string& id, const std::string& icon);
++  bool ReorderSpace(const std::string& id, size_t new_index);
++
++  bool CanDeleteSpace(const std::string& id) const;
++  std::string GetFallbackSpaceId(const std::string& id) const;
++  bool HasTabsOrPinsInSpace(const std::string& id) const;
++  bool DeleteSpace(const std::string& id, bool move_tabs_to_fallback);
++
++  // KeyedService:
++  void Shutdown() override;
++
++ private:
++  void SaveSpaces();
++  void OnPinsPerSpacePrefChanged();
++
++  const raw_ptr<Profile> profile_;
++  const raw_ptr<PrefService> prefs_;
++  SpaceList spaces_;
++  PrefChangeRegistrar pref_change_registrar_;
++  base::ObserverList<Observer> observers_;
++};
++
++}  // namespace helium_spaces
++
++#endif  // CHROME_BROWSER_UI_TABS_HELIUM_SPACES_SERVICE_H_
+--- /dev/null
++++ b/chrome/browser/ui/tabs/helium_spaces_service.cc
+@@ -0,0 +1,339 @@
++// Copyright 2026 The Helium Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#include "chrome/browser/ui/tabs/helium_spaces_service.h"
++
++#include <utility>
++#include <vector>
++
++#include "base/functional/bind.h"
++#include "base/strings/string_number_conversions.h"
++#include "base/strings/string_util.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
++#include "chrome/browser/ui/browser_window/public/profile_browser_collection.h"
++#include "chrome/browser/ui/tabs/helium_pins_service.h"
++#include "chrome/browser/ui/tabs/helium_pins_util.h"
++#include "chrome/browser/ui/tabs/helium_spaces_tab_controller.h"
++#include "chrome/browser/ui/tabs/helium_spaces_util.h"
++#include "chrome/browser/ui/tabs/pinned_tab_service_factory.h"
++#include "chrome/browser/ui/tabs/tab_enums.h"
++#include "chrome/browser/ui/tabs/tab_strip_model.h"
++#include "chrome/common/pref_names.h"
++#include "chrome/grit/generated_resources.h"
++#include "components/prefs/pref_service.h"
++#include "components/tabs/public/tab_interface.h"
++#include "ui/base/l10n/l10n_util.h"
++
++namespace helium_spaces {
++
++HeliumSpacesService::HeliumSpacesService(Profile* profile, PrefService* prefs)
++    : profile_(profile), prefs_(prefs) {
++  if (prefs_) {
++    spaces_ = SpaceList::FromPref(prefs_->GetList(prefs::kHeliumSpaces));
++  }
++  const std::u16string default_name =
++      l10n_util::GetStringUTF16(IDS_HELIUM_DEFAULT_SPACE_NAME);
++  if (spaces_.EnsureDefaultSpace(default_name)) {
++    SaveSpaces();
++  }
++
++  if (prefs_) {
++    pref_change_registrar_.Init(prefs_);
++    pref_change_registrar_.Add(
++        prefs::kHeliumSpacesPinsPerSpace,
++        base::BindRepeating(&HeliumSpacesService::OnPinsPerSpacePrefChanged,
++                            base::Unretained(this)));
++  }
++}
++
++HeliumSpacesService::~HeliumSpacesService() = default;
++
++void HeliumSpacesService::AddObserver(Observer* observer) {
++  observers_.AddObserver(observer);
++}
++
++void HeliumSpacesService::RemoveObserver(Observer* observer) {
++  observers_.RemoveObserver(observer);
++}
++
++const std::string& HeliumSpacesService::GetDefaultSpaceId() const {
++  return spaces_.front().id;
++}
++
++const Space* HeliumSpacesService::FindSpace(const std::string& id) const {
++  const auto it = spaces_.Find(id);
++  return it == spaces_.end() ? nullptr : &*it;
++}
++
++std::optional<size_t> HeliumSpacesService::GetSpaceIndex(
++    const std::string& id) const {
++  return spaces_.IndexOf(id);
++}
++
++bool HeliumSpacesService::PinsArePerSpace() const {
++  return !prefs_ || prefs_->GetBoolean(prefs::kHeliumSpacesPinsPerSpace);
++}
++
++std::string HeliumSpacesService::CreateSpace(const std::u16string& name,
++                                             const std::string& color,
++                                             const std::string& icon) {
++  std::u16string resolved_name(base::TrimWhitespace(name, base::TRIM_ALL));
++  if (resolved_name.empty()) {
++    resolved_name = l10n_util::GetStringFUTF16(
++        IDS_HELIUM_NEW_SPACE_DEFAULT_NAME,
++        base::NumberToString16(spaces_.size() + 1));
++  }
++
++  Space space{CreateSpaceId(), std::move(resolved_name), color, icon};
++  const std::string id = space.id;
++  spaces_.push_back(std::move(space));
++  SaveSpaces();
++  for (Observer& observer : observers_) {
++    observer.OnSpacesChanged();
++  }
++  return id;
++}
++
++bool HeliumSpacesService::RenameSpace(const std::string& id,
++                                      const std::u16string& name) {
++  const auto it = spaces_.Find(id);
++  if (it == spaces_.end()) {
++    return false;
++  }
++  std::u16string trimmed(base::TrimWhitespace(name, base::TRIM_ALL));
++  if (trimmed.empty() || it->name == trimmed) {
++    return false;
++  }
++  it->name = std::move(trimmed);
++  SaveSpaces();
++  for (Observer& observer : observers_) {
++    observer.OnSpacesChanged();
++  }
++  return true;
++}
++
++bool HeliumSpacesService::SetSpaceColor(const std::string& id,
++                                        const std::string& color) {
++  const auto it = spaces_.Find(id);
++  if (it == spaces_.end() || it->color == color) {
++    return false;
++  }
++  it->color = color;
++  SaveSpaces();
++  for (Observer& observer : observers_) {
++    observer.OnSpacesChanged();
++  }
++  return true;
++}
++
++bool HeliumSpacesService::SetSpaceIcon(const std::string& id,
++                                       const std::string& icon) {
++  const auto it = spaces_.Find(id);
++  if (it == spaces_.end() || it->icon == icon) {
++    return false;
++  }
++  it->icon = icon;
++  SaveSpaces();
++  for (Observer& observer : observers_) {
++    observer.OnSpacesChanged();
++  }
++  return true;
++}
++
++bool HeliumSpacesService::ReorderSpace(const std::string& id,
++                                       size_t new_index) {
++  if (!spaces_.Move(id, new_index)) {
++    return false;
++  }
++  SaveSpaces();
++  for (Observer& observer : observers_) {
++    observer.OnSpacesChanged();
++  }
++  return true;
++}
++
++bool HeliumSpacesService::CanDeleteSpace(const std::string& id) const {
++  return spaces_.size() > 1 && FindSpace(id) != nullptr;
++}
++
++std::string HeliumSpacesService::GetFallbackSpaceId(
++    const std::string& id) const {
++  const std::optional<size_t> index = GetSpaceIndex(id);
++  if (!index || spaces_.size() <= 1) {
++    return std::string();
++  }
++  return *index > 0 ? spaces_[*index - 1].id : spaces_[1].id;
++}
++
++bool HeliumSpacesService::HasTabsOrPinsInSpace(const std::string& id) const {
++  if (!profile_ || !FindSpace(id)) {
++    return false;
++  }
++
++  if (helium_pins::ArePersistentPinsEnabled(profile_)) {
++    if (helium_pins::HeliumPinsService* pins_service =
++            PinnedTabServiceFactory::GetForProfile(profile_)) {
++      if (pins_service->HasPinsInSpace(id)) {
++        return true;
++      }
++    }
++  }
++
++  bool found = false;
++  if (ProfileBrowserCollection* browsers =
++          ProfileBrowserCollection::GetForProfile(profile_)) {
++    browsers->ForEach([&](BrowserWindowInterface* browser) {
++      if (!HasSpaces(browser) || browser->IsDeleteScheduled()) {
++        return true;
++      }
++      TabStripModel* model = browser->GetTabStripModel();
++      for (int i = 0; i < model->count(); ++i) {
++        tabs::TabInterface* tab = model->GetTabAtIndex(i);
++        if (tab->IsPinned() && helium_pins::IsPersistentPin(tab)) {
++          continue;
++        }
++        if (GetTabSpaceId(tab) == id) {
++          found = true;
++          return false;
++        }
++      }
++      return true;
++    });
++  }
++  return found;
++}
++
++bool HeliumSpacesService::DeleteSpace(const std::string& id,
++                                      bool move_tabs_to_fallback) {
++  if (!CanDeleteSpace(id)) {
++    return false;
++  }
++
++  const std::string fallback_id = GetFallbackSpaceId(id);
++  if (fallback_id.empty()) {
++    return false;
++  }
++
++  if (profile_ && helium_pins::ArePersistentPinsEnabled(profile_)) {
++    if (helium_pins::HeliumPinsService* pins_service =
++            PinnedTabServiceFactory::GetForProfile(profile_)) {
++      pins_service->HandleSpaceDeleted(id, fallback_id, move_tabs_to_fallback);
++    }
++  }
++
++  std::vector<BrowserWindowInterface*> windows;
++  if (profile_) {
++    if (ProfileBrowserCollection* browsers =
++            ProfileBrowserCollection::GetForProfile(profile_)) {
++      browsers->ForEach([&](BrowserWindowInterface* browser) {
++        if (HasSpaces(browser) && !browser->IsDeleteScheduled()) {
++          windows.push_back(browser);
++        }
++        return true;
++      });
++    }
++  }
++
++  struct WindowCloseList {
++    raw_ptr<BrowserWindowInterface> browser;
++    std::vector<tabs::TabHandle> tabs;
++  };
++  std::vector<WindowCloseList> tabs_to_close;
++
++  if (move_tabs_to_fallback) {
++    for (BrowserWindowInterface* browser : windows) {
++      TabStripModel* model = browser->GetTabStripModel();
++      for (int i = 0; i < model->count(); ++i) {
++        tabs::TabInterface* tab = model->GetTabAtIndex(i);
++        if (tab->IsPinned() && helium_pins::IsPersistentPin(tab)) {
++          continue;
++        }
++        if (GetTabSpaceId(tab) == id) {
++          if (HeliumSpacesTabController* controller =
++                  HeliumSpacesTabController::From(tab)) {
++            controller->SetSpaceId(fallback_id);
++          }
++        }
++      }
++    }
++  } else {
++    // Collect tabs to close BEFORE erasing `id` from `spaces_`, because
++    // GetTabSpaceId() falls back to the default space once `id` is gone.
++    for (BrowserWindowInterface* browser : windows) {
++      TabStripModel* model = browser->GetTabStripModel();
++      WindowCloseList list{browser, {}};
++      for (int i = 0; i < model->count(); ++i) {
++        tabs::TabInterface* tab = model->GetTabAtIndex(i);
++        if (tab->IsPinned() && helium_pins::IsPersistentPin(tab)) {
++          continue;
++        }
++        if (GetTabSpaceId(tab) == id) {
++          list.tabs.push_back(tab->GetHandle());
++        }
++      }
++      if (!list.tabs.empty()) {
++        tabs_to_close.push_back(std::move(list));
++      }
++    }
++  }
++
++  const auto it = spaces_.Find(id);
++  if (it != spaces_.end()) {
++    spaces_.erase(it);
++  }
++  SaveSpaces();
++
++  for (Observer& observer : observers_) {
++    observer.OnSpaceDeleted(id, fallback_id);
++  }
++
++  if (!move_tabs_to_fallback) {
++    for (const WindowCloseList& list : tabs_to_close) {
++      if (list.browser->IsDeleteScheduled()) {
++        continue;
++      }
++      TabStripModel* model = list.browser->GetTabStripModel();
++      if (model->closing_all()) {
++        continue;
++      }
++      for (tabs::TabHandle handle : list.tabs) {
++        tabs::TabInterface* tab = handle.Get();
++        if (!tab) {
++          continue;
++        }
++        const int idx = model->GetIndexOfTab(tab);
++        if (idx != TabStripModel::kNoTab && model->count() > 1) {
++          model->CloseWebContentsAt(idx,
++                                    TabCloseTypes::CLOSE_CREATE_HISTORICAL_TAB);
++        }
++      }
++    }
++  }
++
++  for (Observer& observer : observers_) {
++    observer.OnSpacesChanged();
++  }
++  return true;
++}
++
++void HeliumSpacesService::Shutdown() {
++  pref_change_registrar_.RemoveAll();
++}
++
++void HeliumSpacesService::SaveSpaces() {
++  if (!prefs_) {
++    return;
++  }
++  prefs_->SetList(prefs::kHeliumSpaces, spaces_.ToPref());
++  prefs_->CommitPendingWrite();
++}
++
++void HeliumSpacesService::OnPinsPerSpacePrefChanged() {
++  for (Observer& observer : observers_) {
++    observer.OnPinsPerSpaceChanged();
++  }
++}
++
++}  // namespace helium_spaces
+--- /dev/null
++++ b/chrome/browser/ui/tabs/helium_spaces_service_factory.h
+@@ -0,0 +1,40 @@
++// Copyright 2026 The Helium Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_TABS_HELIUM_SPACES_SERVICE_FACTORY_H_
++#define CHROME_BROWSER_UI_TABS_HELIUM_SPACES_SERVICE_FACTORY_H_
++
++#include "base/no_destructor.h"
++#include "chrome/browser/profiles/profile_keyed_service_factory.h"
++
++class Profile;
++
++namespace helium_spaces {
++
++class HeliumSpacesService;
++
++class HeliumSpacesServiceFactory : public ProfileKeyedServiceFactory {
++ public:
++  static HeliumSpacesService* GetForProfile(Profile* profile);
++  static HeliumSpacesServiceFactory* GetInstance();
++
++  HeliumSpacesServiceFactory(const HeliumSpacesServiceFactory&) = delete;
++  HeliumSpacesServiceFactory& operator=(const HeliumSpacesServiceFactory&) =
++      delete;
++
++ private:
++  friend base::NoDestructor<HeliumSpacesServiceFactory>;
++
++  HeliumSpacesServiceFactory();
++  ~HeliumSpacesServiceFactory() override;
++
++  // BrowserContextKeyedServiceFactory:
++  std::unique_ptr<KeyedService> BuildServiceInstanceForBrowserContext(
++      content::BrowserContext* context) const override;
++  bool ServiceIsCreatedWithBrowserContext() const override;
++};
++
++}  // namespace helium_spaces
++
++#endif  // CHROME_BROWSER_UI_TABS_HELIUM_SPACES_SERVICE_FACTORY_H_
+--- /dev/null
++++ b/chrome/browser/ui/tabs/helium_spaces_service_factory.cc
+@@ -0,0 +1,52 @@
++// Copyright 2026 The Helium Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#include "chrome/browser/ui/tabs/helium_spaces_service_factory.h"
++
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/ui/browser_manager_service_factory.h"
++#include "chrome/browser/ui/tabs/helium_spaces_service.h"
++
++namespace helium_spaces {
++
++// static
++HeliumSpacesService* HeliumSpacesServiceFactory::GetForProfile(
++    Profile* profile) {
++  return profile ? static_cast<HeliumSpacesService*>(
++                       GetInstance()->GetServiceForBrowserContext(profile,
++                                                                  true))
++                 : nullptr;
++}
++
++// static
++HeliumSpacesServiceFactory* HeliumSpacesServiceFactory::GetInstance() {
++  static base::NoDestructor<HeliumSpacesServiceFactory> instance;
++  return instance.get();
++}
++
++HeliumSpacesServiceFactory::HeliumSpacesServiceFactory()
++    : ProfileKeyedServiceFactory(
++          "HeliumSpacesService",
++          ProfileSelections::Builder()
++              .WithRegular(ProfileSelection::kOriginalOnly)
++              .WithGuest(ProfileSelection::kNone)
++              .WithAshInternals(ProfileSelection::kNone)
++              .Build()) {
++  DependsOn(BrowserManagerServiceFactory::GetInstance());
++}
++
++HeliumSpacesServiceFactory::~HeliumSpacesServiceFactory() = default;
++
++std::unique_ptr<KeyedService>
++HeliumSpacesServiceFactory::BuildServiceInstanceForBrowserContext(
++    content::BrowserContext* context) const {
++  Profile* const profile = Profile::FromBrowserContext(context);
++  return std::make_unique<HeliumSpacesService>(profile, profile->GetPrefs());
++}
++
++bool HeliumSpacesServiceFactory::ServiceIsCreatedWithBrowserContext() const {
++  return true;
++}
++
++}  // namespace helium_spaces
+--- /dev/null
++++ b/chrome/browser/ui/tabs/helium_window_spaces_controller.h
+@@ -0,0 +1,102 @@
++// Copyright 2026 The Helium Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_TABS_HELIUM_WINDOW_SPACES_CONTROLLER_H_
++#define CHROME_BROWSER_UI_TABS_HELIUM_WINDOW_SPACES_CONTROLLER_H_
++
++#include <map>
++#include <string>
++#include <vector>
++
++#include "base/callback_list.h"
++#include "base/memory/raw_ptr.h"
++#include "base/scoped_observation.h"
++#include "chrome/browser/ui/tabs/helium_spaces_service.h"
++#include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
++#include "components/tabs/public/tab_interface.h"
++#include "ui/base/unowned_user_data/scoped_unowned_user_data.h"
++
++class BrowserWindowInterface;
++class TabStripModel;
++
++namespace helium_spaces {
++
++// Per-window active Space state: tracks which Space the window currently shows,
++// remembers the last active tab per Space, persists the window's active Space
++// in SessionService, and keeps TabStripModel tab assignments consistent.
++class HeliumWindowSpacesController : public TabStripModelObserver,
++                                     public HeliumSpacesService::Observer {
++ public:
++  static constexpr char kActiveSpaceIdKey[] = "helium.active_space_id";
++
++  DECLARE_USER_DATA(HeliumWindowSpacesController);
++
++  HeliumWindowSpacesController(BrowserWindowInterface* browser,
++                               const std::string& restored_space_id);
++  HeliumWindowSpacesController(const HeliumWindowSpacesController&) = delete;
++  HeliumWindowSpacesController& operator=(const HeliumWindowSpacesController&) =
++      delete;
++  ~HeliumWindowSpacesController() override;
++
++  static HeliumWindowSpacesController* From(BrowserWindowInterface* browser);
++  static const HeliumWindowSpacesController* From(
++      const BrowserWindowInterface* browser);
++
++  const std::string& active_space_id() const { return active_space_id_; }
++
++  bool SwitchToSpace(const std::string& space_id);
++  void SwitchToNextSpace();
++  void SwitchToPreviousSpace();
++  void SwitchToSpaceAtIndex(size_t index);
++
++  void MoveTabsToSpace(const std::vector<tabs::TabInterface*>& tabs,
++                       const std::string& target_space_id);
++
++  void TogglePinAllSpaces(tabs::TabInterface* tab);
++
++  using StateChangedCallback =
++      base::RepeatingCallback<void(HeliumWindowSpacesController*)>;
++  base::CallbackListSubscription RegisterOnStateChanged(
++      StateChangedCallback callback);
++
++  void NotifyVisualStateChanged();
++
++  // TabStripModelObserver:
++  void OnTabStripModelChanged(
++      TabStripModel* tab_strip_model,
++      const TabStripModelChange& change,
++      const TabStripSelectionChange& selection) override;
++
++  // HeliumSpacesService::Observer:
++  void OnSpacesChanged() override;
++  void OnSpaceDeleted(const std::string& deleted_space_id,
++                      const std::string& fallback_space_id) override;
++  void OnPinsPerSpaceChanged() override;
++
++ private:
++  void PersistWindowSpace();
++  void ActivateTabForSpace(const std::string& space_id);
++  tabs::TabInterface* FindTabToActivateInSpace(
++      const std::string& space_id) const;
++  std::string ResolveInitialSpaceForTab(tabs::TabInterface* tab) const;
++
++  const raw_ptr<BrowserWindowInterface> browser_;
++  const raw_ptr<HeliumSpacesService> service_;
++  std::string active_space_id_;
++  bool has_explicit_restored_space_ = false;
++  bool updating_space_ = false;
++
++  std::map<std::string, tabs::TabHandle> last_active_tabs_;
++
++  base::ScopedObservation<HeliumSpacesService, HeliumSpacesService::Observer>
++      service_observation_{this};
++  base::RepeatingCallbackList<void(HeliumWindowSpacesController*)>
++      state_changed_callbacks_;
++  ui::ScopedUnownedUserData<HeliumWindowSpacesController>
++      scoped_unowned_user_data_;
++};
++
++}  // namespace helium_spaces
++
++#endif  // CHROME_BROWSER_UI_TABS_HELIUM_WINDOW_SPACES_CONTROLLER_H_
+--- /dev/null
++++ b/chrome/browser/ui/tabs/helium_window_spaces_controller.cc
+@@ -0,0 +1,541 @@
++// Copyright 2026 The Helium Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#include "chrome/browser/ui/tabs/helium_window_spaces_controller.h"
++
++#include <algorithm>
++#include <set>
++#include <utility>
++
++#include "base/auto_reset.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/sessions/session_restore.h"
++#include "chrome/browser/sessions/session_service.h"
++#include "chrome/browser/sessions/session_service_factory.h"
++#include "chrome/browser/ui/browser_tabstrip.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
++#include "chrome/browser/ui/tabs/helium_pins_service.h"
++#include "chrome/browser/ui/tabs/helium_pins_tab_controller.h"
++#include "chrome/browser/ui/tabs/helium_pins_util.h"
++#include "chrome/browser/ui/tabs/helium_spaces_service_factory.h"
++#include "chrome/browser/ui/tabs/helium_spaces_tab_controller.h"
++#include "chrome/browser/ui/tabs/helium_spaces_util.h"
++#include "chrome/browser/ui/tabs/pinned_tab_service_factory.h"
++#include "chrome/browser/ui/tabs/tab_group_model.h"
++#include "chrome/browser/ui/tabs/tab_model.h"
++#include "chrome/browser/ui/tabs/tab_strip_model.h"
++#include "chrome/browser/ui/tabs/tab_strip_model_delegate.h"
++#include "components/split_tabs/split_tab_id.h"
++#include "components/tab_groups/tab_group_id.h"
++#include "components/tabs/public/split_tab_data.h"
++#include "components/tabs/public/tab_group.h"
++#include "content/public/browser/web_contents.h"
++#include "url/gurl.h"
++
++namespace helium_spaces {
++
++DEFINE_USER_DATA(HeliumWindowSpacesController);
++
++HeliumWindowSpacesController::HeliumWindowSpacesController(
++    BrowserWindowInterface* browser,
++    const std::string& restored_space_id)
++    : browser_(browser),
++      service_(browser && browser->GetType() ==
++                              BrowserWindowInterface::Type::TYPE_NORMAL &&
++                       !browser->GetProfile()->IsOffTheRecord()
++                   ? HeliumSpacesServiceFactory::GetForProfile(
++                         browser->GetProfile())
++                   : nullptr),
++      scoped_unowned_user_data_(browser->GetUnownedUserDataHost(), *this) {
++  if (!service_) {
++    return;
++  }
++
++  if (!restored_space_id.empty() && service_->FindSpace(restored_space_id)) {
++    active_space_id_ = restored_space_id;
++    has_explicit_restored_space_ = true;
++  } else {
++    active_space_id_ = service_->GetDefaultSpaceId();
++  }
++
++  service_observation_.Observe(service_);
++  browser_->GetTabStripModel()->AddObserver(this);
++  PersistWindowSpace();
++}
++
++HeliumWindowSpacesController::~HeliumWindowSpacesController() {
++  if (service_ && browser_ && browser_->GetTabStripModel()) {
++    browser_->GetTabStripModel()->RemoveObserver(this);
++  }
++}
++
++// static
++HeliumWindowSpacesController* HeliumWindowSpacesController::From(
++    BrowserWindowInterface* browser) {
++  return browser ? Get(browser->GetUnownedUserDataHost()) : nullptr;
++}
++
++// static
++const HeliumWindowSpacesController* HeliumWindowSpacesController::From(
++    const BrowserWindowInterface* browser) {
++  return browser ? Get(const_cast<BrowserWindowInterface*>(browser)
++                           ->GetUnownedUserDataHost())
++                 : nullptr;
++}
++
++bool HeliumWindowSpacesController::SwitchToSpace(const std::string& space_id) {
++  if (!service_ || space_id.empty() || space_id == active_space_id_ ||
++      !service_->FindSpace(space_id)) {
++    return false;
++  }
++
++  TabStripModel* const model = browser_->GetTabStripModel();
++  if (tabs::TabInterface* current_active = model->GetActiveTab()) {
++    last_active_tabs_[active_space_id_] = current_active->GetHandle();
++  }
++
++  if (model->GetFocusedGroup().has_value()) {
++    model->ExitFocusMode(std::nullopt);
++  }
++
++  {
++    base::AutoReset<bool> guard(&updating_space_, true);
++    active_space_id_ = space_id;
++    PersistWindowSpace();
++    ActivateTabForSpace(space_id);
++  }
++
++  NotifyVisualStateChanged();
++  return true;
++}
++
++void HeliumWindowSpacesController::SwitchToNextSpace() {
++  if (!service_ || service_->spaces().size() < 2) {
++    return;
++  }
++  const auto index = service_->GetSpaceIndex(active_space_id_);
++  const size_t next = index ? (*index + 1) % service_->spaces().size() : 0;
++  SwitchToSpace(service_->spaces()[next].id);
++}
++
++void HeliumWindowSpacesController::SwitchToPreviousSpace() {
++  if (!service_ || service_->spaces().size() < 2) {
++    return;
++  }
++  const auto index = service_->GetSpaceIndex(active_space_id_);
++  const size_t count = service_->spaces().size();
++  const size_t prev = index ? (*index + count - 1) % count : 0;
++  SwitchToSpace(service_->spaces()[prev].id);
++}
++
++void HeliumWindowSpacesController::SwitchToSpaceAtIndex(size_t index) {
++  if (!service_ || index >= service_->spaces().size()) {
++    return;
++  }
++  SwitchToSpace(service_->spaces()[index].id);
++}
++
++void HeliumWindowSpacesController::MoveTabsToSpace(
++    const std::vector<tabs::TabInterface*>& tabs,
++    const std::string& target_space_id) {
++  if (!service_ || !service_->FindSpace(target_space_id) || tabs.empty()) {
++    return;
++  }
++
++  TabStripModel* const model = browser_->GetTabStripModel();
++
++  std::set<tabs::TabInterface*> expanded;
++  for (tabs::TabInterface* tab : tabs) {
++    if (!tab || model->GetIndexOfTab(tab) == TabStripModel::kNoTab) {
++      continue;
++    }
++    expanded.insert(tab);
++    if (const std::optional<split_tabs::SplitTabId> split_id =
++            tab->GetSplit()) {
++      for (tabs::TabInterface* split_tab :
++           model->GetSplitData(*split_id)->ListTabs()) {
++        expanded.insert(split_tab);
++      }
++    }
++    if (const std::optional<tab_groups::TabGroupId> group_id =
++            tab->GetGroup();
++        group_id.has_value() && model->group_model() &&
++        model->group_model()->ContainsTabGroup(*group_id)) {
++      const gfx::Range range =
++          model->group_model()->GetTabGroup(*group_id)->ListTabs();
++      for (size_t i = range.start(); i < range.end(); ++i) {
++        expanded.insert(model->GetTabAtIndex(static_cast<int>(i)));
++      }
++    }
++  }
++
++  helium_pins::HeliumPinsService* const pins_service =
++      helium_pins::ArePersistentPinsEnabled(browser_->GetProfile())
++          ? PinnedTabServiceFactory::GetForProfile(browser_->GetProfile())
++          : nullptr;
++
++  bool moved_any = false;
++  for (tabs::TabInterface* tab : expanded) {
++    if (tab->IsPinned() && pins_service) {
++      if (helium_pins::HeliumPinsTabController* pin_controller =
++              helium_pins::GetPersistentPinController(tab)) {
++        pins_service->SetPinSpaceId(pin_controller->pin_id(), target_space_id);
++        moved_any = true;
++      }
++    }
++    if (HeliumSpacesTabController* space_controller =
++            HeliumSpacesTabController::From(tab)) {
++      if (space_controller->space_id() != target_space_id) {
++        space_controller->SetSpaceId(target_space_id);
++        moved_any = true;
++      }
++    }
++  }
++
++  if (!moved_any) {
++    return;
++  }
++
++  if (tabs::TabInterface* active = model->GetActiveTab();
++      active && !IsTabVisibleInSpace(model, active, active_space_id_)) {
++    base::AutoReset<bool> guard(&updating_space_, true);
++    ActivateTabForSpace(active_space_id_);
++  }
++
++  NotifyVisualStateChanged();
++}
++
++void HeliumWindowSpacesController::TogglePinAllSpaces(tabs::TabInterface* tab) {
++  if (!service_ || !tab || !tab->IsPinned()) {
++    return;
++  }
++  helium_pins::HeliumPinsService* const pins_service =
++      helium_pins::ArePersistentPinsEnabled(browser_->GetProfile())
++          ? PinnedTabServiceFactory::GetForProfile(browser_->GetProfile())
++          : nullptr;
++  helium_pins::HeliumPinsTabController* const pin_controller =
++      helium_pins::GetPersistentPinController(tab);
++  if (!pins_service || !pin_controller) {
++    return;
++  }
++
++  const bool new_all_spaces =
++      !pins_service->IsPinAllSpaces(pin_controller->pin_id());
++
++  TabStripModel* const model = browser_->GetTabStripModel();
++  std::vector<tabs::TabInterface*> targets = {tab};
++  if (const std::optional<split_tabs::SplitTabId> split_id = tab->GetSplit()) {
++    targets = model->GetSplitData(*split_id)->ListTabs();
++  }
++  for (tabs::TabInterface* member : targets) {
++    if (auto* member_pin = helium_pins::GetPersistentPinController(member)) {
++      pins_service->SetPinAllSpaces(member_pin->pin_id(), new_all_spaces);
++    }
++  }
++  NotifyVisualStateChanged();
++}
++
++base::CallbackListSubscription
++HeliumWindowSpacesController::RegisterOnStateChanged(
++    StateChangedCallback callback) {
++  return state_changed_callbacks_.Add(std::move(callback));
++}
++
++void HeliumWindowSpacesController::NotifyVisualStateChanged() {
++  state_changed_callbacks_.Notify(this);
++}
++
++void HeliumWindowSpacesController::OnTabStripModelChanged(
++    TabStripModel* tab_strip_model,
++    const TabStripModelChange& change,
++    const TabStripSelectionChange& selection) {
++  if (!service_ || tab_strip_model->closing_all()) {
++    return;
++  }
++
++  bool visual_changed = false;
++  if (change.type() == TabStripModelChange::kInserted) {
++    const auto* insert = change.GetInsert();
++    const bool window_was_empty =
++        static_cast<size_t>(tab_strip_model->count()) ==
++        insert->contents.size();
++    const bool is_restoring =
++        SessionRestore::IsRestoring(browser_->GetProfile());
++
++    if (window_was_empty && !has_explicit_restored_space_ && !is_restoring &&
++        !insert->contents.empty()) {
++      tabs::TabInterface* first_tab = insert->contents.front().tab;
++      if (!first_tab->IsPinned()) {
++        if (auto* tab_ctrl = HeliumSpacesTabController::From(first_tab);
++            tab_ctrl && !tab_ctrl->space_id().empty() &&
++            service_->FindSpace(tab_ctrl->space_id())) {
++          active_space_id_ = tab_ctrl->space_id();
++          PersistWindowSpace();
++          visual_changed = true;
++        }
++      }
++    }
++
++    for (const auto& inserted : insert->contents) {
++      tabs::TabInterface* tab = inserted.tab;
++      HeliumSpacesTabController* tab_ctrl =
++          HeliumSpacesTabController::From(tab);
++      if (!tab_ctrl) {
++        continue;
++      }
++
++      if (tab->IsPinned() &&
++          helium_pins::ArePersistentPinsEnabled(browser_->GetProfile())) {
++        if (auto* pin_ctrl = helium_pins::GetPersistentPinController(tab)) {
++          if (auto* pins_service = PinnedTabServiceFactory::GetForProfile(
++                  browser_->GetProfile())) {
++            std::string pin_space =
++                pins_service->GetPinSpaceId(pin_ctrl->pin_id());
++            if (pin_space.empty() || !service_->FindSpace(pin_space)) {
++              pin_space = service_->GetDefaultSpaceId();
++            }
++            if (tab_ctrl->space_id() != pin_space) {
++              tab_ctrl->SetSpaceId(pin_space);
++              visual_changed = true;
++            }
++            continue;
++          }
++        }
++      }
++
++      const bool has_valid_space =
++          !tab_ctrl->space_id().empty() &&
++          service_->FindSpace(tab_ctrl->space_id()) != nullptr;
++      if (!has_valid_space) {
++        const std::string resolved = ResolveInitialSpaceForTab(tab);
++        if (tab_ctrl->space_id() != resolved) {
++          tab_ctrl->SetSpaceId(resolved);
++          visual_changed = true;
++        }
++      } else {
++        // Keep tabs inserted into an existing split or group aligned with their
++        // sibling's Space.
++        std::string container_space;
++        if (const std::optional<split_tabs::SplitTabId> split_id =
++                tab->GetSplit()) {
++          for (tabs::TabInterface* member :
++               tab_strip_model->GetSplitData(*split_id)->ListTabs()) {
++            if (member == tab) {
++              continue;
++            }
++            const std::string member_space = GetTabSpaceId(member);
++            if (!member_space.empty() && service_->FindSpace(member_space)) {
++              container_space = member_space;
++              break;
++            }
++          }
++        } else if (const std::optional<tab_groups::TabGroupId> group_id =
++                       tab->GetGroup();
++                   group_id.has_value() && tab_strip_model->group_model() &&
++                   tab_strip_model->group_model()->ContainsTabGroup(
++                       *group_id)) {
++          const gfx::Range range =
++              tab_strip_model->group_model()->GetTabGroup(*group_id)->ListTabs();
++          for (size_t i = range.start(); i < range.end(); ++i) {
++            tabs::TabInterface* sibling =
++                tab_strip_model->GetTabAtIndex(static_cast<int>(i));
++            if (sibling == tab) {
++              continue;
++            }
++            const std::string sibling_space = GetTabSpaceId(sibling);
++            if (!sibling_space.empty() && service_->FindSpace(sibling_space)) {
++              container_space = sibling_space;
++              break;
++            }
++          }
++        }
++        if (!container_space.empty() && tab_ctrl->space_id() != container_space) {
++          tab_ctrl->SetSpaceId(container_space);
++          visual_changed = true;
++        } else if (!is_restoring && !window_was_empty && !tab->IsPinned() &&
++                   !tab_strip_model->delegate()->IsTabStripEditable() &&
++                   tab_ctrl->space_id() != active_space_id_) {
++          tab_ctrl->SetSpaceId(active_space_id_);
++          visual_changed = true;
++        }
++      }
++    }
++  }
++
++  if (selection.active_tab_changed() && selection.new_tab) {
++    if (!updating_space_ &&
++        !IsTabVisibleInSpace(tab_strip_model, selection.new_tab,
++                             active_space_id_)) {
++      const std::string tab_space = GetTabSpaceId(selection.new_tab);
++      if (!tab_space.empty() && service_->FindSpace(tab_space)) {
++        if (selection.old_tab) {
++          last_active_tabs_[active_space_id_] = selection.old_tab->GetHandle();
++        }
++        active_space_id_ = tab_space;
++        PersistWindowSpace();
++        visual_changed = true;
++      }
++    }
++    last_active_tabs_[active_space_id_] = selection.new_tab->GetHandle();
++  }
++
++  if (visual_changed) {
++    NotifyVisualStateChanged();
++  }
++}
++
++void HeliumWindowSpacesController::OnSpacesChanged() {
++  if (!service_) {
++    return;
++  }
++  if (!service_->FindSpace(active_space_id_)) {
++    SwitchToSpace(service_->GetDefaultSpaceId());
++    return;
++  }
++  NotifyVisualStateChanged();
++}
++
++void HeliumWindowSpacesController::OnSpaceDeleted(
++    const std::string& deleted_space_id,
++    const std::string& fallback_space_id) {
++  last_active_tabs_.erase(deleted_space_id);
++  if (active_space_id_ == deleted_space_id) {
++    SwitchToSpace(fallback_space_id);
++  } else {
++    NotifyVisualStateChanged();
++  }
++}
++
++void HeliumWindowSpacesController::OnPinsPerSpaceChanged() {
++  if (!service_) {
++    return;
++  }
++  TabStripModel* const model = browser_->GetTabStripModel();
++  if (tabs::TabInterface* active = model->GetActiveTab();
++      active && !IsTabVisibleInSpace(model, active, active_space_id_)) {
++    base::AutoReset<bool> guard(&updating_space_, true);
++    ActivateTabForSpace(active_space_id_);
++  }
++  NotifyVisualStateChanged();
++}
++
++void HeliumWindowSpacesController::PersistWindowSpace() {
++  if (!browser_ || active_space_id_.empty()) {
++    return;
++  }
++  SessionService* const session_service =
++      SessionServiceFactory::GetForProfile(browser_->GetProfile());
++  if (!session_service || !browser_->GetSessionID().is_valid()) {
++    return;
++  }
++  session_service->AddWindowExtraData(browser_->GetSessionID(),
++                                      kActiveSpaceIdKey, active_space_id_);
++}
++
++void HeliumWindowSpacesController::ActivateTabForSpace(
++    const std::string& space_id) {
++  TabStripModel* const model = browser_->GetTabStripModel();
++  if (tabs::TabInterface* target = FindTabToActivateInSpace(space_id)) {
++    const int idx = model->GetIndexOfTab(target);
++    if (idx != TabStripModel::kNoTab && idx != model->active_index()) {
++      model->ActivateTabAt(idx);
++    }
++    return;
++  }
++
++  chrome::AddTabAt(browser_, GURL(), /*index=*/-1, /*foreground=*/true);
++}
++
++tabs::TabInterface* HeliumWindowSpacesController::FindTabToActivateInSpace(
++    const std::string& space_id) const {
++  TabStripModel* const model = browser_->GetTabStripModel();
++
++  if (auto it = last_active_tabs_.find(space_id);
++      it != last_active_tabs_.end()) {
++    tabs::TabInterface* last = it->second.Get();
++    const int idx = last ? model->GetIndexOfTab(last) : TabStripModel::kNoTab;
++    if (idx != TabStripModel::kNoTab &&
++        IsTabVisibleInSpace(model, last, space_id) &&
++        !helium_pins::WouldShowHibernatedPin(*model, idx)) {
++      return last;
++    }
++  }
++
++  tabs::TabInterface* best_unpinned = nullptr;
++  tabs::TabInterface* best_loaded_pin = nullptr;
++  for (int i = 0; i < model->count(); ++i) {
++    tabs::TabInterface* tab = model->GetTabAtIndex(i);
++    if (!IsTabVisibleInSpace(model, tab, space_id) ||
++        model->IsTabCollapsed(i) ||
++        helium_pins::WouldShowHibernatedPin(*model, i)) {
++      continue;
++    }
++    if (!tab->IsPinned()) {
++      if (!best_unpinned ||
++          tab->GetContents()->GetLastActiveTimeTicks() >
++              best_unpinned->GetContents()->GetLastActiveTimeTicks()) {
++        best_unpinned = tab;
++      }
++    } else if (!helium_pins::IsHibernated(tab->GetContents())) {
++      if (!best_loaded_pin ||
++          tab->GetContents()->GetLastActiveTimeTicks() >
++              best_loaded_pin->GetContents()->GetLastActiveTimeTicks()) {
++        best_loaded_pin = tab;
++      }
++    }
++  }
++
++  return best_unpinned ? best_unpinned : best_loaded_pin;
++}
++
++std::string HeliumWindowSpacesController::ResolveInitialSpaceForTab(
++    tabs::TabInterface* tab) const {
++  TabStripModel* const model = browser_->GetTabStripModel();
++
++  if (const std::optional<split_tabs::SplitTabId> split_id = tab->GetSplit()) {
++    for (tabs::TabInterface* member :
++         model->GetSplitData(*split_id)->ListTabs()) {
++      if (member == tab) {
++        continue;
++      }
++      const std::string member_space = GetTabSpaceId(member);
++      if (!member_space.empty() && service_->FindSpace(member_space)) {
++        return member_space;
++      }
++    }
++  }
++
++  if (const std::optional<tab_groups::TabGroupId> group_id = tab->GetGroup();
++      group_id.has_value() && model->group_model() &&
++      model->group_model()->ContainsTabGroup(*group_id)) {
++    const gfx::Range range =
++        model->group_model()->GetTabGroup(*group_id)->ListTabs();
++    for (size_t i = range.start(); i < range.end(); ++i) {
++      tabs::TabInterface* sibling = model->GetTabAtIndex(static_cast<int>(i));
++      if (sibling == tab) {
++        continue;
++      }
++      const std::string sibling_space = GetTabSpaceId(sibling);
++      if (!sibling_space.empty() && service_->FindSpace(sibling_space)) {
++        return sibling_space;
++      }
++    }
++  }
++
++  const int index = model->GetIndexOfTab(tab);
++  if (index != TabStripModel::kNoTab) {
++    if (tabs::TabInterface* opener = model->GetOpenerOfTabAt(index);
++        opener && !opener->IsPinned() &&
++        !IsTabVisibleInSpace(model, opener, active_space_id_)) {
++      const std::string opener_space = GetTabSpaceId(opener);
++      if (!opener_space.empty() && service_->FindSpace(opener_space)) {
++        return opener_space;
++      }
++    }
++  }
++
++  return active_space_id_;
++}
++
++}  // namespace helium_spaces
+--- /dev/null
++++ b/chrome/browser/ui/tabs/helium_spaces_util.h
+@@ -0,0 +1,50 @@
++// Copyright 2026 The Helium Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_TABS_HELIUM_SPACES_UTIL_H_
++#define CHROME_BROWSER_UI_TABS_HELIUM_SPACES_UTIL_H_
++
++#include <set>
++#include <string>
++
++#include "components/tab_groups/tab_group_id.h"
++
++class BrowserWindowInterface;
++class TabStripModel;
++
++namespace tabs {
++class TabInterface;
++}  // namespace tabs
++
++namespace helium_spaces {
++
++bool HasSpaces(const BrowserWindowInterface* browser);
++bool HasSpaces(const TabStripModel* model);
++
++std::string GetActiveSpaceId(const BrowserWindowInterface* browser);
++std::string GetActiveSpaceId(const TabStripModel* model);
++std::string GetTabSpaceId(const tabs::TabInterface* tab);
++
++bool IsTabVisibleInSpace(const TabStripModel* model,
++                         const tabs::TabInterface* tab,
++                         const std::string& space_id);
++
++// Single helper used across TabStripModel, commands, and views to check
++// whether a tab belongs to the window's active space.
++bool IsTabInActiveSpace(const TabStripModel* model,
++                        const tabs::TabInterface* tab);
++bool IsTabInActiveSpace(const TabStripModel* model, int index);
++
++bool IsTabGroupInActiveSpace(const TabStripModel* model,
++                             const tab_groups::TabGroupId& group_id);
++
++bool HasTabsInOtherSpaces(const TabStripModel* model,
++                          const std::set<tabs::TabInterface*>& closing);
++
++void PromptToDeleteSpace(BrowserWindowInterface* browser,
++                         const std::string& space_id);
++
++}  // namespace helium_spaces
++
++#endif  // CHROME_BROWSER_UI_TABS_HELIUM_SPACES_UTIL_H_
+--- /dev/null
++++ b/chrome/browser/ui/tabs/helium_spaces_util.cc
+@@ -0,0 +1,274 @@
++// Copyright 2026 The Helium Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#include "chrome/browser/ui/tabs/helium_spaces_util.h"
++
++#include <utility>
++
++#include "base/functional/bind.h"
++#include "base/memory/weak_ptr.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
++#include "chrome/browser/ui/dialogs/browser_dialogs.h"
++#include "chrome/browser/ui/tabs/helium_pins_service.h"
++#include "chrome/browser/ui/tabs/helium_pins_tab_controller.h"
++#include "chrome/browser/ui/tabs/helium_pins_util.h"
++#include "chrome/browser/ui/tabs/helium_spaces_service.h"
++#include "chrome/browser/ui/tabs/helium_spaces_service_factory.h"
++#include "chrome/browser/ui/tabs/helium_spaces_tab_controller.h"
++#include "chrome/browser/ui/tabs/helium_window_spaces_controller.h"
++#include "chrome/browser/ui/tabs/pinned_tab_service_factory.h"
++#include "chrome/browser/ui/tabs/tab_group_model.h"
++#include "chrome/browser/ui/tabs/tab_strip_model.h"
++#include "chrome/browser/ui/tabs/tab_strip_model_delegate.h"
++#include "chrome/grit/generated_resources.h"
++#include "components/tabs/public/tab_group.h"
++#include "components/tabs/public/tab_interface.h"
++#include "ui/base/l10n/l10n_util.h"
++#include "ui/base/models/dialog_model.h"
++
++namespace helium_spaces {
++
++namespace {
++
++BrowserWindowInterface* GetBrowserFromModel(const TabStripModel* model) {
++  if (!model || !model->delegate()) {
++    return nullptr;
++  }
++  return const_cast<TabStripModelDelegate*>(model->delegate())
++      ->GetBrowserWindowInterface();
++}
++
++}  // namespace
++
++bool HasSpaces(const BrowserWindowInterface* browser) {
++  const HeliumWindowSpacesController* controller =
++      HeliumWindowSpacesController::From(browser);
++  return controller && !controller->active_space_id().empty();
++}
++
++bool HasSpaces(const TabStripModel* model) {
++  return HasSpaces(GetBrowserFromModel(model));
++}
++
++std::string GetActiveSpaceId(const BrowserWindowInterface* browser) {
++  const HeliumWindowSpacesController* controller =
++      HeliumWindowSpacesController::From(browser);
++  return controller ? controller->active_space_id() : std::string();
++}
++
++std::string GetActiveSpaceId(const TabStripModel* model) {
++  return GetActiveSpaceId(GetBrowserFromModel(model));
++}
++
++std::string GetTabSpaceId(const tabs::TabInterface* tab) {
++  if (!tab) {
++    return std::string();
++  }
++
++  BrowserWindowInterface* const browser =
++      const_cast<tabs::TabInterface*>(tab)->GetBrowserWindowInterface();
++  Profile* const profile = browser ? browser->GetProfile() : nullptr;
++  HeliumSpacesService* const service =
++      profile ? HeliumSpacesServiceFactory::GetForProfile(profile) : nullptr;
++  if (!service) {
++    return std::string();
++  }
++
++  if (tab->IsPinned() && helium_pins::ArePersistentPinsEnabled(profile)) {
++    if (const helium_pins::HeliumPinsTabController* pin_ctrl =
++            helium_pins::GetPersistentPinController(
++                const_cast<tabs::TabInterface*>(tab))) {
++      if (const helium_pins::HeliumPinsService* pins_service =
++              PinnedTabServiceFactory::GetForProfile(profile)) {
++        const std::string pin_space =
++            pins_service->GetPinSpaceId(pin_ctrl->pin_id());
++        if (!pin_space.empty() && service->FindSpace(pin_space)) {
++          return pin_space;
++        }
++      }
++    }
++  }
++
++  if (const HeliumSpacesTabController* controller =
++          HeliumSpacesTabController::From(tab)) {
++    if (!controller->space_id().empty() &&
++        service->FindSpace(controller->space_id())) {
++      return controller->space_id();
++    }
++  }
++
++  return service->GetDefaultSpaceId();
++}
++
++bool IsTabVisibleInSpace(const TabStripModel* model,
++                         const tabs::TabInterface* tab,
++                         const std::string& space_id) {
++  if (!tab || space_id.empty()) {
++    return true;
++  }
++
++  Profile* const profile = model ? model->profile() : nullptr;
++  HeliumSpacesService* const service =
++      profile ? HeliumSpacesServiceFactory::GetForProfile(profile) : nullptr;
++  if (!service) {
++    return true;
++  }
++
++  if (tab->IsPinned()) {
++    if (!service->PinsArePerSpace()) {
++      return true;
++    }
++    if (helium_pins::ArePersistentPinsEnabled(profile)) {
++      if (const helium_pins::HeliumPinsTabController* pin_ctrl =
++              helium_pins::GetPersistentPinController(
++                  const_cast<tabs::TabInterface*>(tab))) {
++        if (const helium_pins::HeliumPinsService* pins_service =
++                PinnedTabServiceFactory::GetForProfile(profile)) {
++          if (pins_service->IsPinAllSpaces(pin_ctrl->pin_id())) {
++            return true;
++          }
++          const std::string pin_space =
++              pins_service->GetPinSpaceId(pin_ctrl->pin_id());
++          return (pin_space.empty() ? service->GetDefaultSpaceId()
++                                    : pin_space) == space_id;
++        }
++      }
++    }
++  }
++
++  return GetTabSpaceId(tab) == space_id;
++}
++
++bool IsTabInActiveSpace(const TabStripModel* model,
++                        const tabs::TabInterface* tab) {
++  const std::string active_space = GetActiveSpaceId(model);
++  if (active_space.empty()) {
++    return true;
++  }
++  return IsTabVisibleInSpace(model, tab, active_space);
++}
++
++bool IsTabInActiveSpace(const TabStripModel* model, int index) {
++  if (!model || !model->ContainsIndex(index)) {
++    return true;
++  }
++  return IsTabInActiveSpace(model, model->GetTabAtIndex(index));
++}
++
++bool IsTabGroupInActiveSpace(const TabStripModel* model,
++                             const tab_groups::TabGroupId& group_id) {
++  const std::string active_space = GetActiveSpaceId(model);
++  if (active_space.empty() || !model || !model->group_model() ||
++      !model->group_model()->ContainsTabGroup(group_id)) {
++    return true;
++  }
++  const gfx::Range range =
++      model->group_model()->GetTabGroup(group_id)->ListTabs();
++  if (range.is_empty()) {
++    return true;
++  }
++  return IsTabVisibleInSpace(
++      model, model->GetTabAtIndex(static_cast<int>(range.start())),
++      active_space);
++}
++
++bool HasTabsInOtherSpaces(const TabStripModel* model,
++                          const std::set<tabs::TabInterface*>& closing) {
++  const std::string active_space = GetActiveSpaceId(model);
++  if (active_space.empty() || !model) {
++    return false;
++  }
++  for (int i = 0; i < model->count(); ++i) {
++    tabs::TabInterface* tab = model->GetTabAtIndex(i);
++    if (closing.contains(tab) ||
++        IsTabVisibleInSpace(model, tab, active_space)) {
++      continue;
++    }
++    if (!tab->IsPinned() || !helium_pins::IsHibernated(tab->GetContents())) {
++      return true;
++    }
++  }
++  return false;
++}
++
++void PromptToDeleteSpace(BrowserWindowInterface* browser,
++                         const std::string& space_id) {
++  if (!browser) {
++    return;
++  }
++  Profile* const profile = browser->GetProfile();
++  HeliumSpacesService* const service =
++      HeliumSpacesServiceFactory::GetForProfile(profile);
++  if (!service || !service->CanDeleteSpace(space_id)) {
++    return;
++  }
++
++  if (!service->HasTabsOrPinsInSpace(space_id)) {
++    service->DeleteSpace(space_id, /*move_tabs_to_fallback=*/false);
++    return;
++  }
++
++  const Space* const space = service->FindSpace(space_id);
++  const std::string fallback_id = service->GetFallbackSpaceId(space_id);
++  const Space* const fallback = service->FindSpace(fallback_id);
++  if (!space || !fallback) {
++    return;
++  }
++
++  auto run_delete = [](base::WeakPtr<BrowserWindowInterface> weak_browser,
++                       std::string target_id, bool move_tabs) {
++    if (!weak_browser) {
++      return;
++    }
++    if (HeliumSpacesService* svc = HeliumSpacesServiceFactory::GetForProfile(
++            weak_browser->GetProfile())) {
++      svc->DeleteSpace(target_id, move_tabs);
++    }
++  };
++
++  ui::DialogModel::Builder builder;
++  ui::DialogModel* const dialog_model = builder.model();
++  auto dialog =
++      builder
++          .SetTitle(l10n_util::GetStringFUTF16(
++              IDS_HELIUM_DELETE_SPACE_DIALOG_TITLE, space->name))
++          .AddParagraph(ui::DialogModelLabel(l10n_util::GetStringFUTF16(
++              IDS_HELIUM_DELETE_SPACE_DIALOG_BODY, space->name,
++              fallback->name)))
++          .AddOkButton(
++              base::BindOnce(run_delete, browser->GetWeakPtr(), space_id,
++                             /*move_tabs=*/true),
++              ui::DialogModel::Button::Params().SetLabel(
++                  l10n_util::GetStringFUTF16(
++                      IDS_HELIUM_DELETE_SPACE_MOVE_BUTTON, fallback->name)))
++          .AddExtraButton(
++              base::BindRepeating(
++                  [](base::WeakPtr<BrowserWindowInterface> weak_browser,
++                     std::string target_id, ui::DialogModel* model,
++                     const ui::Event&) {
++                    if (weak_browser) {
++                      if (HeliumSpacesService* svc =
++                              HeliumSpacesServiceFactory::GetForProfile(
++                                  weak_browser->GetProfile())) {
++                        svc->DeleteSpace(target_id,
++                                         /*move_tabs_to_fallback=*/false);
++                      }
++                    }
++                    if (model && model->host()) {
++                      model->host()->Close();
++                    }
++                  },
++                  browser->GetWeakPtr(), space_id,
++                  base::Unretained(dialog_model)),
++              ui::DialogModel::Button::Params().SetLabel(
++                  l10n_util::GetStringUTF16(
++                      IDS_HELIUM_DELETE_SPACE_CLOSE_BUTTON)))
++          .AddCancelButton(base::DoNothing())
++          .Build();
++
++  chrome::ShowBrowserModal(browser, std::move(dialog));
++}
++
++}  // namespace helium_spaces
+--- a/chrome/common/pref_names.h
++++ b/chrome/common/pref_names.h
+@@ -997,6 +997,14 @@
+ // hibernated instead of closed. When false, each window has its own.
+ inline constexpr char kHeliumPersistentPins[] =
+     "helium.browser.persistent_pins";
++
++// List of profile Spaces (id, name, color, icon).
++inline constexpr char kHeliumSpaces[] = "helium.spaces.list";
++
++// Boolean pref controlling whether pinned tabs are scoped per Space (true) or
++// shared across all Spaces (false).
++inline constexpr char kHeliumSpacesPinsPerSpace[] =
++    "helium.spaces.pins_per_space";
+ #endif  // !BUILDFLAG(IS_ANDROID)
+ 
+ // Preference to disable 3D APIs (WebGL).
+--- a/chrome/browser/ui/browser_ui_prefs.cc
++++ b/chrome/browser/ui/browser_ui_prefs.cc
+@@ -143,6 +143,11 @@
+ 
+   registry->RegisterBooleanPref(prefs::kShowTabSwitcher, true);
+ 
++#if !BUILDFLAG(IS_ANDROID)
++  registry->RegisterListPref(prefs::kHeliumSpaces);
++  registry->RegisterBooleanPref(prefs::kHeliumSpacesPinsPerSpace, true);
++#endif  // !BUILDFLAG(IS_ANDROID)
++
+   registry->RegisterBooleanPref(prefs::kShiftRightClickContextMenu, true);
+ 
+   registry->RegisterBooleanPref(prefs::kShowZoomIndicator, true);
+--- a/chrome/browser/extensions/api/settings_private/prefs_util.cc
++++ b/chrome/browser/extensions/api/settings_private/prefs_util.cc
+@@ -330,6 +330,8 @@
+       settings_api::PrefType::kBoolean;
+   (*s_allowlist)[::prefs::kHeliumPersistentPins] =
+       settings_api::PrefType::kBoolean;
++  (*s_allowlist)[::prefs::kHeliumSpacesPinsPerSpace] =
++      settings_api::PrefType::kBoolean;
+   (*s_allowlist)[::prefs::kHeliumAutoArchiveTabsAfterDays] =
+       settings_api::PrefType::kNumber;
+   (*s_allowlist)[::prefs::kShiftRightClickContextMenu] =
+--- a/chrome/app/generated_resources.grd
++++ b/chrome/app/generated_resources.grd
+@@ -333,6 +333,22 @@
+       <message name="IDS_HELIUM_SAVE_SPLIT_LAYOUT_BUTTON" desc="Button saving a split layout under the entered name.">Save</message>
+       <message name="IDS_HELIUM_SPLIT_LAYOUT_DEFAULT_NAME" desc="Suggested name for a saved split layout.">Layout <ph name="NUMBER">$1<ex>2</ex></ph></message>
+       <message name="IDS_HELIUM_ADD_TO_CURRENT_SPLIT" desc="Tab context menu action adding this tab as a new pane of the split shown in the window.">Add to Current Split</message>
++      <message name="IDS_HELIUM_DEFAULT_SPACE_NAME" desc="Default name for the initial Space.">Main</message>
++      <message name="IDS_HELIUM_NEW_SPACE_DEFAULT_NAME" desc="Default name for a newly created Space.">Space <ph name="NUMBER">$1<ex>2</ex></ph></message>
++      <message name="IDS_HELIUM_DELETE_SPACE_DIALOG_TITLE" desc="Title of the confirmation dialog when deleting a non-empty Space.">Delete space “<ph name="SPACE_NAME">$1<ex>Work</ex></ph>”?</message>
++      <message name="IDS_HELIUM_DELETE_SPACE_DIALOG_BODY" desc="Body text of the confirmation dialog when deleting a non-empty Space.">“<ph name="SPACE_NAME">$1<ex>Work</ex></ph>” still has tabs or pinned tabs. You can move them to “<ph name="FALLBACK_SPACE">$2<ex>Main</ex></ph>” or close them.</message>
++      <message name="IDS_HELIUM_DELETE_SPACE_MOVE_BUTTON" desc="Button moving tabs from a deleted Space to another Space.">Move to <ph name="FALLBACK_SPACE">$1<ex>Main</ex></ph></message>
++      <message name="IDS_HELIUM_DELETE_SPACE_CLOSE_BUTTON" desc="Button closing all tabs in a deleted Space.">Close tabs &amp; delete</message>
++      <message name="IDS_HELIUM_NEXT_SPACE" desc="Command switching to the next Space.">Next Space</message>
++      <message name="IDS_HELIUM_PREV_SPACE" desc="Command switching to the previous Space.">Previous Space</message>
++      <message name="IDS_HELIUM_NEW_SPACE" desc="Command creating a new Space and switching to it.">New Space</message>
++      <message name="IDS_HELIUM_DELETE_SPACE" desc="Command deleting the current Space.">Delete Current Space</message>
++      <message name="IDS_HELIUM_SWITCH_SPACE_N" desc="Shortcut command switching to Space N.">Switch to Space <ph name="NUMBER">$1<ex>1</ex></ph></message>
++      <message name="IDS_HELIUM_COMMAND_BAR_SWITCH_TO_SPACE" desc="Command bar entry label for switching to a named Space.">Switch to space: <ph name="SPACE_NAME">$1<ex>Work</ex></ph></message>
++      <message name="IDS_TAB_CXMENU_MOVE_TO_SPACE" desc="Tab context menu submenu for moving selected tabs to another Space.">Move to Space</message>
++      <message name="IDS_TAB_CXMENU_MOVE_TO_NEW_SPACE" desc="Submenu item creating a new Space and moving selected tabs into it.">New Space</message>
++      <message name="IDS_TAB_CXMENU_PIN_IN_ALL_SPACES" desc="Tab context menu item showing a persistent pin in all Spaces.">Show in All Spaces</message>
++      <message name="IDS_TAB_CXMENU_PIN_IN_CURRENT_SPACE" desc="Tab context menu item scoping a persistent pin back to its Space.">Only Show in Current Space</message>
+       <message name="IDS_HELIUM_TAB_SWITCHER_TITLE" desc="Accessible title of the overlay listing the tabs Ctrl+Tab cycles through.">Tab switcher</message>
+       <message name="IDS_HELIUM_TAB_SWITCHER_POSITION" desc="Shown in the tab switcher overlay below the tabs: the position of the selected tab in the cycle, and the number of tabs in it."><ph name="POSITION">$1<ex>3</ex></ph> of <ph name="COUNT">$2<ex>12</ex></ph></message>
+       <message name="IDS_HELIUM_MOBILE_PREVIEW_FULL_HEIGHT" desc="Toggle mobile emulation with the full pane height.">Mobile preview (402 wide, full height)</message>
+--- a/chrome/browser/profiles/chrome_browser_main_extra_parts_profiles.cc
++++ b/chrome/browser/profiles/chrome_browser_main_extra_parts_profiles.cc
+@@ -275,6 +275,7 @@
+ #include "chrome/browser/ui/safety_hub/revoked_permissions_service_factory.h"
+ #include "chrome/browser/ui/signin/dice_migration_service_factory.h"
+ #include "chrome/browser/ui/tabs/archived_tabs_service_factory.h"
++#include "chrome/browser/ui/tabs/helium_spaces_service_factory.h"
+ #include "chrome/browser/ui/tabs/pinned_tab_service_factory.h"
+ #include "chrome/browser/ui/toolbar/pinned_toolbar/pinned_toolbar_actions_model_factory.h"
+ #include "chrome/browser/ui/toolbar/toolbar_actions_model_factory.h"
+@@ -1292,6 +1293,7 @@
+   PersonalContextServiceFactory::GetInstance();
+ #if !BUILDFLAG(IS_ANDROID)
+   ArchivedTabsServiceFactory::GetInstance();
++  helium_spaces::HeliumSpacesServiceFactory::GetInstance();
+   PinnedTabServiceFactory::GetInstance();
+   PinnedToolbarActionsModelFactory::GetInstance();
+ #endif
+--- a/chrome/browser/ui/tabs/public/tab_features.h
++++ b/chrome/browser/ui/tabs/public/tab_features.h
+@@ -132,6 +132,10 @@
+ class HeliumPinsTabController;
+ }  // namespace helium_pins
+ 
++namespace helium_spaces {
++class HeliumSpacesTabController;
++}  // namespace helium_spaces
++
+ namespace blocked_content {
+ class PopupBlockerTabHelper;
+ class PopupOpenerTabHelper;
+@@ -828,6 +832,9 @@
+   std::unique_ptr<helium_pins::HeliumPinsTabController>
+       helium_pins_tab_controller_;
+ 
++  std::unique_ptr<helium_spaces::HeliumSpacesTabController>
++      helium_spaces_tab_controller_;
++
+   std::unique_ptr<dictation::DictationIphController> dictation_iph_controller_;
+ 
+   std::unique_ptr<skills::SkillsUiTabControllerInterface>
+--- a/chrome/browser/ui/tabs/tab_features.cc
++++ b/chrome/browser/ui/tabs/tab_features.cc
+@@ -166,6 +166,7 @@
+ #include "chrome/browser/ui/tabs/alert/tab_alert_controller.h"
+ #include "chrome/browser/ui/tabs/back_to_opener/back_to_opener_controller.h"
+ #include "chrome/browser/ui/tabs/helium_pins_tab_controller.h"
++#include "chrome/browser/ui/tabs/helium_spaces_tab_controller.h"
+ #include "chrome/browser/ui/tabs/inactive_window_mouse_event_controller.h"
+ #include "chrome/browser/ui/tabs/page_change_monitor.h"
+ #include "chrome/browser/ui/tabs/page_context_eligibility_helper.h"
+@@ -1036,6 +1037,10 @@
+       GetUserDataFactory().CreateInstance<helium_pins::HeliumPinsTabController>(
+           tab, tab);
+ 
++  helium_spaces_tab_controller_ =
++      GetUserDataFactory()
++          .CreateInstance<helium_spaces::HeliumSpacesTabController>(tab, tab);
++
+   if (base::FeatureList::IsEnabled(dictation::kDictation) &&
+       profile->IsRegularProfile()) {
+     dictation_iph_controller_ =
+--- a/chrome/browser/ui/browser_window/public/create_browser_window.h
++++ b/chrome/browser/ui/browser_window/public/create_browser_window.h
+@@ -179,6 +179,9 @@
+   // focused state.
+   std::optional<tab_groups::TabGroupId> focused_tab_group_id;
+ 
++  // Specifies the restored Space ID for the window, if any.
++  std::string active_space_id;
++
+ #if BUILDFLAG(IS_CHROMEOS)
+   // If set, the browser should be created on the display given by
+   // `display_id`.
+--- a/chrome/browser/ui/browser_window/internal/create_browser_window_non_android.cc
++++ b/chrome/browser/ui/browser_window/internal/create_browser_window_non_android.cc
+@@ -43,6 +43,7 @@
+   clone.vertical_tab_strip_uncollapsed_width =
+       vertical_tab_strip_uncollapsed_width;
+   clone.focused_tab_group_id = focused_tab_group_id;
++  clone.active_space_id = active_space_id;
+ #if BUILDFLAG(IS_CHROMEOS)
+   clone.display_id = display_id;
+ #endif
+--- a/chrome/browser/ui/browser_init_state.h
++++ b/chrome/browser/ui/browser_init_state.h
+@@ -92,6 +92,10 @@
+     return initial_focused_tab_group_id_;
+   }
+ 
++  const std::string& initial_active_space_id() const {
++    return initial_active_space_id_;
++  }
++
+   bool omit_from_session_restore() const { return omit_from_session_restore_; }
+   bool should_trigger_session_restore() const {
+     return should_trigger_session_restore_;
+@@ -126,6 +130,7 @@
+   const std::optional<bool> initial_vertical_tab_strip_collapsed_;
+   const std::optional<int> initial_vertical_tab_strip_uncollapsed_width_;
+   const std::optional<tab_groups::TabGroupId> initial_focused_tab_group_id_;
++  const std::string initial_active_space_id_;
+ 
+   ui::ScopedUnownedUserData<BrowserInitState> scoped_unowned_user_data_;
+ };
+--- a/chrome/browser/ui/browser_init_state.cc
++++ b/chrome/browser/ui/browser_init_state.cc
+@@ -42,6 +42,7 @@
+           browser_window_create_params_.vertical_tab_strip_uncollapsed_width),
+       initial_focused_tab_group_id_(
+           browser_window_create_params_.focused_tab_group_id),
++      initial_active_space_id_(browser_window_create_params_.active_space_id),
+       scoped_unowned_user_data_(host, *this) {}
+ 
+ BrowserInitState::~BrowserInitState() = default;
+--- a/chrome/browser/ui/browser_window/public/browser_window_features.h
++++ b/chrome/browser/ui/browser_window/public/browser_window_features.h
+@@ -81,6 +81,10 @@
+ class FindBarOwner;
+ class FullscreenControlHost;
+ class HeliumLayoutStateController;
++
++namespace helium_spaces {
++class HeliumWindowSpacesController;
++}  // namespace helium_spaces
+ class HistoryClustersSidePanelCoordinator;
+ class HistorySidePanelCoordinator;
+ class ImmersiveModeController;
+@@ -462,6 +466,8 @@
+   std::unique_ptr<TabGroupFocusIphController> tab_group_focus_iph_controller_;
+   std::unique_ptr<VerticalTabIphController> vertical_tab_iph_controller_;
+   std::unique_ptr<HeliumLayoutStateController> helium_layout_state_controller_;
++  std::unique_ptr<helium_spaces::HeliumWindowSpacesController>
++      helium_window_spaces_controller_;
+ 
+   std::unique_ptr<tabs::VerticalTabStripStateController>
+       vertical_tab_strip_state_controller_;
+--- a/chrome/browser/ui/browser_window/internal/browser_window_features.cc
++++ b/chrome/browser/ui/browser_window/internal/browser_window_features.cc
+@@ -82,6 +82,7 @@
+ #include "chrome/browser/ui/focus/browser_focus_controller_webui.h"
+ #include "chrome/browser/ui/fullscreen/browser_window_fullscreen_controller.h"
+ #include "chrome/browser/ui/helium/helium_layout_state_controller.h"
++#include "chrome/browser/ui/tabs/helium_window_spaces_controller.h"
+ #include "chrome/browser/ui/immersive/immersive_mode_controller.h"
+ #include "chrome/browser/ui/lens/lens_overlay_entry_point_controller.h"
+ #include "chrome/browser/ui/omnibox/ai_mode_page_action_controller.h"
+@@ -626,6 +627,12 @@
+         GetUserDataFactory().CreateInstance<HeliumLayoutStateController>(
+             *browser, browser, profile->GetPrefs());
+ 
++    helium_window_spaces_controller_ =
++        GetUserDataFactory()
++            .CreateInstance<helium_spaces::HeliumWindowSpacesController>(
++                *browser, browser,
++                BrowserInitState::From(browser)->initial_active_space_id());
++
+     vertical_tab_strip_state_controller_ =
+         GetUserDataFactory()
+             .CreateInstance<tabs::VerticalTabStripStateControllerImpl>(
+--- a/chrome/browser/ui/browser_tabrestore.cc
++++ b/chrome/browser/ui/browser_tabrestore.cc
+@@ -22,6 +22,7 @@
+ #include "chrome/browser/ui/send_tab_to_self/send_tab_to_self_activation_tracker.h"
+ #include "chrome/browser/ui/tab_ui_helper.h"
+ #include "chrome/browser/ui/tabs/helium_pins_tab_controller.h"
++#include "chrome/browser/ui/tabs/helium_spaces_tab_controller.h"
+ #include "chrome/browser/ui/tabs/pane_settings.h"
+ #include "chrome/browser/ui/tabs/public/tab_features.h"
+ #include "chrome/browser/ui/tabs/tab_enums.h"
+@@ -96,6 +97,8 @@
+       web_contents.get(), extra_data);
+   helium_pins::HeliumPinsTabController::StashRestoredState(web_contents.get(),
+                                                            extra_data);
++  helium_spaces::HeliumSpacesTabController::StashRestoredState(
++      web_contents.get(), extra_data);
+ 
+   std::vector<std::unique_ptr<NavigationEntry>> entries =
+       ContentSerializedNavigationBuilder::ToNavigationEntries(
+--- a/chrome/browser/ui/browser_live_tab_context.cc
++++ b/chrome/browser/ui/browser_live_tab_context.cc
+@@ -33,6 +33,7 @@
+ #include "chrome/browser/ui/browser_window/public/global_browser_collection.h"
+ #include "chrome/browser/ui/browser_window/public/profile_browser_collection.h"
+ #include "chrome/browser/ui/tabs/helium_pins_tab_controller.h"
++#include "chrome/browser/ui/tabs/helium_spaces_tab_controller.h"
+ #include "chrome/browser/ui/tabs/pane_settings.h"
+ #include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_utils.h"
+ #include "chrome/browser/ui/tabs/tab_group_model.h"
+@@ -217,6 +218,9 @@
+   }
+   extra_data.merge(helium_pins::HeliumPinsTabController::GetSessionExtraData(
+       tab->GetContents()));
++  extra_data.merge(
++      helium_spaces::HeliumSpacesTabController::GetSessionExtraData(
++          tab->GetContents()));
+ 
+   tabs::PaneSettings::PopulateExtraData(
+       tab_strip_model_->GetWebContentsAt(index), &extra_data);
+--- a/chrome/browser/sessions/session_service_base.cc
++++ b/chrome/browser/sessions/session_service_base.cc
+@@ -34,6 +34,8 @@
+ #include "chrome/browser/ui/startup/startup_browser_creator.h"
+ #include "chrome/browser/ui/tabs/features.h"
+ #include "chrome/browser/ui/tabs/helium_pins_tab_controller.h"
++#include "chrome/browser/ui/tabs/helium_spaces_tab_controller.h"
++#include "chrome/browser/ui/tabs/helium_window_spaces_controller.h"
+ #include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_utils.h"
+ #include "chrome/browser/ui/tabs/tab_group_model.h"
+ #include "chrome/browser/ui/tabs/tab_strip_model.h"
+@@ -683,6 +685,12 @@
+     }
+   }
+ 
++  for (const auto& [key, value] :
++       helium_spaces::HeliumSpacesTabController::GetSessionExtraData(tab)) {
++    command_storage_manager()->AppendRebuildCommand(
++        sessions::CreateAddTabExtraDataCommand(session_id, key, value));
++  }
++
+   // Record the association between the sessionStorage namespace and the tab.
+   content::SessionStorageNamespaceHandle* session_storage_namespace =
+       tab->GetController().GetDefaultSessionStorageNamespace();
+@@ -798,6 +806,16 @@
+             base::NumberToString(controller->GetUncollapsedWidth())));
+   }
+ 
++  if (const auto* const spaces_controller =
++          helium_spaces::HeliumWindowSpacesController::From(browser);
++      spaces_controller && !spaces_controller->active_space_id().empty()) {
++    command_storage_manager()->AppendRebuildCommand(
++        sessions::CreateAddWindowExtraDataCommand(
++            browser->GetSessionID(),
++            helium_spaces::HeliumWindowSpacesController::kActiveSpaceIdKey,
++            spaces_controller->active_space_id()));
++  }
++
+   int index = 0;
+   for (const tabs::TabInterface* tab_interface : *tab_strip) {
+     WebContents* tab = tab_interface->GetContents();
+--- a/chrome/browser/sessions/session_restore.cc
++++ b/chrome/browser/sessions/session_restore.cc
+@@ -81,6 +81,7 @@
+ #include "chrome/browser/ui/tabs/tab_strip_model.h"
+ #include "chrome/browser/ui/tabs/tab_strip_model_selection_state.h"
+ #include "chrome/browser/ui/tabs/tab_strip_user_gesture_details.h"
++#include "chrome/browser/ui/tabs/helium_window_spaces_controller.h"
+ #include "chrome/browser/ui/tabs/vertical_tab_strip_state_controller.h"
+ #include "chrome/browser/ui/ui_features.h"
+ #include "chrome/browser/ui/waap/initial_webui_window_metrics_manager.h"
+@@ -1415,6 +1416,12 @@
+       }
+     }
+ 
++    if (auto it = extra_data.find(
++            helium_spaces::HeliumWindowSpacesController::kActiveSpaceIdKey);
++        it != extra_data.end() && !it->second.empty()) {
++      params.active_space_id = it->second;
++    }
++
+     base::TimeTicks now = base::TimeTicks::Now();
+     BrowserWindowInterface* browser_window =
+         CreateBrowserWindow(std::move(params));
+--- a/chrome/browser/ui/tabs/BUILD.gn
++++ b/chrome/browser/ui/tabs/BUILD.gn
+@@ -526,6 +526,12 @@
+       "helium_pins_service.h",
+       "helium_pins_tab_controller.h",
+       "helium_pins_util.h",
++      "helium_spaces_list.h",
++      "helium_spaces_service.h",
++      "helium_spaces_service_factory.h",
++      "helium_spaces_tab_controller.h",
++      "helium_spaces_util.h",
++      "helium_window_spaces_controller.h",
+       "horizontal_tab_strip_metrics.h",
+       "hover_tab_selector.h",
+       "new_tab_grouping_user_data.h",
+@@ -607,6 +613,12 @@
+       "helium_pins_service.cc",
+       "helium_pins_tab_controller.cc",
+       "helium_pins_util.cc",
++      "helium_spaces_list.cc",
++      "helium_spaces_service.cc",
++      "helium_spaces_service_factory.cc",
++      "helium_spaces_tab_controller.cc",
++      "helium_spaces_util.cc",
++      "helium_window_spaces_controller.cc",
+       "horizontal_tab_strip_metrics.cc",
+       "hover_tab_selector.cc",
+       "other_device_tabs_sub_menu_model.cc",
+@@ -648,6 +660,7 @@
+       ":tabs",
+       ":utils",
+       "//chrome/app:command_ids",
++      "//chrome/app:generated_resources",
+       "//chrome/app/vector_icons",
+       "//chrome/browser:browser_process",
+       "//chrome/browser:chained_back_navigation_tracker",
+@@ -752,6 +765,7 @@
+       "//chrome/browser/ui/commerce",
+       "//chrome/browser/ui/context_highlight",
+       "//chrome/browser/ui/contextual_search",
++      "//chrome/browser/ui/dialogs:browser_dialogs",
+       "//chrome/browser/ui/find_bar",
+       "//chrome/browser/ui/helium:helium_layout_state_controller",
+       "//chrome/browser/ui/interaction",
