@@ -632,8 +632,8 @@
    std::unique_ptr<views::EventMonitor> zen_mode_event_monitor_;
 --- a/chrome/browser/ui/views/frame/browser_view.cc
 +++ b/chrome/browser/ui/views/frame/browser_view.cc
-@@ -188,6 +188,7 @@
- #include "chrome/browser/ui/views/frame/tab_strip_region_view.h"
+@@ -190,6 +190,7 @@
+ #include "chrome/browser/ui/views/frame/themed_background.h"
  #include "chrome/browser/ui/views/frame/top_container_view.h"
  #include "chrome/browser/ui/views/helium/command_bar_view.h"
 +#include "chrome/browser/ui/views/helium/tab_switcher.h"

@@ -1,7 +1,7 @@
 --- a/chrome/browser/helium_flag_entries.h
 +++ b/chrome/browser/helium_flag_entries.h
-@@ -86,14 +86,14 @@
-      kOsDesktop, FEATURE_VALUE_TYPE(features::kHeliumHidePageActions)},
+@@ -102,14 +102,14 @@
+      kOsDesktop, FEATURE_VALUE_TYPE(tabs::kTabStripUnification)},
      // platform
      {"helium-webkit-streaming", "WebKit streaming windows (experimental)",
 -     "Opens Netflix and TV 2 Play in a separate native WebKit window on "
