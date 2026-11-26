@@ -1,6 +1,6 @@
-Helium Neo 0.22.4.1 updates to Helium 0.22.4 (including 0.22.3) and Chromium 158.0.8127.88.
+Helium Neo 0.22.5.1 updates to Helium 0.22.5 (including 0.22.3 and 0.22.4) and Chromium 158.0.8127.88.
 
-Download **Helium-Neo-0.22.4.1-macOS-arm64-signed.dmg**, open it, and drag **Helium Neo** to Applications, replacing an existing copy. Requires an Apple Silicon Mac running macOS 13 or later. WebKit streaming tabs require macOS 14 or later. Installations of 0.19.4.1 or later with browser updates enabled receive this release automatically. Users of earlier betas must install it manually once.
+Download **Helium-Neo-0.22.5.1-macOS-arm64-signed.dmg**, open it, and drag **Helium Neo** to Applications, replacing an existing copy. Requires an Apple Silicon Mac running macOS 13 or later. WebKit streaming tabs require macOS 14 or later. Installations of 0.19.4.1 or later with browser updates enabled receive this release automatically. Users of earlier betas must install it manually once.
 
 **New in Neo**
 
@@ -10,12 +10,14 @@ Download **Helium-Neo-0.22.4.1-macOS-arm64-signed.dmg**, open it, and drag **Hel
 
 **From upstream Helium**
 
-- Helium 0.22.3 and 0.22.4, updated to Chromium 158.0.8127.88.
+- Helium 0.22.3, 0.22.4, and 0.22.5, updated to Chromium 158.0.8127.88.
+- **Clear data on exit:** added a Settings option to automatically clear selected browsing data when quitting.
 - **Per-window pinned tabs option:** added a **Keep pinned tabs across windows and sessions** toggle in Appearance & Behavior so each window can keep its own pins when disabled.
 - **Drag to pin/unpin:** in the vertical tab strip, dragging tabs into or out of the pinned area pins or unpins them, and canceling a drag restores their original state.
 - **Pinned tab fixes:** unpinning or removing a pin keeps loaded copies open as regular tabs in other windows instead of closing them, and dragging a pin out and dropping it back among regular tabs unpins it cleanly.
-- Updated bundled uBlock Origin to 1.77.0.
-- Added an experimental **HTTP cache encryption** flag in `chrome://flags`.
+- **Scrollable horizontal tab strip:** added behind a flag in `chrome://flags`.
+- **UI & animation polish:** compositor-driven animations for frameless reveal and address bar progress, fractional scale gap fix, contents background in every window, protocol handler radio selection fix, and updated default window bounds (16:10, max height 960).
+- Updated bundled uBlock Origin to 1.77.0, store extension updates via `update_client`, vault sync delta improvements, and an experimental **HTTP cache encryption** flag in `chrome://flags`.
 - macOS updater improvements, including an app menu approval item when an update cannot be installed silently.
 
 The installer is Developer ID signed and Apple notarized. `SHA256SUMS` covers the final stapled installer. Release feeds and `update-manifest.json` accompany the download for update delivery and verification.
