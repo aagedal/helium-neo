@@ -138,9 +138,9 @@
      // Lists written by PinnedTabCodec have no ids and repeat a URL for every
      // window that pinned it, so all windows' pins are merged into one set.
 -    if (!std::ranges::contains(list.pins_, pin_url, &Pin::url)) {
--      const std::string id = CreatePinId();
--      list.pins_.push_back({id, pin_url});
--      list.migrated_ids_.insert(id);
+-      const std::string new_id = CreatePinId();
+-      list.pins_.push_back({new_id, pin_url});
+-      list.migrated_ids_.insert(new_id);
 +    if (std::ranges::contains(list.pins_, pin_url, &Pin::url)) {
 +      legacy_split.clear();
 +      continue;
@@ -245,11 +245,12 @@
  class PinList {
 --- a/chrome/browser/ui/tabs/helium_pins_service.cc
 +++ b/chrome/browser/ui/tabs/helium_pins_service.cc
-@@ -26,13 +26,16 @@
+@@ -26,14 +26,17 @@
  #include "chrome/browser/ui/tabs/helium_pins_list.h"
  #include "chrome/browser/ui/tabs/helium_pins_tab_controller.h"
  #include "chrome/browser/ui/tabs/helium_pins_util.h"
 +#include "chrome/browser/ui/tabs/pane_settings.h"
+ #include "chrome/browser/ui/tabs/pinned_tab_service.h"
  #include "chrome/browser/ui/tabs/tab_strip_model.h"
  #include "chrome/browser/ui/tabs/tab_strip_model_delegate.h"
  #include "chrome/common/pref_names.h"
@@ -262,10 +263,10 @@
  #include "components/tabs/public/split_tab_data.h"
  #include "components/tabs/public/tab_interface.h"
  #include "content/public/browser/invalidate_type.h"
-@@ -205,6 +208,10 @@ HeliumPinsService::HeliumPinsService(Pro
-     return true;
-   });
-   browser_collection_observation_.Observe(browsers);
+@@ -211,6 +214,10 @@ HeliumPinsService::HeliumPinsService(Pro
+       base::BindRepeating(&HeliumPinsService::OnPersistentPinsChanged,
+                           base::Unretained(this)));
+   UpdatePinnedTabService();
 +
 +  pane_settings_subscription_ = tabs::PaneSettings::RegisterChangedCallback(
 +      base::BindRepeating(&HeliumPinsService::OnPaneSettingsChanged,
@@ -273,14 +274,26 @@
  }
  
  HeliumPinsService::~HeliumPinsService() = default;
-@@ -223,6 +230,7 @@ void HeliumPinsService::Shutdown() {
+@@ -231,6 +238,7 @@ void HeliumPinsService::Shutdown() {
    // The profile's remaining windows are destroyed after this, which must not
    // change the pin list.
    browser_collection_observation_.Reset();
 +  pane_settings_subscription_ = {};
    TabStripModelObserver::StopObservingAll(this);
-   history_tasks_.TryCancelAll();
-   weak_factory_.InvalidateWeakPtrs();
+   pref_change_registrar_.RemoveAll();
+   pinned_tab_service_.reset();
+@@ -508,7 +516,10 @@ void HeliumPinsService::AdoptPins(Browse
+     }
+ 
+     if (pins_.Find(id) == pins_.end()) {
+-      pins_.insert(pins_.end(), {.id = id, .url = controller->pinned_url()});
++      Pin pin{.id = id, .url = controller->pinned_url()};
++      tabs::PaneSettings::PopulateExtraData(controller->tab().GetContents(),
++                                            &pin.pane_settings);
++      pins_.insert(pins_.end(), std::move(pin));
+     }
+     present.insert(id);
+   }
 @@ -727,7 +735,9 @@ std::string HeliumPinsService::InsertNew
      BrowserWindowInterface* browser,
      HeliumPinsTabController* controller) {
@@ -472,9 +485,9 @@
    // Adds a hibernated copy of pin at index of browser.
    void InsertHibernatedPin(BrowserWindowInterface* browser,
                             int index,
-@@ -201,6 +212,8 @@ class HeliumPinsService : public KeyedSe
-   base::ScopedObservation<ProfileBrowserCollection, BrowserCollectionObserver>
-       browser_collection_observation_{this};
+@@ -214,6 +225,8 @@ class HeliumPinsService : public KeyedSe
+   PrefChangeRegistrar pref_change_registrar_;
+   std::unique_ptr<PinnedTabService> pinned_tab_service_;
  
 +  base::CallbackListSubscription pane_settings_subscription_;
 +
@@ -535,16 +548,16 @@
  
 +#include <algorithm>
  #include <cmath>
- #include <utility>
- 
-@@ -14,6 +15,7 @@
+ #include <set>
+ #include <string>
+@@ -16,6 +17,7 @@
  #include "chrome/browser/profiles/profile.h"
  #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
  #include "chrome/browser/ui/browser_window/public/browser_window_interface_iterator.h"
 +#include "chrome/browser/ui/tabs/helium_pins_list.h"
+ #include "chrome/browser/ui/tabs/helium_pins_tab_controller.h"
+ #include "chrome/browser/ui/tabs/helium_pins_util.h"
  #include "chrome/browser/ui/tabs/pane_settings.h"
- #include "chrome/browser/ui/tabs/tab_strip_model.h"
- #include "chrome/common/pref_names.h"
 @@ -105,40 +107,10 @@ std::optional<StartupTab> DecodeTab(cons
        }
      }

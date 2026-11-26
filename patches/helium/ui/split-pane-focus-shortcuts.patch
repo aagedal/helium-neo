@@ -1,16 +1,16 @@
 --- a/chrome/app/chrome_command_ids.h
 +++ b/chrome/app/chrome_command_ids.h
 @@ -300,6 +300,10 @@
- #define IDC_HELIUM_SERVICES_OPEN 40700
- #define IDC_HELIUM_ARCHIVE_PAGE 40701
- #define IDC_HELIUM_NEW_SPLIT_PANE_ON_RIGHT 40702
-+#define IDC_HELIUM_FOCUS_SPLIT_PANE_LEFT 40703
-+#define IDC_HELIUM_FOCUS_SPLIT_PANE_RIGHT 40704
-+#define IDC_HELIUM_FOCUS_SPLIT_PANE_UP 40705
-+#define IDC_HELIUM_FOCUS_SPLIT_PANE_DOWN 40706
+ // Helium Neo
+ #define IDC_HELIUM_ARCHIVE_PAGE 40751
+ #define IDC_HELIUM_NEW_SPLIT_PANE_ON_RIGHT 40752
++#define IDC_HELIUM_FOCUS_SPLIT_PANE_LEFT 40753
++#define IDC_HELIUM_FOCUS_SPLIT_PANE_RIGHT 40754
++#define IDC_HELIUM_FOCUS_SPLIT_PANE_UP 40755
++#define IDC_HELIUM_FOCUS_SPLIT_PANE_DOWN 40756
  
- // Spell-check
- #define IDC_SPELLCHECK_SUGGESTION_0     41000
+ // Writing direction
+ #define IDC_WRITING_DIRECTION_LTR        41122
 --- a/chrome/app/generated_resources.grd
 +++ b/chrome/app/generated_resources.grd
 @@ -277,6 +277,10 @@

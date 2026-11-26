@@ -2230,9 +2230,9 @@
        }
 --- a/chrome/browser/ui/views/frame/browser_view.cc
 +++ b/chrome/browser/ui/views/frame/browser_view.cc
-@@ -187,6 +187,7 @@
- #include "chrome/browser/ui/views/frame/tab_modal_dialog_host.h"
+@@ -189,6 +189,7 @@
  #include "chrome/browser/ui/views/frame/tab_strip_region_view.h"
+ #include "chrome/browser/ui/views/frame/themed_background.h"
  #include "chrome/browser/ui/views/frame/top_container_view.h"
 +#include "chrome/browser/ui/views/helium/command_bar_view.h"
  #include "chrome/browser/ui/views/frame/top_controls_slide_controller.h"

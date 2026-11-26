@@ -359,8 +359,8 @@
    AppShimRegistry::Get()->RegisterLocalPrefs(registry);
 --- a/chrome/browser/resources/settings/appearance_page/appearance_behavior_page.html
 +++ b/chrome/browser/resources/settings/appearance_page/appearance_behavior_page.html
-@@ -36,4 +36,14 @@
-       label="$i18n{allowSplitViewDragAndDrop}">
+@@ -42,4 +42,14 @@
+       sub-label="$i18n{keepPinsDescription}">
    </settings-toggle-button>
  
 +<if expr="is_macosx">

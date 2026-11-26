@@ -1,21 +1,24 @@
-Helium Neo 0.22.2.1 updates to Helium 0.22.2, which brings persistent pinned tabs.
+Helium Neo 0.22.5.1 updates to Helium 0.22.5 (including 0.22.3 and 0.22.4) and Chromium 158.0.8127.88.
 
-Download **Helium-Neo-0.22.2.1-macOS-arm64-signed.dmg**, open it, and drag **Helium Neo** to Applications, replacing an existing copy. Requires an Apple Silicon Mac running macOS 13 or later. WebKit streaming tabs require macOS 14 or later. Installations of 0.19.4.1 or later with browser updates enabled receive this release automatically. Users of earlier betas must install it manually once.
+Download **Helium-Neo-0.22.5.1-macOS-arm64-signed.dmg**, open it, and drag **Helium Neo** to Applications, replacing an existing copy. Requires an Apple Silicon Mac running macOS 13 or later. WebKit streaming tabs require macOS 14 or later. Installations of 0.19.4.1 or later with browser updates enabled receive this release automatically. Users of earlier betas must install it manually once.
 
 **New in Neo**
 
-- Pinned splits work with upstream's persistent pins. A pinned split keeps all of its panes (up to 16) and its layout, and each pinned pane keeps its settings, such as mobile preview, auto-refresh and page monitoring. Changes to a pinned pane's settings carry over to its copies in other windows.
-- Pinned splits from earlier Neo versions are kept when your pins move to the new shared set.
+- Turning **Keep pinned tabs across windows and sessions** off and back on preserves Neo's per-pane settings (mobile preview, auto-refresh, page monitoring) alongside pinned splits.
+- Updated Neo's mirror speed-probing and fallback updater integration for upstream's refactored macOS Sparkle updater.
+- Reserved Neo's internal command IDs in their own range so upstream's new **Update Helium** approval menu item does not conflict with Neo actions.
 
 **From upstream Helium**
 
-- Helium 0.22.2, still on Chromium 158.0.8127.36.
-- **Persistent pinned tabs:** pins are shared by all windows of a profile and kept across restarts. Closing a pin puts it to sleep instead of removing it, and it returns to the address it was pinned at when you open it again. Links and searches to other sites open from a pin in a new tab. The tab menu adds **Return to pinned URL** and **Use current URL as pinned URL**. Pins from earlier versions are merged into one shared set on first launch.
-- Redesigned pinned tabs in vertical tabs, with outlined pins in balanced rows.
-- In Zen mode, the floating sidebar shows tabs at full width instead of staying collapsed.
-- Canvas fingerprinting protection gives partial canvas reads the same noise as full reads.
-- The page zoom indicator stays visible with long addresses.
-- Left clicks are no longer ignored when the flag that disables link dragging is on.
+- Helium 0.22.3, 0.22.4, and 0.22.5, updated to Chromium 158.0.8127.88.
+- **Clear data on exit:** added a Settings option to automatically clear selected browsing data when quitting.
+- **Per-window pinned tabs option:** added a **Keep pinned tabs across windows and sessions** toggle in Appearance & Behavior so each window can keep its own pins when disabled.
+- **Drag to pin/unpin:** in the vertical tab strip, dragging tabs into or out of the pinned area pins or unpins them, and canceling a drag restores their original state.
+- **Pinned tab fixes:** unpinning or removing a pin keeps loaded copies open as regular tabs in other windows instead of closing them, and dragging a pin out and dropping it back among regular tabs unpins it cleanly.
+- **Scrollable horizontal tab strip:** added behind a flag in `chrome://flags`.
+- **UI & animation polish:** compositor-driven animations for frameless reveal and address bar progress, fractional scale gap fix, contents background in every window, protocol handler radio selection fix, and updated default window bounds (16:10, max height 960).
+- Updated bundled uBlock Origin to 1.77.0, store extension updates via `update_client`, vault sync delta improvements, and an experimental **HTTP cache encryption** flag in `chrome://flags`.
+- macOS updater improvements, including an app menu approval item when an update cannot be installed silently.
 
 The installer is Developer ID signed and Apple notarized. `SHA256SUMS` covers the final stapled installer. Release feeds and `update-manifest.json` accompany the download for update delivery and verification.
 

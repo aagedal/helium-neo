@@ -31,7 +31,7 @@
      case CommandAddToSplit:
      case CommandSwapWithActiveSplit:
      case CommandArrangeSplit:
-@@ -3028,6 +3031,26 @@ void TabStripModel::ExecuteContextMenuCommand(int context_index,
+@@ -3120,6 +3123,26 @@ void TabStripModel::ExecuteContextMenuCommand(int context_index,
                                     selection_model_.size());
        base::RecordAction(UserMetricsAction("TabContextMenu_CloseTab"));
  
@@ -57,7 +57,7 @@
 +      }
        ExecuteCloseTabsCommand(
            base::BindRepeating(&TabStripModel::GetTabsForCommand,
-                               base::Unretained(this), context_index),
+                               base::Unretained(this), context_tab),
 @@ -3220,6 +3241,11 @@ void TabStripModel::ExecuteContextMenuCommand(int context_index,
        break;
      }
@@ -124,8 +124,8 @@
    bool SupportsTabGroups() const { return group_model_.get() != nullptr; }
 --- a/components/tabs/public/tab_context_menu_command.h
 +++ b/components/tabs/public/tab_context_menu_command.h
-@@ -44,6 +44,7 @@ enum TabContextMenuCommand {
-   CommandToggleTabMuted,
+@@ -49,6 +49,7 @@ enum TabContextMenuCommand {
+   CommandUseCurrentUrlAsPinnedUrl,
    CommandCreateFourPaneSplit,
    CommandAddToActiveSplit,
 +  CommandRemoveFromSplit,

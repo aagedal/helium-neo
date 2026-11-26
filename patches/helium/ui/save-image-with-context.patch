@@ -275,14 +275,14 @@
    // if the originating document is no longer the active primary page to avoid
 --- a/chrome/browser/renderer_context_menu/render_view_context_menu.h
 +++ b/chrome/browser/renderer_context_menu/render_view_context_menu.h
-@@ -438,6 +438,7 @@ class RenderViewContextMenu
+@@ -441,6 +441,7 @@ class RenderViewContextMenu
    void ExecInspectBackgroundPage();
    void ExecSaveLinkAs();
    void ExecSaveAs();
 +  void ExecSaveImageWithContext();
    void ExecGlicShareImage();
+   void ExecIndigo();
    void ExecExitFullscreen();
-   void ExecCopyLinkText();
 --- a/chrome/browser/sharing_hub/sharing_hub_features.cc
 +++ b/chrome/browser/sharing_hub/sharing_hub_features.cc
 @@ -81,6 +81,9 @@ void RegisterProfilePrefs(PrefRegistrySimple* registry) {

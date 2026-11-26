@@ -15,9 +15,9 @@
        <message name="IDS_HELIUM_TAB_SWITCHER_POSITION" desc="Shown in the tab switcher overlay below the tabs: the position of the selected tab in the cycle, and the number of tabs in it."><ph name="POSITION">$1<ex>3</ex></ph> of <ph name="COUNT">$2<ex>12</ex></ph></message>
 --- a/chrome/browser/ui/tabs/BUILD.gn
 +++ b/chrome/browser/ui/tabs/BUILD.gn
-@@ -232,6 +232,8 @@ if (!is_android) {
- 
+@@ -235,6 +235,8 @@ if (!is_android) {
      sources = [
+       "contextual_tasks_tab_sub_menu_model.cc",
        "glic_tab_sub_menu_model.cc",
 +      "split_layout_templates.cc",
 +      "split_layout_templates.h",
@@ -34,9 +34,9 @@
        "//chrome/browser/ui/web_applications",
 --- a/chrome/browser/ui/tabs/tab_menu_model.cc
 +++ b/chrome/browser/ui/tabs/tab_menu_model.cc
-@@ -37,6 +37,7 @@
- #include "chrome/browser/ui/tabs/features.h"
+@@ -39,6 +39,7 @@
  #include "chrome/browser/ui/tabs/glic_tab_sub_menu_model.h"
+ #include "chrome/browser/ui/tabs/helium_pins_util.h"
  #include "chrome/browser/ui/tabs/pane_settings_menu_model.h"
 +#include "chrome/browser/ui/tabs/split_layout_templates.h"
  #include "chrome/browser/ui/tabs/split_tab_menu_model.h"

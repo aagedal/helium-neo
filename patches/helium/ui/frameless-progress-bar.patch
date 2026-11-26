@@ -195,7 +195,7 @@
  double LocationBarProgressView::GetDisplayedProgress() const {
    return progress_animation_.CurrentValueBetween(progress_start_,
                                                   progress_target_);
-@@ -197,7 +214,7 @@ void LocationBarProgressView::ResetState
+@@ -208,7 +225,7 @@ void LocationBarProgressView::ResetState
  
  void LocationBarProgressView::UpdateVisibility() {
    SetVisible(IsProgressBarEnabled() && has_active_progress_ &&
@@ -203,7 +203,7 @@
 +             !location_bar_focused_ && !suppressed_);
  }
  
- bool LocationBarProgressView::IsProgressBarEnabled() const {
+ bool LocationBarProgressView::IsShownInWindow() const {
 @@ -264,10 +281,27 @@ void LocationBarProgressView::OnPaint(gf
        SK_ColorWHITE, primary_color, kAppearance.shine_white_mix);
  
@@ -238,18 +238,19 @@
    flags.setAntiAlias(true);
 --- a/chrome/browser/ui/views/location_bar/location_bar_progress_view.h
 +++ b/chrome/browser/ui/views/location_bar/location_bar_progress_view.h
-@@ -6,11 +6,14 @@
+@@ -5,12 +5,15 @@
+ #ifndef CHROME_BROWSER_UI_VIEWS_LOCATION_BAR_LOCATION_BAR_PROGRESS_VIEW_H_
  #define CHROME_BROWSER_UI_VIEWS_LOCATION_BAR_LOCATION_BAR_PROGRESS_VIEW_H_
  
- #include "components/prefs/pref_change_registrar.h"
 +#include <optional>
 +
+ #include "components/prefs/pref_change_registrar.h"
  #include "content/public/browser/web_contents_observer.h"
  #include "ui/base/metadata/metadata_header_macros.h"
- #include "ui/gfx/animation/animation_delegate.h"
  #include "ui/gfx/animation/slide_animation.h"
  #include "ui/gfx/animation/throb_animation.h"
 +#include "ui/gfx/geometry/rounded_corners_f.h"
+ #include "ui/views/animation/animation_delegate_views.h"
  #include "ui/views/view.h"
  
  class PrefService;

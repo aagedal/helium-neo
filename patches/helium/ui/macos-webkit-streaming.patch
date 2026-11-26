@@ -42,9 +42,9 @@
  void ChromeContentBrowserClient::CreateThrottlesForCommitWithoutUrlLoader(
 --- a/chrome/browser/helium_flag_entries.h
 +++ b/chrome/browser/helium_flag_entries.h
-@@ -85,4 +85,10 @@
-      "Important actions and indicators will be missing. Helium flag.",
-      kOsDesktop, FEATURE_VALUE_TYPE(features::kHeliumHidePageActions)},
+@@ -101,4 +101,10 @@
+      "tabs by dragging them. Helium flag.",
+      kOsDesktop, FEATURE_VALUE_TYPE(tabs::kTabStripUnification)},
      // platform
 +    {"helium-webkit-streaming", "WebKit streaming windows (experimental)",
 +     "Opens Netflix and TV 2 Play in a separate native WebKit window on "

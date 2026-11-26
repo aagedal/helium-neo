@@ -457,9 +457,9 @@
        settings_api::PrefType::kBoolean;
 +  (*s_allowlist)[::prefs::kShowTabSwitcher] =
 +      settings_api::PrefType::kBoolean;
-   (*s_allowlist)[::prefs::kShiftRightClickContextMenu] =
+   (*s_allowlist)[::prefs::kHeliumPersistentPins] =
        settings_api::PrefType::kBoolean;
-   (*s_allowlist)[::prefs::kShowZoomIndicator] =
+   (*s_allowlist)[::prefs::kShiftRightClickContextMenu] =
 --- a/chrome/app/settings_strings.grdp
 +++ b/chrome/app/settings_strings.grdp
 @@ -336,6 +336,9 @@
@@ -469,8 +469,8 @@
 +    <message name="IDS_SETTINGS_SHOW_TAB_SWITCHER" desc="Label for the checkbox which shows or hides the overlay listing the tabs Ctrl+Tab cycles through.">
 +      Show tab switcher when cycling through tabs with Ctrl+Tab
 +    </message>
-     <message name="IDS_SETTINGS_SHIFT_RIGHT_CLICK_CONTEXT_MENU" desc="Label for the checkbox which makes Shift+right click show the browser context menu even when a page blocks it.">
-       Force context menu with Shift+Right Click
+     <message name="IDS_SETTINGS_KEEP_PINS" desc="Label for the toggle which makes all windows and sessions keep the same pinned tabs.">
+       Keep pinned tabs across windows and sessions
      </message>
 --- a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
 +++ b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
@@ -632,8 +632,8 @@
    std::unique_ptr<views::EventMonitor> zen_mode_event_monitor_;
 --- a/chrome/browser/ui/views/frame/browser_view.cc
 +++ b/chrome/browser/ui/views/frame/browser_view.cc
-@@ -188,6 +188,7 @@
- #include "chrome/browser/ui/views/frame/tab_strip_region_view.h"
+@@ -190,6 +190,7 @@
+ #include "chrome/browser/ui/views/frame/themed_background.h"
  #include "chrome/browser/ui/views/frame/top_container_view.h"
  #include "chrome/browser/ui/views/helium/command_bar_view.h"
 +#include "chrome/browser/ui/views/helium/tab_switcher.h"
