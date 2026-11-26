@@ -455,3 +455,5 @@ helium/ui/split-mute-menu-sites.patch
 helium/ui/save-image-with-context.patch
 helium/ui/neo-browser-public-dependencies.patch
 helium/ui/neo-pins-split-state.patch
+helium/ui/omnibox-switch-to-tab.patch
+helium/ui/auto-archive-tabs.patch

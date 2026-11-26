@@ -1,0 +1,102 @@
+--- a/chrome/browser/ui/omnibox/omnibox_edit_model.cc
++++ b/chrome/browser/ui/omnibox/omnibox_edit_model.cc
+@@ -2663,7 +2663,18 @@
+   // is needed earlier for metrics.
+   bool is_tab_switch_action =
+       action && action->ActionId() == OmniboxActionId::TAB_SWITCH;
+-  if (is_open_tab_match || is_tab_switch_action) {
++  // Opening a suggestion row that offers "Switch to this tab" with the default
++  // disposition switches to the existing open tab, while modifier clicks/keys
++  // still open a new copy and explicit WebKit matches keep their navigation.
++  bool has_tab_switch_action =
++      selection.line != OmniboxPopupSelection::kNoMatch &&
++      selection.state == OmniboxPopupSelection::LineState::kNormal && !action &&
++      disposition == WindowOpenDisposition::kCurrentTab &&
++      !match.extra_headers.contains(kHeliumWebKitHeader) &&
++      match.GetActionWhere([](const auto& candidate) {
++        return candidate->ActionId() == OmniboxActionId::TAB_SWITCH;
++      }) != nullptr;
++  if (is_open_tab_match || is_tab_switch_action || has_tab_switch_action) {
+     disposition = WindowOpenDisposition::kSwitchToTab;
+   }
+ 
+--- a/chrome/browser/ui/omnibox/omnibox_edit_model_unittest.cc
++++ b/chrome/browser/ui/omnibox/omnibox_edit_model_unittest.cc
+@@ -1488,6 +1488,60 @@
+             WindowOpenDisposition::kSwitchToTab);
+   histogram_tester.ExpectUniqueSample("Omnibox.EventCount", 1, 1);
+ }
++
++TEST_F(OmniboxEditModelPopupTest,
++       OpenNormalSelectionWithTabSwitchActionSwitchesToTab) {
++  ACMatches matches;
++  for (size_t i = 0; i < 3; ++i) {
++    AutocompleteMatch match(nullptr, 1000, false,
++                            omnibox::AutocompleteMatchType::kUrlWhatYouTyped);
++    match.keyword = u"match";
++    match.allowed_to_be_default_match = true;
++    matches.push_back(match);
++  }
++  const GURL url = GURL("https://example.com/");
++  matches[1].destination_url = url;
++  matches[1].provider =
++      controller()->autocomplete_controller()->search_provider();
++  matches[1].actions.push_back(base::MakeRefCounted<TabSwitchAction>(url));
++
++  matches[2].destination_url = GURL("https://webkit.example.com/");
++  matches[2].provider =
++      controller()->autocomplete_controller()->search_provider();
++  matches[2].extra_headers[kHeliumWebKitHeader] = "open";
++  matches[2].actions.push_back(
++      base::MakeRefCounted<TabSwitchAction>(matches[2].destination_url));
++
++  AutocompleteResult* result = &AutocompleteControllerPublishedResult();
++  result->AppendMatches(matches);
++  AutocompleteInput input(u"match", metrics::OmniboxEventProto::NTP,
++                          TestSchemeClassifier());
++  result->SortAndCull(input, /*template_url_service=*/nullptr,
++                      triggered_feature_service(), /*is_lens_active=*/false,
++                      /*can_show_contextual_suggestions=*/false,
++                      /*mia_enabled=*/false, /*is_incognito=*/false);
++  model()->OnPopupResultChanged();
++
++  model()->OpenSelection(
++      OmniboxPopupSelection(1, OmniboxPopupSelection::LineState::kNormal),
++      base::TimeTicks(), WindowOpenDisposition::kCurrentTab);
++  EXPECT_EQ(client()->last_log_disposition(),
++            WindowOpenDisposition::kSwitchToTab);
++
++  // Explicit non-current-tab dispositions keep opening a new copy.
++  model()->OpenSelection(
++      OmniboxPopupSelection(1, OmniboxPopupSelection::LineState::kNormal),
++      base::TimeTicks(), WindowOpenDisposition::kNewForegroundTab);
++  EXPECT_EQ(client()->last_log_disposition(),
++            WindowOpenDisposition::kNewForegroundTab);
++
++  // Explicit WebKit matches do not switch to an existing tab.
++  model()->OpenSelection(
++      OmniboxPopupSelection(2, OmniboxPopupSelection::LineState::kNormal),
++      base::TimeTicks(), WindowOpenDisposition::kCurrentTab);
++  EXPECT_EQ(client()->last_log_disposition(),
++            WindowOpenDisposition::kCurrentTab);
++}
+ #endif
+ 
+ // Ctrl+Enter on a popup line, as the WebUI omnibox sends it, opens the
+--- a/chrome/browser/ui/navigator/browser_navigator_params_utils.cc
++++ b/chrome/browser/ui/navigator/browser_navigator_params_utils.cc
+@@ -164,6 +164,14 @@
+       continue;
+     }
+ 
++    // When switching to an existing open tab, skip the source tab itself so
++    // another matching tab (possibly in another window) is preferred over
++    // staying on the active tab.
++    if (params.disposition == WindowOpenDisposition::kSwitchToTab &&
++        tab == params.source_contents) {
++      continue;
++    }
++
+     GURL tab_url = tab->GetVisibleURL();
+ 
+     // RewriteURLIfNecessary removes the "view-source:" scheme which could lead
