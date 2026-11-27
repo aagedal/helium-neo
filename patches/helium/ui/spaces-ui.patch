@@ -202,7 +202,7 @@
 +}
 --- /dev/null
 +++ b/chrome/browser/ui/views/tabs/shared/helium_spaces_menu_model.h
-@@ -0,0 +1,68 @@
+@@ -0,0 +1,89 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -210,13 +210,30 @@
 +#ifndef CHROME_BROWSER_UI_VIEWS_TABS_SHARED_HELIUM_SPACES_MENU_MODEL_H_
 +#define CHROME_BROWSER_UI_VIEWS_TABS_SHARED_HELIUM_SPACES_MENU_MODEL_H_
 +
++#include <memory>
++#include <optional>
 +#include <string>
 +#include <vector>
 +
++#include "base/containers/span.h"
 +#include "base/memory/raw_ptr.h"
 +#include "ui/menus/simple_menu_model.h"
 +
 +class BrowserWindowInterface;
++
++namespace gfx {
++struct VectorIcon;
++}  // namespace gfx
++
++struct HeliumSpaceIconOption {
++  const char* id;
++  const char16_t* label;
++  const gfx::VectorIcon* icon;
++};
++
++base::span<const HeliumSpaceIconOption> GetHeliumSpaceIconOptions();
++const gfx::VectorIcon& GetHeliumSpaceIcon(const std::string& icon_id,
++                                          size_t fallback_index);
 +
 +// Pop-out menu listing all Spaces (with checkmark on the active Space) plus
 +// Space management actions (New, Rename, Delete).
@@ -236,7 +253,9 @@
 +  void ExecuteCommand(int command_id, int event_flags) override;
 +
 + private:
-+  static constexpr int kFirstSpaceCommandId = 1000;
++  static constexpr int kFirstSpaceCommandId = 100;
++
++  std::optional<size_t> GetSpaceIndexForCommand(int command_id) const;
 +
 +  raw_ptr<BrowserWindowInterface> browser_;
 +  std::string active_space_id_;
@@ -261,19 +280,21 @@
 + private:
 +  enum CommandId {
 +    kRename = 1,
-+    kMoveLeft = 2,
-+    kMoveRight = 3,
-+    kDelete = 4,
++    kChangeIcon = 2,
++    kMoveLeft = 3,
++    kMoveRight = 4,
++    kDelete = 5,
 +  };
 +
 +  raw_ptr<BrowserWindowInterface> browser_;
 +  std::string space_id_;
++  std::unique_ptr<ui::SimpleMenuModel> icon_submenu_;
 +};
 +
 +#endif  // CHROME_BROWSER_UI_VIEWS_TABS_SHARED_HELIUM_SPACES_MENU_MODEL_H_
 --- /dev/null
 +++ b/chrome/browser/ui/views/tabs/shared/helium_spaces_menu_model.cc
-@@ -0,0 +1,194 @@
+@@ -0,0 +1,311 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -283,6 +304,7 @@
 +#include <utility>
 +
 +#include "chrome/app/chrome_command_ids.h"
++#include "chrome/app/vector_icons/vector_icons.h"
 +#include "chrome/browser/ui/browser_commands.h"
 +#include "chrome/browser/ui/browser_window.h"
 +#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
@@ -292,6 +314,105 @@
 +#include "chrome/browser/ui/tabs/helium_window_spaces_controller.h"
 +#include "chrome/grit/generated_resources.h"
 +#include "ui/base/accelerators/accelerator.h"
++#include "ui/base/models/image_model.h"
++#include "ui/color/color_id.h"
++
++namespace {
++
++constexpr HeliumSpaceIconOption kSpaceIcons[] = {
++    {"home", u"Home", &kHomeIcon},
++    {"work", u"Work", &kHomeRepairServiceIcon},
++    {"explore", u"Explore", &kExploreIcon},
++    {"star", u"Star", &kStarIcon},
++    {"rocket", u"Launch", &kRocketLaunchIcon},
++    {"globe", u"Web", &kGlobeIcon},
++    {"book", u"Reading", &kMenuBookIcon},
++    {"grid", u"Projects", &kGridViewIcon},
++    {"bolt", u"Focus", &kBoltIcon},
++    {"notes", u"Notes", &kNotesIcon},
++    {"music", u"Media", &kQueueMusicIcon},
++    {"schedule", u"Schedule", &kScheduleIcon},
++};
++
++class SpaceIconSubMenuModel : public ui::SimpleMenuModel,
++                              public ui::SimpleMenuModel::Delegate {
++ public:
++  SpaceIconSubMenuModel(BrowserWindowInterface* browser,
++                        std::string space_id,
++                        std::string current_icon_id,
++                        size_t fallback_index)
++      : ui::SimpleMenuModel(this),
++        browser_(browser),
++        space_id_(std::move(space_id)),
++        current_icon_id_(std::move(current_icon_id)),
++        fallback_index_(fallback_index) {
++    const auto options = GetHeliumSpaceIconOptions();
++    for (size_t i = 0; i < options.size(); ++i) {
++      const int cmd_id = kFirstIconCommandId + static_cast<int>(i);
++      AddCheckItem(cmd_id, options[i].label);
++      SetIconForCommandId(
++          cmd_id, ui::ImageModel::FromVectorIcon(*options[i].icon,
++                                                 ui::kColorMenuIcon, 16));
++    }
++  }
++  SpaceIconSubMenuModel(const SpaceIconSubMenuModel&) = delete;
++  SpaceIconSubMenuModel& operator=(const SpaceIconSubMenuModel&) = delete;
++  ~SpaceIconSubMenuModel() override = default;
++
++  bool IsCommandIdChecked(int command_id) const override {
++    const auto options = GetHeliumSpaceIconOptions();
++    const size_t idx = static_cast<size_t>(command_id - kFirstIconCommandId);
++    if (idx >= options.size()) {
++      return false;
++    }
++    if (!current_icon_id_.empty()) {
++      return current_icon_id_ == options[idx].id;
++    }
++    return idx == (fallback_index_ % options.size());
++  }
++
++  void ExecuteCommand(int command_id, int event_flags) override {
++    if (!browser_) {
++      return;
++    }
++    const auto options = GetHeliumSpaceIconOptions();
++    const size_t idx = static_cast<size_t>(command_id - kFirstIconCommandId);
++    if (idx >= options.size()) {
++      return;
++    }
++    if (auto* service = helium_spaces::HeliumSpacesServiceFactory::GetForProfile(
++            browser_->GetProfile())) {
++      service->SetSpaceIcon(space_id_, options[idx].id);
++    }
++  }
++
++ private:
++  static constexpr int kFirstIconCommandId = 200;
++
++  raw_ptr<BrowserWindowInterface> browser_;
++  std::string space_id_;
++  std::string current_icon_id_;
++  size_t fallback_index_;
++};
++
++}  // namespace
++
++base::span<const HeliumSpaceIconOption> GetHeliumSpaceIconOptions() {
++  return kSpaceIcons;
++}
++
++const gfx::VectorIcon& GetHeliumSpaceIcon(const std::string& icon_id,
++                                          size_t fallback_index) {
++  const auto options = GetHeliumSpaceIconOptions();
++  if (!icon_id.empty()) {
++    for (const auto& option : options) {
++      if (icon_id == option.id) {
++        return *option.icon;
++      }
++    }
++  }
++  return *options[fallback_index % options.size()].icon;
++}
 +
 +HeliumSpacesMenuModel::HeliumSpacesMenuModel(BrowserWindowInterface* browser)
 +    : ui::SimpleMenuModel(this), browser_(browser) {
@@ -319,12 +440,21 @@
 +
 +HeliumSpacesMenuModel::~HeliumSpacesMenuModel() = default;
 +
-+bool HeliumSpacesMenuModel::IsCommandIdChecked(int command_id) const {
++std::optional<size_t> HeliumSpacesMenuModel::GetSpaceIndexForCommand(
++    int command_id) const {
 +  if (command_id < kFirstSpaceCommandId) {
-+    return false;
++    return std::nullopt;
 +  }
 +  const size_t idx = static_cast<size_t>(command_id - kFirstSpaceCommandId);
-+  return idx < space_ids_.size() && space_ids_[idx] == active_space_id_;
++  if (idx >= space_ids_.size()) {
++    return std::nullopt;
++  }
++  return idx;
++}
++
++bool HeliumSpacesMenuModel::IsCommandIdChecked(int command_id) const {
++  const std::optional<size_t> idx = GetSpaceIndexForCommand(command_id);
++  return idx.has_value() && space_ids_[*idx] == active_space_id_;
 +}
 +
 +bool HeliumSpacesMenuModel::IsCommandIdEnabled(int command_id) const {
@@ -346,12 +476,11 @@
 +    return false;
 +  }
 +  int mapped_command = command_id;
-+  if (command_id >= kFirstSpaceCommandId) {
-+    const size_t idx = static_cast<size_t>(command_id - kFirstSpaceCommandId);
-+    if (idx >= 9) {
++  if (const std::optional<size_t> idx = GetSpaceIndexForCommand(command_id)) {
++    if (*idx >= 9) {
 +      return false;
 +    }
-+    mapped_command = IDC_HELIUM_SWITCH_SPACE_1 + static_cast<int>(idx);
++    mapped_command = IDC_HELIUM_SWITCH_SPACE_1 + static_cast<int>(*idx);
 +  }
 +  BrowserWindow* window = BrowserWindow::FromBrowser(browser_);
 +  if (!window || !window->GetAcceleratorProvider()) {
@@ -365,29 +494,25 @@
 +  if (!browser_) {
 +    return;
 +  }
-+  if (command_id >= kFirstSpaceCommandId) {
-+    const size_t idx = static_cast<size_t>(command_id - kFirstSpaceCommandId);
-+    if (idx < space_ids_.size()) {
-+      if (auto* ctrl =
-+              helium_spaces::HeliumWindowSpacesController::From(browser_)) {
-+        ctrl->SwitchToSpace(space_ids_[idx]);
-+      }
-+    }
-+    return;
-+  }
-+
 +  switch (command_id) {
 +    case IDC_HELIUM_NEW_SPACE:
 +      chrome::CreateNewSpace(browser_);
-+      break;
++      return;
 +    case IDC_HELIUM_RENAME_SPACE:
 +      chrome::RenameCurrentSpace(browser_);
-+      break;
++      return;
 +    case IDC_HELIUM_DELETE_SPACE:
 +      chrome::DeleteCurrentSpace(browser_);
-+      break;
++      return;
 +    default:
 +      break;
++  }
++
++  if (const std::optional<size_t> idx = GetSpaceIndexForCommand(command_id)) {
++    if (auto* ctrl =
++            helium_spaces::HeliumWindowSpacesController::From(browser_)) {
++      ctrl->SwitchToSpace(space_ids_[*idx]);
++    }
 +  }
 +}
 +
@@ -398,6 +523,18 @@
 +      browser_(browser),
 +      space_id_(std::move(space_id)) {
 +  AddItemWithStringId(kRename, IDS_HELIUM_RENAME_SPACE);
++  if (browser_) {
++    if (auto* service = helium_spaces::HeliumSpacesServiceFactory::GetForProfile(
++            browser_->GetProfile())) {
++      const helium_spaces::Space* space = service->FindSpace(space_id_);
++      const std::optional<size_t> idx = service->GetSpaceIndex(space_id_);
++      icon_submenu_ = std::make_unique<SpaceIconSubMenuModel>(
++          browser_, space_id_, space ? space->icon : std::string(),
++          idx.value_or(0));
++      AddSubMenuWithStringId(kChangeIcon, IDS_HELIUM_SPACE_CHANGE_ICON,
++                             icon_submenu_.get());
++    }
++  }
 +  AddItemWithStringId(kMoveLeft, IDS_HELIUM_SPACE_MOVE_LEFT);
 +  AddItemWithStringId(kMoveRight, IDS_HELIUM_SPACE_MOVE_RIGHT);
 +  AddSeparator(ui::NORMAL_SEPARATOR);
@@ -421,6 +558,7 @@
 +  }
 +  switch (command_id) {
 +    case kRename:
++    case kChangeIcon:
 +      return true;
 +    case kMoveLeft:
 +      return *idx > 0;
@@ -532,7 +670,7 @@
 +#endif  // CHROME_BROWSER_UI_VIEWS_TABS_SHARED_HELIUM_SPACES_MENU_BUTTON_H_
 --- /dev/null
 +++ b/chrome/browser/ui/views/tabs/shared/helium_spaces_menu_button.cc
-@@ -0,0 +1,201 @@
+@@ -0,0 +1,202 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -543,6 +681,7 @@
 +#include <utility>
 +
 +#include "base/functional/bind.h"
++#include "base/memory/raw_ref.h"
 +#include "cc/paint/paint_flags.h"
 +#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 +#include "chrome/browser/ui/color/chrome_color_id.h"
@@ -736,7 +875,7 @@
 +END_METADATA
 --- /dev/null
 +++ b/chrome/browser/ui/views/tabs/vertical/helium_spaces_switcher_view.h
-@@ -0,0 +1,72 @@
+@@ -0,0 +1,81 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -763,12 +902,14 @@
 +}  // namespace tabs
 +
 +namespace views {
++class Label;
 +class MenuRunner;
 +}  // namespace views
 +
-+// Bottom switcher bar in the vertical tab strip: displays one dot per Space
-+// plus a '+' button to add a Space when expanded, and collapses to a single
-+// dot-menu pop-out button when the sidebar is collapsed.
++// Bottom switcher bar in the vertical tab strip: displays the active Space
++// name above a row of circular icon buttons (one per Space) plus a '+' button
++// when expanded, and collapses to a single dot-menu pop-out button when the
++// sidebar is collapsed.
 +class HeliumSpacesSwitcherView : public views::View {
 +  METADATA_HEADER(HeliumSpacesSwitcherView, views::View)
 +
@@ -779,6 +920,11 @@
 +  HeliumSpacesSwitcherView(const HeliumSpacesSwitcherView&) = delete;
 +  HeliumSpacesSwitcherView& operator=(const HeliumSpacesSwitcherView&) = delete;
 +  ~HeliumSpacesSwitcherView() override;
++
++  // views::View:
++  gfx::Size CalculatePreferredSize(
++      const views::SizeBounds& available_size) const override;
++  gfx::Size GetMinimumSize() const override;
 +
 +  bool IsPositionInWindowCaption(const gfx::Point& point) const;
 +
@@ -796,7 +942,9 @@
 +  raw_ptr<tabs::VerticalTabStripStateController> state_controller_;
 +  raw_ptr<BrowserWindowInterface> browser_;
 +
-+  raw_ptr<views::View> expanded_row_ = nullptr;
++  raw_ptr<views::View> expanded_container_ = nullptr;
++  raw_ptr<views::Label> active_space_label_ = nullptr;
++  raw_ptr<views::View> dots_row_ = nullptr;
 +  raw_ptr<HeliumSpacesMenuButton> collapsed_button_ = nullptr;
 +  bool collapsed_ = false;
 +
@@ -811,7 +959,7 @@
 +#endif  // CHROME_BROWSER_UI_VIEWS_TABS_VERTICAL_HELIUM_SPACES_SWITCHER_VIEW_H_
 --- /dev/null
 +++ b/chrome/browser/ui/views/tabs/vertical/helium_spaces_switcher_view.cc
-@@ -0,0 +1,356 @@
+@@ -0,0 +1,425 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -821,6 +969,7 @@
 +#include <utility>
 +
 +#include "base/functional/bind.h"
++#include "base/memory/raw_ref.h"
 +#include "cc/paint/paint_flags.h"
 +#include "chrome/browser/ui/browser_commands.h"
 +#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
@@ -843,12 +992,14 @@
 +#include "ui/base/models/image_model.h"
 +#include "ui/color/color_provider.h"
 +#include "ui/gfx/canvas.h"
++#include "ui/gfx/paint_vector_icon.h"
 +#include "ui/views/accessibility/view_accessibility.h"
 +#include "ui/views/animation/ink_drop.h"
 +#include "ui/views/context_menu_controller.h"
 +#include "ui/views/controls/button/button.h"
 +#include "ui/views/controls/button/image_button.h"
 +#include "ui/views/controls/highlight_path_generator.h"
++#include "ui/views/controls/label.h"
 +#include "ui/views/controls/menu/menu_runner.h"
 +#include "ui/views/layout/box_layout.h"
 +#include "ui/views/layout/fill_layout.h"
@@ -856,26 +1007,31 @@
 +
 +namespace {
 +
-+constexpr int kSwitcherHeight = 28;
-+constexpr int kDotButtonSize = 22;
++constexpr int kExpandedHeight = 48;
++constexpr int kCollapsedHeight = 28;
++constexpr int kCircleButtonSize = 26;
++constexpr int kActiveIconSize = 14;
++constexpr int kInactiveIconSize = 13;
 +constexpr int kAddIconSize = 13;
-+constexpr float kButtonCornerRadius = 6.0f;
++constexpr float kCircleCornerRadius = kCircleButtonSize / 2.0f;
 +
-+class SpaceDotButton : public views::Button,
-+                       public views::ContextMenuController {
-+  METADATA_HEADER(SpaceDotButton, views::Button)
++class SpaceCircleButton : public views::Button,
++                          public views::ContextMenuController {
++  METADATA_HEADER(SpaceCircleButton, views::Button)
 +
 + public:
-+  SpaceDotButton(HeliumSpacesSwitcherView* owner,
-+                 BrowserWindowInterface* browser,
-+                 std::string space_id,
-+                 const std::u16string& name,
-+                 bool is_active)
-+      : views::Button(base::BindRepeating(&SpaceDotButton::OnPressed,
++  SpaceCircleButton(HeliumSpacesSwitcherView* owner,
++                    BrowserWindowInterface* browser,
++                    std::string space_id,
++                    const std::u16string& name,
++                    const gfx::VectorIcon& icon,
++                    bool is_active)
++      : views::Button(base::BindRepeating(&SpaceCircleButton::OnPressed,
 +                                          base::Unretained(this))),
 +        owner_(owner),
 +        browser_(browser),
 +        space_id_(std::move(space_id)),
++        icon_(icon),
 +        is_active_(is_active) {
 +    SetFocusBehavior(FocusBehavior::ACCESSIBLE_ONLY);
 +    SetTooltipText(name);
@@ -884,18 +1040,18 @@
 +
 +    views::InkDrop::Install(this, std::make_unique<views::InkDropHost>(this));
 +    views::InstallRoundRectHighlightPathGenerator(this, gfx::Insets(),
-+                                                  kButtonCornerRadius);
++                                                  kCircleCornerRadius);
 +    ConfigureToolbarInkdropForRefresh2023(
 +        this, kColorTabBackgroundInactiveHoverFrameActive,
 +        kColorTabBackgroundActiveFrameActive);
 +  }
-+  SpaceDotButton(const SpaceDotButton&) = delete;
-+  SpaceDotButton& operator=(const SpaceDotButton&) = delete;
-+  ~SpaceDotButton() override = default;
++  SpaceCircleButton(const SpaceCircleButton&) = delete;
++  SpaceCircleButton& operator=(const SpaceCircleButton&) = delete;
++  ~SpaceCircleButton() override = default;
 +
 +  gfx::Size CalculatePreferredSize(
 +      const views::SizeBounds& available_size) const override {
-+    return gfx::Size(kDotButtonSize, kDotButtonSize);
++    return gfx::Size(kCircleButtonSize, kCircleButtonSize);
 +  }
 +
 +  void OnThemeChanged() override {
@@ -925,15 +1081,33 @@
 +
 +    const bool hovered =
 +        GetState() == STATE_HOVERED || GetState() == STATE_PRESSED;
-+    const float radius = is_active_ ? 3.5f : (hovered ? 3.0f : 2.6f);
-+    const uint8_t alpha = is_active_ ? 0xF0 : (hovered ? 0xB8 : 0x60);
++    const gfx::Rect bounds = GetLocalBounds();
++    const gfx::PointF center(bounds.CenterPoint());
 +
-+    cc::PaintFlags flags;
-+    flags.setAntiAlias(true);
-+    flags.setStyle(cc::PaintFlags::kFill_Style);
-+    flags.setColor(SkColorSetA(base_color, alpha));
-+    canvas->DrawCircle(gfx::PointF(GetLocalBounds().CenterPoint()), radius,
-+                       flags);
++    if (is_active_) {
++      cc::PaintFlags fill_flags;
++      fill_flags.setAntiAlias(true);
++      fill_flags.setStyle(cc::PaintFlags::kFill_Style);
++      fill_flags.setColor(SkColorSetA(base_color, 0x24));
++      canvas->DrawCircle(center, kCircleCornerRadius - 0.5f, fill_flags);
++
++      cc::PaintFlags ring_flags;
++      ring_flags.setAntiAlias(true);
++      ring_flags.setStyle(cc::PaintFlags::kStroke_Style);
++      ring_flags.setStrokeWidth(1.0f);
++      ring_flags.setColor(SkColorSetA(base_color, 0x52));
++      canvas->DrawCircle(center, kCircleCornerRadius - 1.0f, ring_flags);
++    }
++
++    const int icon_size = is_active_ ? kActiveIconSize : kInactiveIconSize;
++    const uint8_t icon_alpha = is_active_ ? 0xFF : (hovered ? 0xCC : 0x73);
++    const SkColor icon_color = SkColorSetA(base_color, icon_alpha);
++
++    canvas->Save();
++    canvas->Translate(gfx::Vector2d((bounds.width() - icon_size) / 2,
++                                    (bounds.height() - icon_size) / 2));
++    gfx::PaintVectorIcon(canvas, *icon_, icon_size, icon_color);
++    canvas->Restore();
 +  }
 +
 +  // views::ContextMenuController:
@@ -955,10 +1129,11 @@
 +  raw_ptr<HeliumSpacesSwitcherView> owner_;
 +  raw_ptr<BrowserWindowInterface> browser_;
 +  std::string space_id_;
++  raw_ref<const gfx::VectorIcon> icon_;
 +  bool is_active_;
 +};
 +
-+BEGIN_METADATA(SpaceDotButton)
++BEGIN_METADATA(SpaceCircleButton)
 +END_METADATA
 +
 +class AddSpaceButton : public views::ImageButton {
@@ -978,7 +1153,7 @@
 +
 +    views::InkDrop::Install(this, std::make_unique<views::InkDropHost>(this));
 +    views::InstallRoundRectHighlightPathGenerator(this, gfx::Insets(),
-+                                                  kButtonCornerRadius);
++                                                  kCircleCornerRadius);
 +    ConfigureToolbarInkdropForRefresh2023(
 +        this, kColorTabBackgroundInactiveHoverFrameActive,
 +        kColorTabBackgroundActiveFrameActive);
@@ -990,7 +1165,7 @@
 +
 +  gfx::Size CalculatePreferredSize(
 +      const views::SizeBounds& available_size) const override {
-+    return gfx::Size(kDotButtonSize, kDotButtonSize);
++    return gfx::Size(kCircleButtonSize, kCircleButtonSize);
 +  }
 +
 +  void OnThemeChanged() override {
@@ -1029,13 +1204,36 @@
 +    : state_controller_(state_controller), browser_(browser) {
 +  SetLayoutManager(std::make_unique<views::FillLayout>());
 +
-+  auto expanded_row = std::make_unique<views::View>();
-+  auto* box = expanded_row->SetLayoutManager(std::make_unique<views::BoxLayout>(
++  auto expanded_container = std::make_unique<views::View>();
++  auto* expanded_layout =
++      expanded_container->SetLayoutManager(std::make_unique<views::BoxLayout>(
++          views::BoxLayout::Orientation::kVertical,
++          gfx::Insets::TLBR(2, 0, 0, 0),
++          /*between_child_spacing=*/4));
++  expanded_layout->set_main_axis_alignment(
++      views::BoxLayout::MainAxisAlignment::kCenter);
++  expanded_layout->set_cross_axis_alignment(
++      views::BoxLayout::CrossAxisAlignment::kStretch);
++
++  auto label = std::make_unique<views::Label>();
++  label->SetHorizontalAlignment(gfx::ALIGN_CENTER);
++  label->SetElideBehavior(gfx::ELIDE_TAIL);
++  label->SetAutoColorReadabilityEnabled(false);
++  label->SetFontList(label->font_list()
++                         .DeriveWithSizeDelta(-1)
++                         .DeriveWithWeight(gfx::Font::Weight::MEDIUM));
++  label->SetEnabledColor(kColorTabForegroundActiveFrameActive);
++  active_space_label_ = expanded_container->AddChildView(std::move(label));
++
++  auto dots_row = std::make_unique<views::View>();
++  auto* box = dots_row->SetLayoutManager(std::make_unique<views::BoxLayout>(
 +      views::BoxLayout::Orientation::kHorizontal, gfx::Insets(),
-+      /*between_child_spacing=*/2));
++      /*between_child_spacing=*/4));
 +  box->set_main_axis_alignment(views::BoxLayout::MainAxisAlignment::kCenter);
 +  box->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
-+  expanded_row_ = AddChildView(std::move(expanded_row));
++  dots_row_ = expanded_container->AddChildView(std::move(dots_row));
++
++  expanded_container_ = AddChildView(std::move(expanded_container));
 +
 +  auto collapsed_wrapper = std::make_unique<views::View>();
 +  auto* collapsed_box = collapsed_wrapper->SetLayoutManager(
@@ -1052,8 +1250,6 @@
 +      &HeliumSpacesSwitcherView::OnMenuClosed, base::Unretained(this)));
 +  collapsed_button_ = collapsed_wrapper->AddChildView(std::move(menu_button));
 +  AddChildView(std::move(collapsed_wrapper));
-+
-+  SetPreferredSize(gfx::Size(0, kSwitcherHeight));
 +
 +  if (auto* ctrl =
 +          helium_spaces::HeliumWindowSpacesController::From(browser_)) {
@@ -1075,6 +1271,15 @@
 +
 +HeliumSpacesSwitcherView::~HeliumSpacesSwitcherView() = default;
 +
++gfx::Size HeliumSpacesSwitcherView::CalculatePreferredSize(
++    const views::SizeBounds& available_size) const {
++  return gfx::Size(0, collapsed_ ? kCollapsedHeight : kExpandedHeight);
++}
++
++gfx::Size HeliumSpacesSwitcherView::GetMinimumSize() const {
++  return CalculatePreferredSize({});
++}
++
 +bool HeliumSpacesSwitcherView::IsPositionInWindowCaption(
 +    const gfx::Point& point) const {
 +  if (collapsed_) {
@@ -1088,8 +1293,8 @@
 +    return true;
 +  }
 +
-+  if (expanded_row_ && expanded_row_->GetVisible()) {
-+    for (views::View* child : expanded_row_->children()) {
++  if (dots_row_ && dots_row_->GetVisible()) {
++    for (views::View* child : dots_row_->children()) {
 +      if (!child->GetVisible()) {
 +        continue;
 +      }
@@ -1129,27 +1334,39 @@
 +void HeliumSpacesSwitcherView::OnCollapseStateChanged(
 +    tabs::VerticalTabStripCollapseState state) {
 +  collapsed_ = state != tabs::VerticalTabStripCollapseState::kExpanded;
-+  expanded_row_->SetVisible(!collapsed_);
++  expanded_container_->SetVisible(!collapsed_);
 +  collapsed_button_->parent()->SetVisible(collapsed_);
++  PreferredSizeChanged();
 +  InvalidateLayout();
 +}
 +
 +void HeliumSpacesSwitcherView::RebuildDots() {
-+  expanded_row_->RemoveAllChildViews();
++  dots_row_->RemoveAllChildViews();
++  std::u16string active_name;
 +
 +  if (browser_) {
 +    if (auto* service = helium_spaces::HeliumSpacesServiceFactory::GetForProfile(
 +            browser_->GetProfile())) {
 +      const std::string active_id = helium_spaces::GetActiveSpaceId(browser_);
-+      for (const helium_spaces::Space& space : service->spaces()) {
-+        expanded_row_->AddChildView(std::make_unique<SpaceDotButton>(
-+            this, browser_, space.id, space.name, space.id == active_id));
++      const auto& spaces = service->spaces();
++      for (size_t i = 0; i < spaces.size(); ++i) {
++        const helium_spaces::Space& space = spaces[i];
++        const bool is_active = space.id == active_id;
++        if (is_active) {
++          active_name = space.name;
++        }
++        dots_row_->AddChildView(std::make_unique<SpaceCircleButton>(
++            this, browser_, space.id, space.name,
++            GetHeliumSpaceIcon(space.icon, i), is_active));
 +      }
 +    }
-+    expanded_row_->AddChildView(std::make_unique<AddSpaceButton>(browser_));
++    dots_row_->AddChildView(std::make_unique<AddSpaceButton>(browser_));
 +  }
 +
-+  expanded_row_->InvalidateLayout();
++  active_space_label_->SetText(active_name);
++  active_space_label_->SetTooltipText(active_name);
++  dots_row_->InvalidateLayout();
++  expanded_container_->InvalidateLayout();
 +  InvalidateLayout();
 +}
 +
@@ -1181,7 +1398,7 @@
  #define IDC_WRITING_DIRECTION_LTR        41122
 --- a/chrome/app/generated_resources.grd
 +++ b/chrome/app/generated_resources.grd
-@@ -343,6 +343,17 @@
+@@ -343,6 +343,18 @@
        <message name="IDS_HELIUM_PREV_SPACE" desc="Command switching to the previous Space.">Previous Space</message>
        <message name="IDS_HELIUM_NEW_SPACE" desc="Command creating a new Space and switching to it.">New Space</message>
        <message name="IDS_HELIUM_DELETE_SPACE" desc="Command deleting the current Space.">Delete Current Space</message>
@@ -1194,6 +1411,7 @@
 +      <message name="IDS_HELIUM_SPACES_BUTTON_ACCNAME" desc="Accessible name for the Spaces pop-out button.">Spaces</message>
 +      <message name="IDS_HELIUM_SPACE_MOVE_LEFT" desc="Context menu item moving a Space left in the switcher.">Move Space Left</message>
 +      <message name="IDS_HELIUM_SPACE_MOVE_RIGHT" desc="Context menu item moving a Space right in the switcher.">Move Space Right</message>
++      <message name="IDS_HELIUM_SPACE_CHANGE_ICON" desc="Context menu submenu changing the icon of a Space.">Change Icon</message>
 +      <message name="IDS_HELIUM_SPACE_DELETE" desc="Context menu item deleting a Space.">Delete Space</message>
 +      <message name="IDS_HELIUM_NEW_SPACE_BUTTON_TOOLTIP" desc="Tooltip for the button adding a new Space.">New Space</message>
        <message name="IDS_HELIUM_SWITCH_SPACE_N" desc="Shortcut command switching to Space N.">Switch to Space <ph name="NUMBER">$1<ex>1</ex></ph></message>
@@ -1201,7 +1419,7 @@
        <message name="IDS_TAB_CXMENU_MOVE_TO_SPACE" desc="Tab context menu submenu for moving selected tabs to another Space.">Move to Space</message>
 --- a/chrome/browser/ui/tabs/helium_spaces_util.h
 +++ b/chrome/browser/ui/tabs/helium_spaces_util.h
-@@ -45,6 +45,9 @@
+@@ -49,6 +49,9 @@
  void PromptToDeleteSpace(BrowserWindowInterface* browser,
                           const std::string& space_id);
  
@@ -1230,7 +1448,7 @@
  BrowserWindowInterface* GetBrowserFromModel(const TabStripModel* model) {
    if (!model || !model->delegate()) {
      return nullptr;
-@@ -268,6 +271,58 @@
+@@ -306,6 +309,58 @@
            .AddCancelButton(base::DoNothing())
            .Build();
  
@@ -1855,3 +2073,610 @@
  }
  
  void HorizontalTabStripRegionViewNew::UpdateTabStripMargin() {
+--- a/chrome/browser/ui/views/tabs/common/pinned_tab_container_view.h
++++ b/chrome/browser/ui/views/tabs/common/pinned_tab_container_view.h
+@@ -42,6 +42,7 @@
+     // checking metadata.
+     const class PinnedTabContainerView& PinnedTabContainerView() const;
+     bool IsChildVisibleInContainer(const views::View* child) const;
++    bool IsChildGlobalPin(const views::View* child) const;
+   };
+ 
+   // TabCollectionAnimatingLayoutManager::Delegate:
+@@ -55,11 +56,16 @@
+   std::optional<BrowserRootView::DropIndex> GetLinkDropIndex(
+       const gfx::Point& loc_in_container);
+ 
++  // views::View:
++  void OnPaint(gfx::Canvas* canvas) override;
++
+  private:
+   friend class PinnedTabContainerViewVerticalLayout;
+   friend class PinnedTabContainerViewHorizontalLayout;
+ 
+   static constexpr int kTabPadding = 2;
++  static constexpr int kGlobalPinSectionGap = 11;
++  static constexpr int kGlobalPinHorizontalGap = 6;
+ 
+   // The minimum width of a pin in the uncollapsed vertical tab strip.
+   static constexpr int kUncollapsedTabMinWidth = 42;
+--- a/chrome/browser/ui/views/tabs/common/pinned_tab_container_view.cc
++++ b/chrome/browser/ui/views/tabs/common/pinned_tab_container_view.cc
+@@ -4,9 +4,13 @@
+ 
+ #include "chrome/browser/ui/views/tabs/common/pinned_tab_container_view.h"
+ 
++#include <limits>
++
+ #include "base/i18n/rtl.h"
++#include "cc/paint/paint_flags.h"
+ #include "chrome/browser/ui/color/chrome_color_id.h"
+ #include "chrome/browser/ui/layout_constants.h"
++#include "chrome/browser/ui/tabs/helium_spaces_util.h"
+ #include "chrome/browser/ui/views/tabs/common/dragged_tabs_container.h"
+ #include "chrome/browser/ui/views/tabs/common/pinned_tab_container_view_horizontal_layout.h"
+ #include "chrome/browser/ui/views/tabs/common/pinned_tab_container_view_vertical_layout.h"
+@@ -18,6 +22,8 @@
+ #include "chrome/browser/ui/views/tabs/common/tab_view.h"
+ #include "content/public/browser/navigation_controller.h"
+ #include "ui/base/metadata/metadata_impl_macros.h"
++#include "ui/color/color_provider.h"
++#include "ui/gfx/canvas.h"
+ #include "ui/gfx/geometry/insets.h"
+ #include "ui/gfx/geometry/rect.h"
+ #include "ui/views/border.h"
+@@ -34,6 +40,22 @@
+ constexpr int kBorderThickness = 1;
+ constexpr int kBorderPadding = 2;
+ 
++bool IsPinnedChildGlobal(const views::View* child) {
++  if (const auto* tab_view = views::AsViewClass<TabView>(child)) {
++    return helium_spaces::IsGlobalPin(tab_view->GetTabInterface());
++  }
++  if (const auto* split_view = views::AsViewClass<SplitTabView>(child)) {
++    if (const TabCollectionNode* split_node = split_view->collection_node();
++        split_node && !split_node->children().empty()) {
++      if (const auto* first_tab = views::AsViewClass<TabView>(
++              split_node->children().front()->view())) {
++        return helium_spaces::IsGlobalPin(first_tab->GetTabInterface());
++      }
++    }
++  }
++  return false;
++}
++
+ std::unique_ptr<PinnedTabContainerView::LayoutManager>
+ CreatePinnedTabContainerViewLayout(TabStripOrientation orientation) {
+   if (orientation == TabStripOrientation::kVertical) {
+@@ -146,6 +168,56 @@
+   return true;
+ }
+ 
++bool PinnedTabContainerView::LayoutManager::IsChildGlobalPin(
++    const views::View* child) const {
++  return IsPinnedChildGlobal(child);
++}
++
++void PinnedTabContainerView::OnPaint(gfx::Canvas* canvas) {
++  TabCollectionZOrderManager::OnPaint(canvas);
++
++  if (orientation_ != TabStripOrientation::kVertical || !collection_node_) {
++    return;
++  }
++
++  int global_bottom = -1;
++  int space_top = std::numeric_limits<int>::max();
++  for (const views::View* child : collection_node_->GetDirectChildren()) {
++    if (!child->GetVisible()) {
++      continue;
++    }
++    if (IsPinnedChildGlobal(child)) {
++      global_bottom = std::max(global_bottom, child->bounds().bottom());
++    } else {
++      space_top = std::min(space_top, child->bounds().y());
++    }
++  }
++
++  if (global_bottom < 0 || space_top == std::numeric_limits<int>::max() ||
++      space_top <= global_bottom + kTabPadding) {
++    return;
++  }
++
++  const auto* color_provider = GetColorProvider();
++  if (!color_provider) {
++    return;
++  }
++
++  const gfx::Insets insets = GetInsets();
++  const int line_left = insets.left() + 4;
++  const int line_right = width() - insets.right() - 4;
++  if (line_right <= line_left) {
++    return;
++  }
++
++  const int divider_y = (global_bottom + space_top) / 2;
++  cc::PaintFlags flags;
++  flags.setAntiAlias(false);
++  flags.setColor(color_provider->GetColor(kColorToolbarContentAreaSeparator));
++  canvas->DrawRect(gfx::Rect(line_left, divider_y, line_right - line_left, 1),
++                   flags);
++}
++
+ bool PinnedTabContainerView::IsDragging() const {
+   if (!collection_node_ || !collection_node_->GetController()) {
+     return false;
+--- a/chrome/browser/ui/views/tabs/common/helium_pinned_tab_container_view_vertical_layout.cc
++++ b/chrome/browser/ui/views/tabs/common/helium_pinned_tab_container_view_vertical_layout.cc
+@@ -6,6 +6,7 @@
+ 
+ #include <algorithm>
+ #include <optional>
++#include <vector>
+ 
+ #include "base/numerics/safe_conversions.h"
+ #include "chrome/browser/ui/layout_constants.h"
+@@ -84,16 +85,22 @@
+   const auto get_slots = [](const views::View* child) {
+     return views::IsViewClass<SplitTabView>(child) ? 2 : 1;
+   };
+-  int total_slots = 0;
+-  for (const views::View* child : children) {
+-    if (IsChildVisibleInContainer(child)) {
+-      total_slots += get_slots(child);
+-    }
+-  }
+-  if (total_slots == 0) {
+-    for (auto* child : children) {
++
++  std::vector<views::View*> global_children;
++  std::vector<views::View*> space_children;
++  for (auto* child : children) {
++    if (!IsChildVisibleInContainer(child)) {
+       layouts.child_layouts.emplace_back(child, false, gfx::Rect());
++      continue;
++    }
++    if (IsChildGlobalPin(child)) {
++      global_children.push_back(child);
++    } else {
++      space_children.push_back(child);
+     }
++  }
++
++  if (global_children.empty() && space_children.empty()) {
+     layouts.host_size = gfx::Size();
+     return layouts;
+   }
+@@ -105,114 +112,113 @@
+       collapse_state == tabs::VerticalTabStripCollapseState::kCollapsed
+           ? GetLayoutConstant(LayoutConstant::kVerticalTabMinWidth)
+           : PinnedTabContainerView::kUncollapsedTabMinWidth;
+-  int slots_per_row = total_slots;
+   std::optional<int> row_width;
+-
+-  // If the width is bounded, calculate how many slots fit on a row, and spread
+-  // the pins evenly over the rows they need, so that the last row isn't left
+-  // with fewer of them.
+   if (size_bounds.width().is_bounded() && size_bounds.width().value() > 0) {
+     row_width = size_bounds.width().value() - insets.width();
++  }
+ 
+-    // When we are in collapsed state, only one child should be shown per row.
+-    // During collapse animation and other cases, fit as many as possible.
+-    if (collapse_state == tabs::VerticalTabStripCollapseState::kCollapsed) {
+-      slots_per_row = 1;
+-    } else {
+-      const int max_slots_per_row = std::max(
+-          1, (*row_width - slot_width) /
+-                     (slot_width + PinnedTabContainerView::kTabPadding) +
+-                 1);
+-      const int num_rows =
+-          (total_slots + max_slots_per_row - 1) / max_slots_per_row;
+-      slots_per_row = (total_slots + num_rows - 1) / num_rows;
+-
+-      // Splits can't be broken across rows, so widen the rows until the pins
+-      // fit on as many rows as planned.
+-      const auto count_rows = [&](int row_size) {
+-        int rows = 1;
+-        int used_slots = 0;
+-        for (const views::View* child : children) {
+-          if (!IsChildVisibleInContainer(child)) {
+-            continue;
+-          }
+-          const int slots = get_slots(child);
+-          if (used_slots > 0 && used_slots + slots > row_size) {
+-            ++rows;
+-            used_slots = 0;
++  const auto layout_section = [&](const std::vector<views::View*>& section) {
++    if (section.empty()) {
++      return;
++    }
++    int section_slots = 0;
++    for (const views::View* child : section) {
++      section_slots += get_slots(child);
++    }
++
++    int slots_per_row = section_slots;
++    if (row_width) {
++      if (collapse_state == tabs::VerticalTabStripCollapseState::kCollapsed) {
++        slots_per_row = 1;
++      } else {
++        const int max_slots_per_row = std::max(
++            1, (*row_width - slot_width) /
++                       (slot_width + PinnedTabContainerView::kTabPadding) +
++                   1);
++        const int num_rows =
++            (section_slots + max_slots_per_row - 1) / max_slots_per_row;
++        slots_per_row = (section_slots + num_rows - 1) / num_rows;
++
++        const auto count_rows = [&](int row_size) {
++          int rows = 1;
++          int used_slots = 0;
++          for (const views::View* child : section) {
++            const int slots = get_slots(child);
++            if (used_slots > 0 && used_slots + slots > row_size) {
++              ++rows;
++              used_slots = 0;
++            }
++            used_slots += slots;
+           }
+-          used_slots += slots;
++          return rows;
++        };
++        while (slots_per_row < max_slots_per_row &&
++               count_rows(slots_per_row) > num_rows) {
++          ++slots_per_row;
+         }
+-        return rows;
+-      };
+-      while (slots_per_row < max_slots_per_row &&
+-             count_rows(slots_per_row) > num_rows) {
+-        ++slots_per_row;
+       }
+     }
+-  }
+-
+-  // Returns the left edge of the slot at `index` of a row. The rounding of the
+-  // slot widths is spread over the row, so that the last pin of a full row
+-  // ends right at its edge.
+-  const auto get_slot_x = [&](int index) {
+-    return insets.left() +
+-           (row_width
+-                ? index * (*row_width + PinnedTabContainerView::kTabPadding) /
+-                      slots_per_row
+-                : index * (slot_width + PinnedTabContainerView::kTabPadding));
+-  };
+ 
+-  int row_slots = 0;
+-  for (auto* child : children) {
+-    const int slots = get_slots(child);
++    const auto get_slot_x = [&](int index) {
++      return insets.left() +
++             (row_width
++                  ? index * (*row_width + PinnedTabContainerView::kTabPadding) /
++                        slots_per_row
++                  : index * (slot_width + PinnedTabContainerView::kTabPadding));
++    };
++
++    int row_slots = 0;
++    for (auto* child : section) {
++      const int slots = get_slots(child);
++      auto drag_data =
++          PinnedTabContainerView().GetVisualDataForDraggedView(*child);
++
++      // Start a new row if the child doesn't fit on this one.
++      const bool takes_space = !drag_data || !drag_data->should_float;
++      if (takes_space && row_slots > 0 && row_slots + slots > slots_per_row) {
++        y = total_height + PinnedTabContainerView::kTabPadding;
++        row_slots = 0;
++      }
+ 
+-    auto drag_data =
+-        PinnedTabContainerView().GetVisualDataForDraggedView(*child);
+-    const bool should_show_child = IsChildVisibleInContainer(child);
+-    if (!should_show_child) {
+-      layouts.child_layouts.emplace_back(child, false, gfx::Rect());
+-      continue;
+-    }
++      // A split wider than the row takes all of it.
++      const int first_slot = takes_space ? row_slots : 0;
++      const int end_slot = std::min(first_slot + slots, slots_per_row);
++      const int child_width = get_slot_x(end_slot) -
++                              PinnedTabContainerView::kTabPadding -
++                              get_slot_x(first_slot);
++      gfx::Rect bounds = gfx::Rect(
++          child->GetPreferredSize(views::SizeBounds(child_width, {})));
++      bounds.set_width(child_width);
++
++      bounds.set_y(drag_data ? drag_data->offset.y() : y);
++      // Pins that can only be dragged vertically, i.e. while the tab strip is
++      // collapsed, stay within the outline instead of moving to the edge of the
++      // container. The drag offset is already where the pin is drawn, so it
++      // isn't padded from the pin before it, which would make a dropped pin
++      // jump aside before it animates into its slot.
++      if (drag_data && PinnedTabContainerView().drag_axes() !=
++                           PinnedTabContainerView::DragAxes::kVerticalOnly) {
++        bounds.set_x(drag_data->offset.x());
++      } else {
++        bounds.set_x(get_slot_x(first_slot));
++      }
+ 
+-    // Start a new row if the child doesn't fit on this one.
+-    const bool takes_space = !drag_data || !drag_data->should_float;
+-    if (takes_space && row_slots > 0 && row_slots + slots > slots_per_row) {
+-      y = total_height + PinnedTabContainerView::kTabPadding;
+-      row_slots = 0;
+-    }
+-
+-    // A split wider than the row takes all of it.
+-    const int first_slot = takes_space ? row_slots : 0;
+-    const int end_slot = std::min(first_slot + slots, slots_per_row);
+-    const int child_width = get_slot_x(end_slot) -
+-                            PinnedTabContainerView::kTabPadding -
+-                            get_slot_x(first_slot);
+-    gfx::Rect bounds =
+-        gfx::Rect(child->GetPreferredSize(views::SizeBounds(child_width, {})));
+-    bounds.set_width(child_width);
+-
+-    bounds.set_y(drag_data ? drag_data->offset.y() : y);
+-    // Pins that can only be dragged vertically, i.e. while the tab strip is
+-    // collapsed, stay within the outline instead of moving to the edge of the
+-    // container. The drag offset is already where the pin is drawn, so it
+-    // isn't padded from the pin before it, which would make a dropped pin jump
+-    // aside before it animates into its slot.
+-    if (drag_data && PinnedTabContainerView().drag_axes() !=
+-                         PinnedTabContainerView::DragAxes::kVerticalOnly) {
+-      bounds.set_x(drag_data->offset.x());
+-    } else {
+-      bounds.set_x(get_slot_x(first_slot));
+-    }
++      if (takes_space) {
++        total_width =
++            std::max(total_width, get_slot_x(first_slot) + child_width);
++        total_height = std::max(total_height, (y + bounds.height()));
++        row_slots += slots;
++      }
+ 
+-    if (takes_space) {
+-      total_width = std::max(total_width, get_slot_x(first_slot) + child_width);
+-      total_height = std::max(total_height, (y + bounds.height()));
+-      row_slots += slots;
++      layouts.child_layouts.emplace_back(child, true, bounds);
+     }
++  };
+ 
+-    layouts.child_layouts.emplace_back(child, true, bounds);
++  layout_section(global_children);
++  if (!global_children.empty() && !space_children.empty()) {
++    y = total_height + PinnedTabContainerView::kGlobalPinSectionGap;
+   }
++  layout_section(space_children);
+ 
+   // Make sure we snap to bounded width if defined. This is necessary as the
+   // `child_width` calculation above rounds width down and this can result in
+--- a/chrome/browser/ui/views/tabs/common/pinned_tab_container_view_horizontal_layout.cc
++++ b/chrome/browser/ui/views/tabs/common/pinned_tab_container_view_horizontal_layout.cc
+@@ -28,11 +28,18 @@
+ 
+   int min_width = 0;
+   size_t count = 0;
++  bool has_global = false;
++  bool has_space = false;
+   for (const auto* child :
+        PinnedTabContainerView().collection_node_->GetDirectChildren()) {
+     if (!IsChildVisibleInContainer(child)) {
+       continue;
+     }
++    if (IsChildGlobalPin(child)) {
++      has_global = true;
++    } else {
++      has_space = true;
++    }
+     min_width += child->GetMinimumSize().width();
+     count++;
+   }
+@@ -41,6 +48,9 @@
+     min_width =
+         std::max(0, min_width - static_cast<int>(count - 1) * tab_overlap);
+   }
++  if (has_global && has_space) {
++    min_width += PinnedTabContainerView::kGlobalPinHorizontalGap;
++  }
+   return gfx::Size(min_width, TabStyle::Get()->GetStandardHeight());
+ }
+ 
+@@ -57,6 +67,8 @@
+   int x = 0;
+   const int container_height = TabStyle::Get()->GetStandardHeight();
+   size_t visible_count = 0;
++  bool saw_global = false;
++  bool added_section_gap = false;
+ 
+   for (auto* child : children) {
+     views::SizeBounds child_size_bounds =
+@@ -73,6 +85,14 @@
+       continue;
+     }
+ 
++    const bool is_global = IsChildGlobalPin(child);
++    if (is_global) {
++      saw_global = true;
++    } else if (saw_global && !added_section_gap) {
++      x += PinnedTabContainerView::kGlobalPinHorizontalGap;
++      added_section_gap = true;
++    }
++
+     bounds.set_x(drag_data ? drag_data->offset.x() : x);
+ 
+     if (!drag_data || !drag_data->should_float) {
+--- a/chrome/browser/ui/views/tabs/tab_style_views.h
++++ b/chrome/browser/ui/views/tabs/tab_style_views.h
+@@ -77,6 +77,7 @@
+   virtual BrowserWindowInterface* GetBrowserWindowInterface() const = 0;
+   virtual bool IsGlassFrame() const = 0;
+   virtual bool IsPinned() const = 0;
++  virtual bool IsGlobalPin() const { return false; }
+   virtual bool ShouldPaintTabBackgroundColor() const = 0;
+   virtual int GetStrokeThickness() const = 0;
+ 
+--- a/chrome/browser/ui/views/tabs/common/tab_view.cc
++++ b/chrome/browser/ui/views/tabs/common/tab_view.cc
+@@ -27,6 +27,7 @@
+ #include "chrome/browser/ui/tabs/tab_data.h"
+ #include "chrome/browser/ui/tabs/tab_enums.h"
+ #include "chrome/browser/ui/tabs/tab_muted_utils.h"
++#include "chrome/browser/ui/tabs/helium_spaces_util.h"
+ #include "chrome/browser/ui/tabs/tab_strip_model.h"
+ #include "chrome/browser/ui/tabs/tab_style.h"
+ #include "chrome/browser/ui/tabs/vertical_tab_strip_state.h"
+@@ -306,6 +307,11 @@
+ 
+   bool IsPinned() const override { return tab_view_->pinned_; }
+ 
++  bool IsGlobalPin() const override {
++    return tab_view_->pinned_ &&
++           helium_spaces::IsGlobalPin(tab_view_->GetTabInterface());
++  }
++
+   bool ShouldPaintTabBackgroundColor() const override {
+     return tab_view_->should_fill_background_tab_color_;
+   }
+--- a/chrome/browser/ui/views/tabs/tab.cc
++++ b/chrome/browser/ui/views/tabs/tab.cc
+@@ -36,6 +36,7 @@
+ #include "chrome/browser/ui/tabs/tab_change_type.h"
+ #include "chrome/browser/ui/tabs/tab_data.h"
+ #include "chrome/browser/ui/tabs/tab_enums.h"
++#include "chrome/browser/ui/tabs/helium_spaces_util.h"
+ #include "chrome/browser/ui/tabs/tab_style.h"
+ #include "chrome/browser/ui/thumbnails/thumbnail_image.h"
+ #include "chrome/browser/ui/ui_features.h"
+@@ -259,6 +260,11 @@
+ 
+   bool IsPinned() const override { return tab_->data().pinned; }
+ 
++  bool IsGlobalPin() const override {
++    return tab_->data().pinned &&
++           helium_spaces::IsGlobalPin(tab_->tab_handle().Get());
++  }
++
+   bool ShouldPaintTabBackgroundColor() const override {
+     return tab_->should_fill_background_tab_color();
+   }
+--- a/chrome/browser/ui/views/tabs/common/vertical_tab_style_views.cc
++++ b/chrome/browser/ui/views/tabs/common/vertical_tab_style_views.cc
+@@ -9,6 +9,7 @@
+ 
+ #include "chrome/browser/ui/views/helium/native_frame_materials.h"
+ #include "chrome/browser/themes/theme_properties.h"
++#include "chrome/browser/ui/color/chrome_color_id.h"
+ #include "chrome/browser/ui/layout_constants.h"
+ #include "chrome/browser/ui/views/frame/browser_frame_view.h"
+ #include "chrome/browser/ui/views/tabs/common/tab_collection_node.h"
+@@ -20,6 +21,7 @@
+ #include "third_party/skia/include/core/SkPath.h"
+ #include "third_party/skia/include/core/SkRRect.h"
+ #include "ui/base/theme_provider.h"
++#include "ui/color/color_provider.h"
+ #include "ui/gfx/canvas.h"
+ #include "ui/gfx/color_utils.h"
+ #include "ui/gfx/geometry/skia_conversions.h"
+@@ -184,6 +186,44 @@
+                            delegate_->GetView()->height() * scale);
+     }
+   }
++
++  if (delegate_->IsGlobalPin()) {
++    const ui::ColorProvider* const cp =
++        delegate_->GetView()->GetColorProvider();
++    const bool is_dark =
++        cp ? color_utils::IsDark(cp->GetColor(kColorToolbar)) : true;
++    const SkColor gold_base = is_dark ? SkColorSetRGB(0xF5, 0xC4, 0x51)
++                                      : SkColorSetRGB(0xD9, 0x9B, 0x1E);
++    const bool is_active_or_selected =
++        selection_state == TabStyle::TabSelectionState::kActive ||
++        selection_state == TabStyle::TabSelectionState::kSelected;
++    const uint8_t base_alpha = is_dark ? 0x20 : 0x22;
++    const uint8_t hover_alpha = is_dark ? 0x34 : 0x36;
++    const uint8_t fill_alpha =
++        is_active_or_selected
++            ? static_cast<uint8_t>(is_dark ? 0x26 : 0x24)
++            : base::ClampRound<uint8_t>(
++                  std::lerp(static_cast<float>(base_alpha),
++                            static_cast<float>(hover_alpha),
++                            static_cast<float>(GetHoverAnimationValue())));
++
++    cc::PaintFlags gold_fill;
++    gold_fill.setAntiAlias(true);
++    gold_fill.setColor(SkColorSetA(gold_base, fill_alpha));
++    canvas->DrawRect(gfx::ScaleToEnclosingRect(
++                         delegate_->GetView()->GetLocalBounds(), scale),
++                     gold_fill);
++
++    const uint8_t border_alpha =
++        is_active_or_selected ? static_cast<uint8_t>(is_dark ? 0x66 : 0x6B)
++                              : static_cast<uint8_t>(is_dark ? 0x38 : 0x3D);
++    cc::PaintFlags gold_stroke;
++    gold_stroke.setAntiAlias(true);
++    gold_stroke.setStyle(cc::PaintFlags::kStroke_Style);
++    gold_stroke.setStrokeWidth(2.0f * scale);
++    gold_stroke.setColor(SkColorSetA(gold_base, border_alpha));
++    canvas->DrawPath(fill_path, gold_stroke);
++  }
+ }
+ 
+ bool VerticalTabStyleViews::ShouldPaintTabBackgroundColor(
+--- a/chrome/browser/ui/views/tabs/common/horizontal_tab_style_views.cc
++++ b/chrome/browser/ui/views/tabs/common/horizontal_tab_style_views.cc
+@@ -530,7 +530,7 @@
+   const auto has_visible_background =
+       [](const TabStyleViewDelegate* const delegate) {
+         return delegate->IsActive() || delegate->IsSelected() ||
+-               delegate->IsHovering() ||
++               delegate->IsHovering() || delegate->IsGlobalPin() ||
+                (delegate->IsPinned() &&
+                 tabs::IsNewHorizontalPinnedTabStylingEnabled());
+       };
+@@ -809,6 +809,43 @@
+                                              browser_view, image);
+   }
+ 
++  if (delegate_->IsGlobalPin()) {
++    const ui::ColorProvider* const cp =
++        delegate_->GetView()->GetColorProvider();
++    const bool is_dark =
++        cp ? color_utils::IsDark(cp->GetColor(kColorToolbar)) : true;
++    const SkColor gold_base = is_dark ? SkColorSetRGB(0xF5, 0xC4, 0x51)
++                                      : SkColorSetRGB(0xD9, 0x9B, 0x1E);
++    const bool is_active_or_selected =
++        selection_state == TabStyle::TabSelectionState::kActive ||
++        selection_state == TabStyle::TabSelectionState::kSelected;
++    const uint8_t base_alpha = is_dark ? 0x20 : 0x22;
++    const uint8_t hover_alpha = is_dark ? 0x34 : 0x36;
++    const uint8_t fill_alpha =
++        is_active_or_selected
++            ? static_cast<uint8_t>(is_dark ? 0x26 : 0x24)
++            : base::ClampRound<uint8_t>(
++                  std::lerp(static_cast<float>(base_alpha),
++                            static_cast<float>(hover_alpha),
++                            static_cast<float>(GetHoverAnimationValue())));
++
++    cc::PaintFlags gold_fill;
++    gold_fill.setAntiAlias(true);
++    gold_fill.setColor(SkColorSetA(gold_base, fill_alpha));
++    canvas->DrawRect(gfx::ScaleToEnclosingRect(
++                         delegate_->GetView()->GetLocalBounds(), scale),
++                     gold_fill);
++
++    const uint8_t border_alpha =
++        is_active_or_selected ? static_cast<uint8_t>(is_dark ? 0x66 : 0x6B)
++                              : static_cast<uint8_t>(is_dark ? 0x38 : 0x3D);
++    cc::PaintFlags gold_stroke;
++    gold_stroke.setAntiAlias(true);
++    gold_stroke.setStyle(cc::PaintFlags::kStroke_Style);
++    gold_stroke.setStrokeWidth(2.0f * scale);
++    gold_stroke.setColor(SkColorSetA(gold_base, border_alpha));
++    canvas->DrawPath(fill_path, gold_stroke);
++  }
+ }
+ 
+ void HorizontalTabStyleViews::PaintBackgroundHover(gfx::Canvas* canvas,

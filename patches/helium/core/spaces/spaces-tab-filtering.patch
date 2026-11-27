@@ -267,7 +267,7 @@
  }
  
  TabStripCollectionController::~TabStripCollectionController() {
-@@ -141,6 +155,32 @@
+@@ -141,6 +155,39 @@
    return model_->GetFocusedGroup();
  }
  
@@ -286,6 +286,13 @@
 +          root_node_->GetChildNodeOfType(TabCollectionNode::Type::PINNED);
 +      pinned && pinned->view()) {
 +    pinned->view()->InvalidateLayout();
++    pinned->view()->SchedulePaint();
++    for (views::View* child : pinned->GetDirectChildren()) {
++      child->SchedulePaint();
++      for (views::View* grandchild : child->children()) {
++        grandchild->SchedulePaint();
++      }
++    }
 +  }
 +  if (TabCollectionNode* unpinned =
 +          root_node_->GetChildNodeOfType(TabCollectionNode::Type::UNPINNED);
@@ -650,18 +657,23 @@
    bool IsGroupCollapsed(const tab_groups::TabGroupId& group) const override;
 --- a/chrome/browser/ui/views/tabs/tab_strip.cc
 +++ b/chrome/browser/ui/views/tabs/tab_strip.cc
-@@ -1504,6 +1504,10 @@
+@@ -1504,6 +1504,15 @@
    tab_container_->AnimateToIdealBounds();
  }
  
 +void TabStrip::OnActiveSpaceChanged() {
 +  tab_container_->AnimateToIdealBounds();
++  for (int i = 0; i < GetTabCount(); ++i) {
++    if (Tab* tab = tab_at(i); tab && tab->data().pinned) {
++      tab->SchedulePaint();
++    }
++  }
 +}
 +
  void TabStrip::OnSplitCreated(const std::vector<int>& split_indices,
                                split_tabs::SplitTabId split_id) {
    for (const int split_index : split_indices) {
-@@ -1740,6 +1744,15 @@
+@@ -1740,6 +1749,15 @@
    return controller_->GetFocusedGroup();
  }
  

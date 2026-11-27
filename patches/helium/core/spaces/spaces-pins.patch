@@ -20,6 +20,17 @@
  
    iterator begin() { return pins_.begin(); }
    iterator end() { return pins_.end(); }
+@@ -85,6 +91,10 @@
+   iterator insert(const_iterator position, Pin pin);
+   iterator erase(const_iterator position);
+ 
++  // Keeps global (all_spaces) pins before space-scoped pins while preserving
++  // relative order within each section. Returns true if the order changed.
++  bool StablePartitionGlobalFirst();
++
+  private:
+   std::vector<Pin> pins_;
+   std::set<std::string> migrated_ids_;
 --- a/chrome/browser/ui/tabs/helium_pins_list.cc
 +++ b/chrome/browser/ui/tabs/helium_pins_list.cc
 @@ -29,6 +29,8 @@
@@ -57,12 +68,38 @@
      value.Append(std::move(entry));
    }
  
-@@ -236,6 +250,10 @@
+@@ -236,6 +250,36 @@
    return std::ranges::find(pins_, id, &Pin::id);
  }
  
 +PinList::const_iterator PinList::Find(const std::string& id) const {
 +  return std::ranges::find(pins_, id, &Pin::id);
++}
++
++bool PinList::StablePartitionGlobalFirst() {
++  std::vector<Pin> partitioned;
++  partitioned.reserve(pins_.size());
++  for (const Pin& pin : pins_) {
++    if (pin.all_spaces) {
++      partitioned.push_back(pin);
++    }
++  }
++  for (const Pin& pin : pins_) {
++    if (!pin.all_spaces) {
++      partitioned.push_back(pin);
++    }
++  }
++  bool changed = false;
++  for (size_t i = 0; i < pins_.size(); ++i) {
++    if (pins_[i].id != partitioned[i].id) {
++      changed = true;
++      break;
++    }
++  }
++  if (changed) {
++    pins_ = std::move(partitioned);
++  }
++  return changed;
 +}
 +
  PinList::iterator PinList::insert(const_iterator position, Pin pin) {
@@ -90,7 +127,15 @@
    void OnBrowserCreated(BrowserWindowInterface* browser) override;
 --- a/chrome/browser/ui/tabs/helium_pins_service.cc
 +++ b/chrome/browser/ui/tabs/helium_pins_service.cc
-@@ -26,6 +26,11 @@
+@@ -17,6 +17,7 @@
+ #include "base/task/sequenced_task_runner.h"
+ #include "chrome/browser/lifetime/browser_shutdown.h"
+ #include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/sessions/session_restore.h"
+ #include "chrome/browser/tab_list/tab_removed_reason.h"
+ #include "chrome/browser/ui/browser_commands.h"
+ #include "chrome/browser/ui/browser_tabrestore.h"
+@@ -26,6 +27,11 @@
  #include "chrome/browser/ui/tabs/helium_pins_list.h"
  #include "chrome/browser/ui/tabs/helium_pins_tab_controller.h"
  #include "chrome/browser/ui/tabs/helium_pins_util.h"
@@ -102,7 +147,15 @@
  #include "chrome/browser/ui/tabs/pane_settings.h"
  #include "chrome/browser/ui/tabs/pinned_tab_service.h"
  #include "chrome/browser/ui/tabs/tab_strip_model.h"
-@@ -234,6 +239,136 @@
+@@ -194,6 +200,7 @@
+     : profile_(profile), prefs_(prefs), history_(history) {
+   if (prefs_ && ArePersistentPinsEnabled(profile_)) {
+     pins_ = PinList::FromPref(prefs_->GetList(prefs::kPinnedTabs));
++    pins_.StablePartitionGlobalFirst();
+     unclaimed_migrated_pins_ = pins_.migrated_ids();
+ 
+     // Lists migrated by PinList::FromPref() are saved right away.
+@@ -234,6 +241,166 @@
    }
  }
  
@@ -119,16 +172,32 @@
 +void HeliumPinsService::SetPinSpaceId(const std::string& id,
 +                                      const std::string& space_id) {
 +  const auto it = pins_.Find(id);
-+  if (it == pins_.end() || it->space_id == space_id) {
++  if (it == pins_.end()) {
 +    return;
 +  }
-+  it->space_id = space_id;
++  const std::string split = it->split;
++  std::vector<std::string> target_ids;
++  bool changed = false;
++  for (Pin& pin : pins_) {
++    if (pin.id == id || (!split.empty() && pin.split == split)) {
++      if (pin.space_id != space_id) {
++        pin.space_id = space_id;
++        changed = true;
++      }
++      target_ids.push_back(pin.id);
++    }
++  }
++  if (!changed) {
++    return;
++  }
 +  SavePins();
 +
-+  for (HeliumPinsTabController* copy : GetPinCopies(id)) {
-+    if (auto* tab_ctrl =
-+            helium_spaces::HeliumSpacesTabController::From(&copy->tab())) {
-+      tab_ctrl->SetSpaceId(space_id);
++  for (const std::string& target_id : target_ids) {
++    for (HeliumPinsTabController* copy : GetPinCopies(target_id)) {
++      if (auto* tab_ctrl =
++              helium_spaces::HeliumSpacesTabController::From(&copy->tab())) {
++        tab_ctrl->SetSpaceId(space_id);
++      }
 +    }
 +  }
 +  for (BrowserWindowInterface* browser : GetSyncedBrowsers()) {
@@ -142,13 +211,27 @@
 +void HeliumPinsService::SetPinAllSpaces(const std::string& id,
 +                                        bool all_spaces) {
 +  const auto it = pins_.Find(id);
-+  if (it == pins_.end() || it->all_spaces == all_spaces) {
++  if (it == pins_.end()) {
 +    return;
 +  }
-+  it->all_spaces = all_spaces;
++  const std::string split = it->split;
++  bool changed = false;
++  for (Pin& pin : pins_) {
++    if (pin.id == id || (!split.empty() && pin.split == split)) {
++      if (pin.all_spaces != all_spaces) {
++        pin.all_spaces = all_spaces;
++        changed = true;
++      }
++    }
++  }
++  if (!changed) {
++    return;
++  }
++  pins_.StablePartitionGlobalFirst();
 +  SavePins();
 +
 +  for (BrowserWindowInterface* browser : GetSyncedBrowsers()) {
++    ScheduleReconcile(browser);
 +    if (auto* win_ctrl =
 +            helium_spaces::HeliumWindowSpacesController::From(browser)) {
 +      win_ctrl->NotifyVisualStateChanged();
@@ -239,7 +322,105 @@
  void HeliumPinsService::Shutdown() {
    // The profile's remaining windows are destroyed after this, which must not
    // change the pin list.
-@@ -776,10 +911,15 @@
+@@ -434,10 +601,65 @@
+ 
+   // Windows that pins were just added to, e.g. restored windows or a split
+   // from Recently Closed, can show outdated splits until they're reconciled,
+-  // which must not replace the pin list's.
++  // which must not replace the pin list's. However, creating or expanding a
++  // split from an existing pin (e.g. NewSplitTab or CreateOrUpdatePaneSplit)
++  // inserts a fresh pinned tab and splits it immediately before Reconcile()
++  // runs; adopt those newly-created panes here so RemoveStaleSplits() keeps
++  // the split intact.
++  bool adopted_split_pins = false;
+   if (std::ranges::contains(unreconciled_browsers_, browser,
+                             &base::WeakPtr<BrowserWindowInterface>::get)) {
+-    return;
++    if (!SessionRestore::IsRestoring(profile_) && CanChangePins(browser) &&
++        (change.type == SplitTabChange::Type::kAdded ||
++         change.type == SplitTabChange::Type::kContentsChanged) &&
++        !(change.type == SplitTabChange::Type::kAdded &&
++          change.GetAddedChange()->reason() ==
++              SplitTabChange::SplitTabAddReason::kInsertedFromAnotherTabstrip) &&
++        change.model->ContainsSplit(change.split_id)) {
++      const std::vector<tabs::TabInterface*> members =
++          change.model->GetSplitData(change.split_id)->ListTabs();
++      std::string anchor_space_id;
++      bool anchor_all_spaces = false;
++      bool has_anchor = false;
++      bool has_unidentified = false;
++      for (tabs::TabInterface* member : members) {
++        if (!member->IsPinned()) {
++          has_anchor = false;
++          break;
++        }
++        HeliumPinsTabController* ctrl = HeliumPinsTabController::From(member);
++        if (!ctrl || ctrl->pin_id().empty()) {
++          has_unidentified = true;
++        } else if (const auto it = pins_.Find(ctrl->pin_id());
++                   it != pins_.end() && !has_anchor) {
++          anchor_space_id = it->space_id;
++          anchor_all_spaces = it->all_spaces;
++          has_anchor = true;
++        }
++      }
++      if (has_anchor && has_unidentified) {
++        for (tabs::TabInterface* member : members) {
++          HeliumPinsTabController* ctrl = HeliumPinsTabController::From(member);
++          if (ctrl && ctrl->pin_id().empty()) {
++            const std::string new_id = InsertNewPin(browser, ctrl);
++            if (auto new_it = pins_.Find(new_id); new_it != pins_.end()) {
++              new_it->space_id = anchor_space_id;
++              new_it->all_spaces = anchor_all_spaces;
++            }
++            if (!anchor_space_id.empty()) {
++              if (auto* space_ctrl =
++                      helium_spaces::HeliumSpacesTabController::From(member)) {
++                space_ctrl->SetSpaceId(anchor_space_id);
++              }
++            }
++            adopted_split_pins = true;
++          }
++        }
++      }
++    }
++    if (!adopted_split_pins) {
++      return;
++    }
+   }
+ 
+   // Splits dragged between windows are handled once the drag is done.
+@@ -470,9 +692,16 @@
+       break;
+   }
+ 
+-  if (UpdateSplits(browser)) {
++  if (UpdateSplits(browser) || adopted_split_pins) {
+     SavePins();
++    ScheduleReconcile(browser);
+     ScheduleReconcileOthers(browser);
++    for (BrowserWindowInterface* synced : GetSyncedBrowsers()) {
++      if (auto* win_ctrl =
++              helium_spaces::HeliumWindowSpacesController::From(synced)) {
++        win_ctrl->NotifyVisualStateChanged();
++      }
++    }
+   }
+ }
+ 
+@@ -610,7 +839,11 @@
+ 
+   // Splits are pinned as a whole.
+   UpdateSplits(browser);
++  const bool partitioned = pins_.StablePartitionGlobalFirst();
+   SavePins();
++  if (partitioned) {
++    ScheduleReconcile(browser);
++  }
+   ScheduleReconcileOthers(browser);
+ }
+ 
+@@ -776,10 +1009,15 @@
  }
  
  void HeliumPinsService::ReorderPins(BrowserWindowInterface* browser) {
@@ -256,7 +437,20 @@
      const auto it = pins_.Find(controller->pin_id());
  
      // A pin can have two tabs in a window for a moment, e.g. while it's
-@@ -809,11 +949,15 @@
+@@ -801,19 +1039,27 @@
+     }
+   }
+ 
+-  if (changed) {
++  const bool partitioned = pins_.StablePartitionGlobalFirst();
++  if (changed || partitioned) {
+     SavePins();
++    if (partitioned) {
++      ScheduleReconcile(browser);
++    }
+     ScheduleReconcileOthers(browser);
+   }
+ }
  
  size_t HeliumPinsService::GetNewPinPosition(BrowserWindowInterface* browser,
                                              tabs::TabInterface* tab) {
@@ -272,7 +466,7 @@
  
      const auto it = pins_.Find(controller->pin_id());
      if (it != pins_.end()) {
-@@ -831,8 +975,18 @@
+@@ -831,8 +1077,18 @@
    Pin pin{CreatePinId(), GetNewPinUrl(tab->GetContents())};
    tabs::PaneSettings::PopulateExtraData(tab->GetContents(),
                                          &pin.pane_settings);
@@ -291,7 +485,99 @@
  
    // A tab without a committed page may still be redirecting, so its pin
    // takes the first page it commits.
-@@ -1298,6 +1452,12 @@
+@@ -1105,8 +1361,39 @@
+ bool HeliumPinsService::UpdateSplits(BrowserWindowInterface* browser) {
+   TabStripModel* const model = browser->GetTabStripModel();
+ 
+-  // The first pin of each split in browser.
++  // The first pin of each split in browser, plus each split's ordered pin ids
++  // and canonical Space / Global Pin membership.
+   std::map<split_tabs::SplitTabId, std::string> first_pins;
++  std::map<split_tabs::SplitTabId, std::vector<std::string>> split_pin_ids;
++  std::map<split_tabs::SplitTabId, std::pair<std::string, bool>>
++      split_space_state;
++  tabs::TabInterface* const active_tab = model->GetActiveTab();
++
++  for (HeliumPinsTabController* controller : GetPinnedTabControllers(browser)) {
++    const auto it = pins_.Find(controller->pin_id());
++    if (it == pins_.end()) {
++      continue;
++    }
++    if (const std::optional<split_tabs::SplitTabId> split_id =
++            controller->tab().GetSplit()) {
++      split_pin_ids[*split_id].push_back(it->id);
++      auto state_it = split_space_state.find(*split_id);
++      if (state_it == split_space_state.end()) {
++        split_space_state[*split_id] = {it->space_id, it->all_spaces};
++      } else {
++        // Adding or splitting a tab with a Global Pin promotes the whole split
++        // to be globally pinned; otherwise prefer an existing split/active
++        // pane's Space.
++        if (&controller->tab() == active_tab && !state_it->second.second) {
++          state_it->second.first = it->space_id;
++        }
++        if (it->all_spaces) {
++          state_it->second.second = true;
++        }
++      }
++    }
++  }
++
+   bool changed = false;
+   for (HeliumPinsTabController* controller : GetPinnedTabControllers(browser)) {
+     const auto it = pins_.Find(controller->pin_id());
+@@ -1120,6 +1407,22 @@
+             controller->tab().GetSplit()) {
+       split = first_pins.try_emplace(*split_id, it->id).first->second;
+       visual_data = *model->GetSplitData(*split_id)->visual_data();
++
++      const auto& [target_space_id, target_all_spaces] =
++          split_space_state[*split_id];
++      if (it->space_id != target_space_id) {
++        it->space_id = target_space_id;
++        changed = true;
++        if (auto* space_ctrl =
++                helium_spaces::HeliumSpacesTabController::From(
++                    &controller->tab())) {
++          space_ctrl->SetSpaceId(target_space_id);
++        }
++      }
++      if (it->all_spaces != target_all_spaces) {
++        it->all_spaces = target_all_spaces;
++        changed = true;
++      }
+     }
+ 
+     if (it->split != split || it->split_visual_data != visual_data) {
+@@ -1129,6 +1432,27 @@
+     }
+   }
+ 
++  // Keep the pins of each split consecutive so ReconcileSplits() and
++  // StablePartitionGlobalFirst() preserve every pinned split as one unit.
++  for (const auto& [split_id, ids] : split_pin_ids) {
++    for (size_t i = 1; i < ids.size(); ++i) {
++      const auto prev_it = pins_.Find(ids[i - 1]);
++      const auto cur_it = pins_.Find(ids[i]);
++      if (prev_it == pins_.end() || cur_it == pins_.end() ||
++          cur_it == prev_it + 1) {
++        continue;
++      }
++      Pin pin = std::move(*cur_it);
++      pins_.erase(cur_it);
++      pins_.insert(pins_.Find(ids[i - 1]) + 1, std::move(pin));
++      changed = true;
++    }
++  }
++
++  if (pins_.StablePartitionGlobalFirst()) {
++    changed = true;
++  }
++
+   return changed;
+ }
+ 
+@@ -1298,6 +1622,12 @@
        chrome::AddDeferredTab(browser, pin.url, title, index, /*pin=*/true);
    tabs::TabInterface* const tab = tabs::TabInterface::GetFromContents(contents);
    HeliumPinsTabController::From(tab)->SetPin(pin.id, pin.url);

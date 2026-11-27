@@ -184,8 +184,8 @@
        {true,  false, true,  false, kVK_RightArrow,        IDC_HELIUM_FOCUS_SPLIT_PANE_RIGHT},
        {true,  false, true,  false, kVK_UpArrow,           IDC_HELIUM_FOCUS_SPLIT_PANE_UP},
        {true,  false, true,  false, kVK_DownArrow,         IDC_HELIUM_FOCUS_SPLIT_PANE_DOWN},
-+      {false, false, true,  true,  kVK_LeftArrow,         IDC_HELIUM_PREV_SPACE},
-+      {false, false, true,  true,  kVK_RightArrow,        IDC_HELIUM_NEXT_SPACE},
++      {false, false, true,  true,  kVK_ANSI_Comma,        IDC_HELIUM_PREV_SPACE},
++      {false, false, true,  true,  kVK_ANSI_Period,       IDC_HELIUM_NEXT_SPACE},
 +      {false, false, true,  true,  kVK_ANSI_1,            IDC_HELIUM_SWITCH_SPACE_1},
 +      {false, false, true,  true,  kVK_ANSI_Keypad1,      IDC_HELIUM_SWITCH_SPACE_1},
 +      {false, false, true,  true,  kVK_ANSI_2,            IDC_HELIUM_SWITCH_SPACE_2},
@@ -214,9 +214,9 @@
  #endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
      {IDC_TAB_SEARCH, ui::EF_COMMAND_DOWN | ui::EF_SHIFT_DOWN, ui::VKEY_A},
 +    {IDC_HELIUM_PREV_SPACE, ui::EF_CONTROL_DOWN | ui::EF_ALT_DOWN,
-+     ui::VKEY_LEFT},
++     ui::VKEY_OEM_COMMA},
 +    {IDC_HELIUM_NEXT_SPACE, ui::EF_CONTROL_DOWN | ui::EF_ALT_DOWN,
-+     ui::VKEY_RIGHT},
++     ui::VKEY_OEM_PERIOD},
 +    {IDC_HELIUM_SWITCH_SPACE_1, ui::EF_CONTROL_DOWN | ui::EF_ALT_DOWN,
 +     ui::VKEY_1},
 +    {IDC_HELIUM_SWITCH_SPACE_2, ui::EF_CONTROL_DOWN | ui::EF_ALT_DOWN,
@@ -332,7 +332,7 @@
  #include "chrome/browser/ui/tabs/split_tab_metrics.h"
  #include "chrome/browser/ui/tabs/tab_change_type.h"
  #include "chrome/browser/ui/tabs/tab_close_types_data.h"
-@@ -3015,6 +3016,13 @@
+@@ -3015,6 +3016,15 @@
        return helium_pins::CanUseCurrentUrlAsPinnedUrl(
            GetTabAtIndex(context_index));
  
@@ -340,13 +340,15 @@
 +      return helium_spaces::HasSpaces(this);
 +
 +    case CommandTogglePinAllSpaces:
-+      return helium_spaces::HasSpaces(this) &&
-+             helium_pins::IsPersistentPin(GetTabAtIndex(context_index));
++      return helium_spaces::CanToggleGlobalPin(
++                 this, GetTabAtIndex(context_index)) &&
++             (IsTabPinned(context_index) ||
++              IsContextMenuCommandEnabled(context_index, CommandTogglePinned));
 +
      case CommandGoBack:
        CHECK(delegate()->IsForWebApp(), base::NotFatalUntil::M162);
        return delegate()->CanGoBack(GetWebContentsAt(context_index));
-@@ -3264,6 +3272,17 @@
+@@ -3264,6 +3274,17 @@
        helium_pins::UseCurrentUrlAsPinnedUrl(GetTabAtIndex(context_index));
        break;
  
@@ -364,6 +366,29 @@
      case CommandToggleTabMuted: {
        const bool mute = WillContextMenuMuteTabs(context_index);
        for (int index : GetIndicesForCommand(context_index)) {
+@@ -3715,7 +3736,13 @@
+     }
+   }
+ 
++  tabs::TabInterface* pivot_tab = tabs.front();
+   if (ContainsSplit(split_id)) {
++    const std::vector<tabs::TabInterface*> existing =
++        GetSplitData(split_id)->ListTabs();
++    if (!existing.empty() && std::ranges::contains(tabs, existing.front())) {
++      pivot_tab = existing.front();
++    }
+     RemoveSplit(split_id);
+   }
+   {
+@@ -3724,7 +3751,7 @@
+     for (tabs::TabInterface* tab : tabs) {
+       indices.push_back(GetIndexOfTab(tab));
+     }
+-    const int pivot_index = indices.front();
++    const int pivot_index = GetIndexOfTab(pivot_tab);
+     std::ranges::sort(indices);
+     AddToSplitImpl(split_id, indices, pivot_index,
+                    split_tabs::SplitTabVisualData(std::move(tree)),
 --- a/chrome/browser/ui/tabs/tab_menu_model.h
 +++ b/chrome/browser/ui/tabs/tab_menu_model.h
 @@ -108,6 +108,7 @@
@@ -500,29 +525,35 @@
    AddSeparator(ui::NORMAL_SEPARATOR);
    AddItemWithStringId(TabStripModel::CommandCopyURL,
                        num_tabs == 1 ? IDS_TAB_CXMENU_COPY_URL
-@@ -778,6 +873,22 @@
-                         IDS_TAB_CXMENU_RETURN_TO_PINNED_URL);
-     AddItemWithStringId(TabStripModel::CommandUseCurrentUrlAsPinnedUrl,
-                         IDS_TAB_CXMENU_USE_CURRENT_URL_AS_PINNED_URL);
-+    if (auto* spaces_service =
-+            helium_spaces::HeliumSpacesServiceFactory::GetForProfile(
-+                tab_strip_->profile());
-+        spaces_service && spaces_service->PinsArePerSpace()) {
-+      bool is_all_spaces = false;
-+      if (auto* pin_ctrl =
-+              helium_pins::GetPersistentPinController(context_tab)) {
-+        if (auto* pins_service = PinnedTabServiceFactory::GetForProfile(
-+                tab_strip_->profile())) {
-+          is_all_spaces = pins_service->IsPinAllSpaces(pin_ctrl->pin_id());
-+        }
-+      }
-+      AddItemWithStringId(TabStripModel::CommandTogglePinAllSpaces,
-+                          is_all_spaces ? IDS_TAB_CXMENU_PIN_IN_CURRENT_SPACE
-+                                        : IDS_TAB_CXMENU_PIN_IN_ALL_SPACES);
-+    }
+@@ -766,14 +861,24 @@
+             ui::kColorMenuIcon, ui::SimpleMenuModel::kDefaultIconSize));
    }
  
-   AddSeparator(ui::NORMAL_SEPARATOR);
+-  // Pinned URL actions for a single persistent pin. A pin in the active split
+-  // is selected together with its partner.
++  // Global Pin action directly below Pin/Unpin for a single tab or split.
+   tabs::TabInterface* const context_tab = tab_strip_->GetTabAtIndex(index);
+-  if (helium_pins::IsPersistentPin(context_tab) &&
++  const bool is_single_tab_or_split =
+       std::ranges::all_of(tabs, [context_tab](tabs::TabInterface* tab) {
+         return tab == context_tab ||
+                (tab->GetSplit() && tab->GetSplit() == context_tab->GetSplit());
+-      })) {
++      });
++  if (is_single_tab_or_split &&
++      helium_spaces::CanToggleGlobalPin(tab_strip_, context_tab)) {
++    AddItemWithStringId(TabStripModel::CommandTogglePinAllSpaces,
++                        helium_spaces::IsGlobalPin(context_tab)
++                            ? IDS_TAB_CXMENU_PIN_IN_CURRENT_SPACE
++                            : IDS_TAB_CXMENU_PIN_IN_ALL_SPACES);
++  }
++
++  // Pinned URL actions for a single persistent pin. A pin in the active split
++  // is selected together with its partner.
++  if (helium_pins::IsPersistentPin(context_tab) && is_single_tab_or_split) {
+     AddItemWithStringId(TabStripModel::CommandReturnToPinnedUrl,
+                         IDS_TAB_CXMENU_RETURN_TO_PINNED_URL);
+     AddItemWithStringId(TabStripModel::CommandUseCurrentUrlAsPinnedUrl,
 --- a/chrome/browser/ui/views/helium/command_bar_commands.cc
 +++ b/chrome/browser/ui/views/helium/command_bar_commands.cc
 @@ -72,6 +72,24 @@

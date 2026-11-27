@@ -981,7 +981,7 @@
 +}  // namespace helium_spaces
 --- /dev/null
 +++ b/chrome/browser/ui/tabs/helium_window_spaces_controller.h
-@@ -0,0 +1,102 @@
+@@ -0,0 +1,103 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -1051,6 +1051,7 @@
 +      TabStripModel* tab_strip_model,
 +      const TabStripModelChange& change,
 +      const TabStripSelectionChange& selection) override;
++  void OnTabPinnedStateChanged(tabs::TabInterface* tab, int index) override;
 +
 +  // HeliumSpacesService::Observer:
 +  void OnSpacesChanged() override;
@@ -1086,7 +1087,7 @@
 +#endif  // CHROME_BROWSER_UI_TABS_HELIUM_WINDOW_SPACES_CONTROLLER_H_
 --- /dev/null
 +++ b/chrome/browser/ui/tabs/helium_window_spaces_controller.cc
-@@ -0,0 +1,541 @@
+@@ -0,0 +1,579 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -1296,29 +1297,50 @@
 +}
 +
 +void HeliumWindowSpacesController::TogglePinAllSpaces(tabs::TabInterface* tab) {
-+  if (!service_ || !tab || !tab->IsPinned()) {
++  if (!service_ || !tab ||
++      !helium_pins::ArePersistentPinsEnabled(browser_->GetProfile())) {
 +    return;
 +  }
 +  helium_pins::HeliumPinsService* const pins_service =
-+      helium_pins::ArePersistentPinsEnabled(browser_->GetProfile())
-+          ? PinnedTabServiceFactory::GetForProfile(browser_->GetProfile())
-+          : nullptr;
-+  helium_pins::HeliumPinsTabController* const pin_controller =
-+      helium_pins::GetPersistentPinController(tab);
-+  if (!pins_service || !pin_controller) {
++      PinnedTabServiceFactory::GetForProfile(browser_->GetProfile());
++  if (!pins_service) {
 +    return;
 +  }
-+
-+  const bool new_all_spaces =
-+      !pins_service->IsPinAllSpaces(pin_controller->pin_id());
 +
 +  TabStripModel* const model = browser_->GetTabStripModel();
 +  std::vector<tabs::TabInterface*> targets = {tab};
 +  if (const std::optional<split_tabs::SplitTabId> split_id = tab->GetSplit()) {
 +    targets = model->GetSplitData(*split_id)->ListTabs();
 +  }
++
++  bool new_all_spaces = true;
++  if (!tab->IsPinned()) {
++    std::vector<int> indices;
++    for (tabs::TabInterface* member : targets) {
++      const int idx = model->GetIndexOfTab(member);
++      if (idx != TabStripModel::kNoTab) {
++        indices.push_back(idx);
++      }
++    }
++    if (indices.empty()) {
++      return;
++    }
++    std::ranges::sort(indices);
++    model->SetTabsPinned(indices, true);
++  } else {
++    helium_pins::HeliumPinsTabController* const pin_controller =
++        helium_pins::GetPersistentPinController(tab);
++    if (!pin_controller) {
++      return;
++    }
++    new_all_spaces = !pins_service->IsPinAllSpaces(pin_controller->pin_id());
++  }
++
 +  for (tabs::TabInterface* member : targets) {
 +    if (auto* member_pin = helium_pins::GetPersistentPinController(member)) {
++      if (!new_all_spaces && !active_space_id_.empty()) {
++        pins_service->SetPinSpaceId(member_pin->pin_id(), active_space_id_);
++      }
 +      pins_service->SetPinAllSpaces(member_pin->pin_id(), new_all_spaces);
 +    }
 +  }
@@ -1472,6 +1494,23 @@
 +  if (visual_changed) {
 +    NotifyVisualStateChanged();
 +  }
++}
++
++void HeliumWindowSpacesController::OnTabPinnedStateChanged(
++    tabs::TabInterface* tab,
++    int index) {
++  if (!service_ || !tab || active_space_id_.empty()) {
++    return;
++  }
++  // When unpinning a tab (e.g. a Global Pin created in another Space), keep it
++  // in the Space the user is currently viewing.
++  if (!tab->IsPinned()) {
++    if (auto* tab_ctrl = HeliumSpacesTabController::From(tab);
++        tab_ctrl && tab_ctrl->space_id() != active_space_id_) {
++      tab_ctrl->SetSpaceId(active_space_id_);
++    }
++  }
++  NotifyVisualStateChanged();
 +}
 +
 +void HeliumWindowSpacesController::OnSpacesChanged() {
@@ -1630,7 +1669,7 @@
 +}  // namespace helium_spaces
 --- /dev/null
 +++ b/chrome/browser/ui/tabs/helium_spaces_util.h
-@@ -0,0 +1,50 @@
+@@ -0,0 +1,54 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -1672,6 +1711,10 @@
 +bool IsTabGroupInActiveSpace(const TabStripModel* model,
 +                             const tab_groups::TabGroupId& group_id);
 +
++bool IsGlobalPin(const tabs::TabInterface* tab);
++bool CanToggleGlobalPin(const TabStripModel* model,
++                        const tabs::TabInterface* tab);
++
 +bool HasTabsInOtherSpaces(const TabStripModel* model,
 +                          const std::set<tabs::TabInterface*>& closing);
 +
@@ -1683,7 +1726,7 @@
 +#endif  // CHROME_BROWSER_UI_TABS_HELIUM_SPACES_UTIL_H_
 --- /dev/null
 +++ b/chrome/browser/ui/tabs/helium_spaces_util.cc
-@@ -0,0 +1,274 @@
+@@ -0,0 +1,312 @@
 +// Copyright 2026 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -1860,6 +1903,44 @@
 +      active_space);
 +}
 +
++bool IsGlobalPin(const tabs::TabInterface* tab) {
++  if (!tab || !tab->IsPinned()) {
++    return false;
++  }
++  BrowserWindowInterface* const browser =
++      const_cast<tabs::TabInterface*>(tab)->GetBrowserWindowInterface();
++  Profile* const profile = browser ? browser->GetProfile() : nullptr;
++  if (!profile || !helium_pins::ArePersistentPinsEnabled(profile)) {
++    return false;
++  }
++  const HeliumSpacesService* const spaces_service =
++      HeliumSpacesServiceFactory::GetForProfile(profile);
++  if (!spaces_service || !spaces_service->PinsArePerSpace()) {
++    return false;
++  }
++  const helium_pins::HeliumPinsTabController* const pin_ctrl =
++      helium_pins::GetPersistentPinController(
++          const_cast<tabs::TabInterface*>(tab));
++  const helium_pins::HeliumPinsService* const pins_service =
++      PinnedTabServiceFactory::GetForProfile(profile);
++  return pin_ctrl && pins_service &&
++         pins_service->IsPinAllSpaces(pin_ctrl->pin_id());
++}
++
++bool CanToggleGlobalPin(const TabStripModel* model,
++                        const tabs::TabInterface* tab) {
++  if (!model || !tab || !HasSpaces(model)) {
++    return false;
++  }
++  Profile* const profile = model->profile();
++  if (!profile || !helium_pins::ArePersistentPinsEnabled(profile)) {
++    return false;
++  }
++  const HeliumSpacesService* const spaces_service =
++      HeliumSpacesServiceFactory::GetForProfile(profile);
++  return spaces_service && spaces_service->PinsArePerSpace();
++}
++
 +bool HasTabsInOtherSpaces(const TabStripModel* model,
 +                          const std::set<tabs::TabInterface*>& closing) {
 +  const std::string active_space = GetActiveSpaceId(model);
@@ -2020,8 +2101,8 @@
 +      <message name="IDS_HELIUM_COMMAND_BAR_SWITCH_TO_SPACE" desc="Command bar entry label for switching to a named Space.">Switch to space: <ph name="SPACE_NAME">$1<ex>Work</ex></ph></message>
 +      <message name="IDS_TAB_CXMENU_MOVE_TO_SPACE" desc="Tab context menu submenu for moving selected tabs to another Space.">Move to Space</message>
 +      <message name="IDS_TAB_CXMENU_MOVE_TO_NEW_SPACE" desc="Submenu item creating a new Space and moving selected tabs into it.">New Space</message>
-+      <message name="IDS_TAB_CXMENU_PIN_IN_ALL_SPACES" desc="Tab context menu item showing a persistent pin in all Spaces.">Show in All Spaces</message>
-+      <message name="IDS_TAB_CXMENU_PIN_IN_CURRENT_SPACE" desc="Tab context menu item scoping a persistent pin back to its Space.">Only Show in Current Space</message>
++      <message name="IDS_TAB_CXMENU_PIN_IN_ALL_SPACES" desc="Tab context menu item pinning a tab globally across all Spaces.">Global Pin</message>
++      <message name="IDS_TAB_CXMENU_PIN_IN_CURRENT_SPACE" desc="Tab context menu item converting a global pin into a pin scoped to the current Space.">Pin to Current Space</message>
        <message name="IDS_HELIUM_TAB_SWITCHER_TITLE" desc="Accessible title of the overlay listing the tabs Ctrl+Tab cycles through.">Tab switcher</message>
        <message name="IDS_HELIUM_TAB_SWITCHER_POSITION" desc="Shown in the tab switcher overlay below the tabs: the position of the selected tab in the cycle, and the number of tabs in it."><ph name="POSITION">$1<ex>3</ex></ph> of <ph name="COUNT">$2<ex>12</ex></ph></message>
        <message name="IDS_HELIUM_MOBILE_PREVIEW_FULL_HEIGHT" desc="Toggle mobile emulation with the full pane height.">Mobile preview (402 wide, full height)</message>
