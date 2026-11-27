@@ -1,0 +1,680 @@
+--- a/chrome/app/chrome_command_ids.h
++++ b/chrome/app/chrome_command_ids.h
+@@ -306,6 +306,19 @@
+ #define IDC_HELIUM_FOCUS_SPLIT_PANE_RIGHT 40754
+ #define IDC_HELIUM_FOCUS_SPLIT_PANE_UP 40755
+ #define IDC_HELIUM_FOCUS_SPLIT_PANE_DOWN 40756
++#define IDC_HELIUM_NEXT_SPACE 40757
++#define IDC_HELIUM_PREV_SPACE 40758
++#define IDC_HELIUM_NEW_SPACE 40759
++#define IDC_HELIUM_DELETE_SPACE 40760
++#define IDC_HELIUM_SWITCH_SPACE_1 40761
++#define IDC_HELIUM_SWITCH_SPACE_2 40762
++#define IDC_HELIUM_SWITCH_SPACE_3 40763
++#define IDC_HELIUM_SWITCH_SPACE_4 40764
++#define IDC_HELIUM_SWITCH_SPACE_5 40765
++#define IDC_HELIUM_SWITCH_SPACE_6 40766
++#define IDC_HELIUM_SWITCH_SPACE_7 40767
++#define IDC_HELIUM_SWITCH_SPACE_8 40768
++#define IDC_HELIUM_SWITCH_SPACE_9 40769
+ 
+ // Writing direction
+ #define IDC_WRITING_DIRECTION_LTR        41122
+--- a/chrome/browser/ui/browser_commands.h
++++ b/chrome/browser/ui/browser_commands.h
+@@ -212,6 +212,13 @@
+ void FocusSplitPane(BrowserWindowInterface* browser,
+                     split_tabs::SplitEdge edge);
+ 
++// Space commands.
++void SwitchToNextSpace(BrowserWindowInterface* browser);
++void SwitchToPreviousSpace(BrowserWindowInterface* browser);
++void SwitchToSpaceAtIndex(BrowserWindowInterface* browser, size_t index);
++void CreateNewSpace(BrowserWindowInterface* browser);
++void DeleteCurrentSpace(BrowserWindowInterface* browser);
++
+ // Tab group commands
+ // These values are persisted to logs. Entries should not be renumbered
+ // and  numeric values should never be reused.
+--- a/chrome/browser/ui/browser_commands.cc
++++ b/chrome/browser/ui/browser_commands.cc
+@@ -119,7 +119,10 @@
+ #include "chrome/browser/ui/tabs/back_to_opener/back_to_opener_controller.h"
+ #include "chrome/browser/ui/tabs/features.h"
+ #include "chrome/browser/ui/tabs/helium_pins_util.h"
++#include "chrome/browser/ui/tabs/helium_spaces_service.h"
++#include "chrome/browser/ui/tabs/helium_spaces_service_factory.h"
+ #include "chrome/browser/ui/tabs/helium_spaces_util.h"
++#include "chrome/browser/ui/tabs/helium_window_spaces_controller.h"
+ #include "chrome/browser/ui/tabs/new_tab_grouping_user_data.h"
+ #include "chrome/browser/ui/tabs/organizer/organizer_panel_controller.h"
+ #include "chrome/browser/ui/tabs/organizer/organizer_panel_utils.h"
+@@ -1966,6 +1969,42 @@
+   }
+ }
+ 
++void SwitchToNextSpace(BrowserWindowInterface* browser) {
++  if (auto* ctrl = helium_spaces::HeliumWindowSpacesController::From(browser)) {
++    ctrl->SwitchToNextSpace();
++  }
++}
++
++void SwitchToPreviousSpace(BrowserWindowInterface* browser) {
++  if (auto* ctrl = helium_spaces::HeliumWindowSpacesController::From(browser)) {
++    ctrl->SwitchToPreviousSpace();
++  }
++}
++
++void SwitchToSpaceAtIndex(BrowserWindowInterface* browser, size_t index) {
++  if (auto* ctrl = helium_spaces::HeliumWindowSpacesController::From(browser)) {
++    ctrl->SwitchToSpaceAtIndex(index);
++  }
++}
++
++void CreateNewSpace(BrowserWindowInterface* browser) {
++  auto* ctrl = helium_spaces::HeliumWindowSpacesController::From(browser);
++  auto* service = helium_spaces::HeliumSpacesServiceFactory::GetForProfile(
++      browser->GetProfile());
++  if (!ctrl || !service) {
++    return;
++  }
++  const std::string new_id = service->CreateSpace();
++  ctrl->SwitchToSpace(new_id);
++}
++
++void DeleteCurrentSpace(BrowserWindowInterface* browser) {
++  const std::string active_id = helium_spaces::GetActiveSpaceId(browser);
++  if (!active_id.empty()) {
++    helium_spaces::PromptToDeleteSpace(browser, active_id);
++  }
++}
++
+ void AddNewTabToGroup(BrowserWindowInterface* browser) {
+   if (!browser->GetTabStripModel()->SupportsTabGroups()) {
+     return;
+--- a/chrome/browser/ui/browser_command_controller.cc
++++ b/chrome/browser/ui/browser_command_controller.cc
+@@ -935,6 +935,29 @@
+     case IDC_HELIUM_FOCUS_SPLIT_PANE_DOWN:
+       FocusSplitPane(browser_, split_tabs::SplitEdge::kBottom);
+       break;
++    case IDC_HELIUM_NEXT_SPACE:
++      SwitchToNextSpace(browser_);
++      break;
++    case IDC_HELIUM_PREV_SPACE:
++      SwitchToPreviousSpace(browser_);
++      break;
++    case IDC_HELIUM_NEW_SPACE:
++      CreateNewSpace(browser_);
++      break;
++    case IDC_HELIUM_DELETE_SPACE:
++      DeleteCurrentSpace(browser_);
++      break;
++    case IDC_HELIUM_SWITCH_SPACE_1:
++    case IDC_HELIUM_SWITCH_SPACE_2:
++    case IDC_HELIUM_SWITCH_SPACE_3:
++    case IDC_HELIUM_SWITCH_SPACE_4:
++    case IDC_HELIUM_SWITCH_SPACE_5:
++    case IDC_HELIUM_SWITCH_SPACE_6:
++    case IDC_HELIUM_SWITCH_SPACE_7:
++    case IDC_HELIUM_SWITCH_SPACE_8:
++    case IDC_HELIUM_SWITCH_SPACE_9:
++      SwitchToSpaceAtIndex(browser_, id - IDC_HELIUM_SWITCH_SPACE_1);
++      break;
+     case IDC_NAME_WINDOW:
+       PromptToNameWindow(browser_);
+       break;
+@@ -3042,6 +3065,18 @@
+         command,
+         browser_->GetType() == BrowserWindowInterface::Type::TYPE_NORMAL);
+   }
++  const bool spaces_enabled =
++      browser_->GetType() == BrowserWindowInterface::Type::TYPE_NORMAL &&
++      !profile()->IsOffTheRecord();
++  for (int command :
++       {IDC_HELIUM_NEXT_SPACE, IDC_HELIUM_PREV_SPACE, IDC_HELIUM_NEW_SPACE,
++        IDC_HELIUM_DELETE_SPACE, IDC_HELIUM_SWITCH_SPACE_1,
++        IDC_HELIUM_SWITCH_SPACE_2, IDC_HELIUM_SWITCH_SPACE_3,
++        IDC_HELIUM_SWITCH_SPACE_4, IDC_HELIUM_SWITCH_SPACE_5,
++        IDC_HELIUM_SWITCH_SPACE_6, IDC_HELIUM_SWITCH_SPACE_7,
++        IDC_HELIUM_SWITCH_SPACE_8, IDC_HELIUM_SWITCH_SPACE_9}) {
++    command_updater_->UpdateCommandEnabled(command, spaces_enabled);
++  }
+   command_updater_->UpdateCommandEnabled(IDC_GROUP_UNGROUPED_TABS,
+                                          CanGroupAllUngroupedTabs(browser_));
+ 
+--- a/chrome/browser/ui/browser_shortcuts/browser_shortcut_metadata.cc
++++ b/chrome/browser/ui/browser_shortcuts/browser_shortcut_metadata.cc
+@@ -112,6 +112,32 @@
+       return Label(IDS_HELIUM_FOCUS_SPLIT_PANE_UP);
+     case IDC_HELIUM_FOCUS_SPLIT_PANE_DOWN:
+       return Label(IDS_HELIUM_FOCUS_SPLIT_PANE_DOWN);
++    case IDC_HELIUM_NEXT_SPACE:
++      return Label(IDS_HELIUM_NEXT_SPACE);
++    case IDC_HELIUM_PREV_SPACE:
++      return Label(IDS_HELIUM_PREV_SPACE);
++    case IDC_HELIUM_NEW_SPACE:
++      return Label(IDS_HELIUM_NEW_SPACE);
++    case IDC_HELIUM_DELETE_SPACE:
++      return Label(IDS_HELIUM_DELETE_SPACE);
++    case IDC_HELIUM_SWITCH_SPACE_1:
++      return Label(IDS_HELIUM_SWITCH_SPACE_N, u"1");
++    case IDC_HELIUM_SWITCH_SPACE_2:
++      return Label(IDS_HELIUM_SWITCH_SPACE_N, u"2");
++    case IDC_HELIUM_SWITCH_SPACE_3:
++      return Label(IDS_HELIUM_SWITCH_SPACE_N, u"3");
++    case IDC_HELIUM_SWITCH_SPACE_4:
++      return Label(IDS_HELIUM_SWITCH_SPACE_N, u"4");
++    case IDC_HELIUM_SWITCH_SPACE_5:
++      return Label(IDS_HELIUM_SWITCH_SPACE_N, u"5");
++    case IDC_HELIUM_SWITCH_SPACE_6:
++      return Label(IDS_HELIUM_SWITCH_SPACE_N, u"6");
++    case IDC_HELIUM_SWITCH_SPACE_7:
++      return Label(IDS_HELIUM_SWITCH_SPACE_N, u"7");
++    case IDC_HELIUM_SWITCH_SPACE_8:
++      return Label(IDS_HELIUM_SWITCH_SPACE_N, u"8");
++    case IDC_HELIUM_SWITCH_SPACE_9:
++      return Label(IDS_HELIUM_SWITCH_SPACE_N, u"9");
+     case IDC_DUPLICATE_TAB:
+       return Label(IDS_SHORTCUT_COMMAND_DUPLICATE_TAB);
+     case IDC_EXIT:
+--- a/chrome/browser/global_keyboard_shortcuts_mac.mm
++++ b/chrome/browser/global_keyboard_shortcuts_mac.mm
+@@ -158,6 +158,26 @@
+       {true,  false, true,  false, kVK_RightArrow,        IDC_HELIUM_FOCUS_SPLIT_PANE_RIGHT},
+       {true,  false, true,  false, kVK_UpArrow,           IDC_HELIUM_FOCUS_SPLIT_PANE_UP},
+       {true,  false, true,  false, kVK_DownArrow,         IDC_HELIUM_FOCUS_SPLIT_PANE_DOWN},
++      {false, false, true,  true,  kVK_ANSI_Comma,        IDC_HELIUM_PREV_SPACE},
++      {false, false, true,  true,  kVK_ANSI_Period,       IDC_HELIUM_NEXT_SPACE},
++      {false, false, true,  true,  kVK_ANSI_1,            IDC_HELIUM_SWITCH_SPACE_1},
++      {false, false, true,  true,  kVK_ANSI_Keypad1,      IDC_HELIUM_SWITCH_SPACE_1},
++      {false, false, true,  true,  kVK_ANSI_2,            IDC_HELIUM_SWITCH_SPACE_2},
++      {false, false, true,  true,  kVK_ANSI_Keypad2,      IDC_HELIUM_SWITCH_SPACE_2},
++      {false, false, true,  true,  kVK_ANSI_3,            IDC_HELIUM_SWITCH_SPACE_3},
++      {false, false, true,  true,  kVK_ANSI_Keypad3,      IDC_HELIUM_SWITCH_SPACE_3},
++      {false, false, true,  true,  kVK_ANSI_4,            IDC_HELIUM_SWITCH_SPACE_4},
++      {false, false, true,  true,  kVK_ANSI_Keypad4,      IDC_HELIUM_SWITCH_SPACE_4},
++      {false, false, true,  true,  kVK_ANSI_5,            IDC_HELIUM_SWITCH_SPACE_5},
++      {false, false, true,  true,  kVK_ANSI_Keypad5,      IDC_HELIUM_SWITCH_SPACE_5},
++      {false, false, true,  true,  kVK_ANSI_6,            IDC_HELIUM_SWITCH_SPACE_6},
++      {false, false, true,  true,  kVK_ANSI_Keypad6,      IDC_HELIUM_SWITCH_SPACE_6},
++      {false, false, true,  true,  kVK_ANSI_7,            IDC_HELIUM_SWITCH_SPACE_7},
++      {false, false, true,  true,  kVK_ANSI_Keypad7,      IDC_HELIUM_SWITCH_SPACE_7},
++      {false, false, true,  true,  kVK_ANSI_8,            IDC_HELIUM_SWITCH_SPACE_8},
++      {false, false, true,  true,  kVK_ANSI_Keypad8,      IDC_HELIUM_SWITCH_SPACE_8},
++      {false, false, true,  true,  kVK_ANSI_9,            IDC_HELIUM_SWITCH_SPACE_9},
++      {false, false, true,  true,  kVK_ANSI_Keypad9,      IDC_HELIUM_SWITCH_SPACE_9},
+       {true,  true,  false, true,  kVK_ANSI_A,            IDC_FOCUS_INACTIVE_POPUP_FOR_ACCESSIBILITY},
+       {true,  false, false, true,  kVK_ANSI_R,            IDC_SHOW_READING_MODE_KEYBOARD},
+     });
+--- a/chrome/browser/ui/cocoa/accelerators_cocoa.mm
++++ b/chrome/browser/ui/cocoa/accelerators_cocoa.mm
+@@ -121,6 +121,28 @@
+      ui::VKEY_I},
+ #endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
+     {IDC_TAB_SEARCH, ui::EF_COMMAND_DOWN | ui::EF_SHIFT_DOWN, ui::VKEY_A},
++    {IDC_HELIUM_PREV_SPACE, ui::EF_CONTROL_DOWN | ui::EF_ALT_DOWN,
++     ui::VKEY_OEM_COMMA},
++    {IDC_HELIUM_NEXT_SPACE, ui::EF_CONTROL_DOWN | ui::EF_ALT_DOWN,
++     ui::VKEY_OEM_PERIOD},
++    {IDC_HELIUM_SWITCH_SPACE_1, ui::EF_CONTROL_DOWN | ui::EF_ALT_DOWN,
++     ui::VKEY_1},
++    {IDC_HELIUM_SWITCH_SPACE_2, ui::EF_CONTROL_DOWN | ui::EF_ALT_DOWN,
++     ui::VKEY_2},
++    {IDC_HELIUM_SWITCH_SPACE_3, ui::EF_CONTROL_DOWN | ui::EF_ALT_DOWN,
++     ui::VKEY_3},
++    {IDC_HELIUM_SWITCH_SPACE_4, ui::EF_CONTROL_DOWN | ui::EF_ALT_DOWN,
++     ui::VKEY_4},
++    {IDC_HELIUM_SWITCH_SPACE_5, ui::EF_CONTROL_DOWN | ui::EF_ALT_DOWN,
++     ui::VKEY_5},
++    {IDC_HELIUM_SWITCH_SPACE_6, ui::EF_CONTROL_DOWN | ui::EF_ALT_DOWN,
++     ui::VKEY_6},
++    {IDC_HELIUM_SWITCH_SPACE_7, ui::EF_CONTROL_DOWN | ui::EF_ALT_DOWN,
++     ui::VKEY_7},
++    {IDC_HELIUM_SWITCH_SPACE_8, ui::EF_CONTROL_DOWN | ui::EF_ALT_DOWN,
++     ui::VKEY_8},
++    {IDC_HELIUM_SWITCH_SPACE_9, ui::EF_CONTROL_DOWN | ui::EF_ALT_DOWN,
++     ui::VKEY_9},
+ };
+ 
+ ui::Accelerator AcceleratorForCloseWindow() {
+--- a/chrome/browser/ui/accelerator_table.cc
++++ b/chrome/browser/ui/accelerator_table.cc
+@@ -264,6 +264,28 @@
+      IDC_HELIUM_FOCUS_SPLIT_PANE_UP},
+     {ui::VKEY_DOWN, ui::EF_SHIFT_DOWN | ui::EF_ALT_DOWN,
+      IDC_HELIUM_FOCUS_SPLIT_PANE_DOWN},
++    {ui::VKEY_PRIOR, ui::EF_SHIFT_DOWN | ui::EF_ALT_DOWN,
++     IDC_HELIUM_PREV_SPACE},
++    {ui::VKEY_NEXT, ui::EF_SHIFT_DOWN | ui::EF_ALT_DOWN,
++     IDC_HELIUM_NEXT_SPACE},
++    {ui::VKEY_1, ui::EF_CONTROL_DOWN | ui::EF_SHIFT_DOWN,
++     IDC_HELIUM_SWITCH_SPACE_1},
++    {ui::VKEY_2, ui::EF_CONTROL_DOWN | ui::EF_SHIFT_DOWN,
++     IDC_HELIUM_SWITCH_SPACE_2},
++    {ui::VKEY_3, ui::EF_CONTROL_DOWN | ui::EF_SHIFT_DOWN,
++     IDC_HELIUM_SWITCH_SPACE_3},
++    {ui::VKEY_4, ui::EF_CONTROL_DOWN | ui::EF_SHIFT_DOWN,
++     IDC_HELIUM_SWITCH_SPACE_4},
++    {ui::VKEY_5, ui::EF_CONTROL_DOWN | ui::EF_SHIFT_DOWN,
++     IDC_HELIUM_SWITCH_SPACE_5},
++    {ui::VKEY_6, ui::EF_CONTROL_DOWN | ui::EF_SHIFT_DOWN,
++     IDC_HELIUM_SWITCH_SPACE_6},
++    {ui::VKEY_7, ui::EF_CONTROL_DOWN | ui::EF_SHIFT_DOWN,
++     IDC_HELIUM_SWITCH_SPACE_7},
++    {ui::VKEY_8, ui::EF_CONTROL_DOWN | ui::EF_SHIFT_DOWN,
++     IDC_HELIUM_SWITCH_SPACE_8},
++    {ui::VKEY_9, ui::EF_CONTROL_DOWN | ui::EF_SHIFT_DOWN,
++     IDC_HELIUM_SWITCH_SPACE_9},
+ #if BUILDFLAG(IS_LINUX)
+     // Windows reserves Ctrl+Alt for AltGr.
+     {ui::VKEY_N, ui::EF_CONTROL_DOWN | ui::EF_SHIFT_DOWN | ui::EF_ALT_DOWN,
+--- a/chrome/app/chrome_dll.rc
++++ b/chrome/app/chrome_dll.rc
+@@ -90,6 +90,17 @@
+     VK_NUMPAD9,     IDC_SELECT_LAST_TAB,        VIRTKEY, CONTROL
+     VK_NEXT,        IDC_MOVE_TAB_NEXT,          VIRTKEY, CONTROL, SHIFT
+     VK_PRIOR,       IDC_MOVE_TAB_PREVIOUS,      VIRTKEY, CONTROL, SHIFT
++    VK_PRIOR,       IDC_HELIUM_PREV_SPACE,      VIRTKEY, ALT, SHIFT
++    VK_NEXT,        IDC_HELIUM_NEXT_SPACE,      VIRTKEY, ALT, SHIFT
++    "1",            IDC_HELIUM_SWITCH_SPACE_1,  VIRTKEY, CONTROL, SHIFT
++    "2",            IDC_HELIUM_SWITCH_SPACE_2,  VIRTKEY, CONTROL, SHIFT
++    "3",            IDC_HELIUM_SWITCH_SPACE_3,  VIRTKEY, CONTROL, SHIFT
++    "4",            IDC_HELIUM_SWITCH_SPACE_4,  VIRTKEY, CONTROL, SHIFT
++    "5",            IDC_HELIUM_SWITCH_SPACE_5,  VIRTKEY, CONTROL, SHIFT
++    "6",            IDC_HELIUM_SWITCH_SPACE_6,  VIRTKEY, CONTROL, SHIFT
++    "7",            IDC_HELIUM_SWITCH_SPACE_7,  VIRTKEY, CONTROL, SHIFT
++    "8",            IDC_HELIUM_SWITCH_SPACE_8,  VIRTKEY, CONTROL, SHIFT
++    "9",            IDC_HELIUM_SWITCH_SPACE_9,  VIRTKEY, CONTROL, SHIFT
+     VK_NEXT,        IDC_SELECT_NEXT_TAB,        VIRTKEY, CONTROL
+     VK_TAB,         IDC_CYCLE_TO_NEXT_TAB,      VIRTKEY, CONTROL
+     VK_PRIOR,       IDC_SELECT_PREVIOUS_TAB,    VIRTKEY, CONTROL
+--- a/chrome/browser/ui/views/frame/browser_native_widget_mac.mm
++++ b/chrome/browser/ui/views/frame/browser_native_widget_mac.mm
+@@ -470,6 +470,19 @@
+     case IDC_RELOAD:
+     case IDC_CTRL_S_SHORTCUT:
+     case IDC_TOGGLE_ZEN_MODE_TOP_CHROME_PIN:
++    case IDC_HELIUM_NEXT_SPACE:
++    case IDC_HELIUM_PREV_SPACE:
++    case IDC_HELIUM_NEW_SPACE:
++    case IDC_HELIUM_DELETE_SPACE:
++    case IDC_HELIUM_SWITCH_SPACE_1:
++    case IDC_HELIUM_SWITCH_SPACE_2:
++    case IDC_HELIUM_SWITCH_SPACE_3:
++    case IDC_HELIUM_SWITCH_SPACE_4:
++    case IDC_HELIUM_SWITCH_SPACE_5:
++    case IDC_HELIUM_SWITCH_SPACE_6:
++    case IDC_HELIUM_SWITCH_SPACE_7:
++    case IDC_HELIUM_SWITCH_SPACE_8:
++    case IDC_HELIUM_SWITCH_SPACE_9:
+     case IDC_SAVE_PAGE:
+     case IDC_SELECT_NEXT_TAB:
+     case IDC_SELECT_PREVIOUS_TAB:
+--- a/components/tabs/public/tab_context_menu_command.h
++++ b/components/tabs/public/tab_context_menu_command.h
+@@ -50,6 +50,8 @@
+   CommandCreateFourPaneSplit,
+   CommandAddToActiveSplit,
+   CommandRemoveFromSplit,
++  CommandMoveToSpace,
++  CommandTogglePinAllSpaces,
+ };
+ // LINT.ThenChange(//tools/metrics/histograms/metadata/tab/histograms.xml:TabContextMenuCommand)
+ 
+--- a/chrome/browser/ui/tabs/tab_strip_model.cc
++++ b/chrome/browser/ui/tabs/tab_strip_model.cc
+@@ -66,6 +66,7 @@
+ #include "chrome/browser/ui/tabs/features.h"
+ #include "chrome/browser/ui/tabs/helium_pins_util.h"
+ #include "chrome/browser/ui/tabs/helium_spaces_util.h"
++#include "chrome/browser/ui/tabs/helium_window_spaces_controller.h"
+ #include "chrome/browser/ui/tabs/split_tab_metrics.h"
+ #include "chrome/browser/ui/tabs/tab_change_type.h"
+ #include "chrome/browser/ui/tabs/tab_close_types_data.h"
+@@ -3015,6 +3016,15 @@
+       return helium_pins::CanUseCurrentUrlAsPinnedUrl(
+           GetTabAtIndex(context_index));
+ 
++    case CommandMoveToSpace:
++      return helium_spaces::HasSpaces(this);
++
++    case CommandTogglePinAllSpaces:
++      return helium_spaces::CanToggleGlobalPin(
++                 this, GetTabAtIndex(context_index)) &&
++             (IsTabPinned(context_index) ||
++              IsContextMenuCommandEnabled(context_index, CommandTogglePinned));
++
+     case CommandGoBack:
+       CHECK(delegate()->IsForWebApp(), base::NotFatalUntil::M162);
+       return delegate()->CanGoBack(GetWebContentsAt(context_index));
+@@ -3264,6 +3274,17 @@
+       helium_pins::UseCurrentUrlAsPinnedUrl(GetTabAtIndex(context_index));
+       break;
+ 
++    case CommandMoveToSpace:
++      // Do nothing. The submenu's delegate invokes MoveTabsToSpace().
++      break;
++
++    case CommandTogglePinAllSpaces:
++      if (auto* ctrl = helium_spaces::HeliumWindowSpacesController::From(
++              delegate()->GetBrowserWindowInterface())) {
++        ctrl->TogglePinAllSpaces(GetTabAtIndex(context_index));
++      }
++      break;
++
+     case CommandToggleTabMuted: {
+       const bool mute = WillContextMenuMuteTabs(context_index);
+       for (int index : GetIndicesForCommand(context_index)) {
+@@ -3715,7 +3736,13 @@
+     }
+   }
+ 
++  tabs::TabInterface* pivot_tab = tabs.front();
+   if (ContainsSplit(split_id)) {
++    const std::vector<tabs::TabInterface*> existing =
++        GetSplitData(split_id)->ListTabs();
++    if (!existing.empty() && std::ranges::contains(tabs, existing.front())) {
++      pivot_tab = existing.front();
++    }
+     RemoveSplit(split_id);
+   }
+   {
+@@ -3724,7 +3751,7 @@
+     for (tabs::TabInterface* tab : tabs) {
+       indices.push_back(GetIndexOfTab(tab));
+     }
+-    const int pivot_index = indices.front();
++    const int pivot_index = GetIndexOfTab(pivot_tab);
+     std::ranges::sort(indices);
+     AddToSplitImpl(split_id, indices, pivot_index,
+                    split_tabs::SplitTabVisualData(std::move(tree)),
+--- a/chrome/browser/ui/tabs/tab_menu_model.h
++++ b/chrome/browser/ui/tabs/tab_menu_model.h
+@@ -108,6 +108,7 @@
+   std::unique_ptr<ui::SimpleMenuModel> glic_tab_sub_menu_model_;
+   std::unique_ptr<ui::SimpleMenuModel> contextual_tasks_tab_sub_menu_model_;
+   std::unique_ptr<ui::SimpleMenuModel> send_tab_to_self_submenu_;
++  std::unique_ptr<ui::SimpleMenuModel> move_to_space_submenu_;
+ 
+   // `tab_strip_` needs to outlive this class.
+   raw_ptr<TabStripModel> tab_strip_;
+--- a/chrome/browser/ui/tabs/tab_menu_model.cc
++++ b/chrome/browser/ui/tabs/tab_menu_model.cc
+@@ -8,6 +8,8 @@
+ #include <iterator>
+ #include <memory>
+ #include <optional>
++#include <string>
++#include <vector>
+ 
+ #include "base/command_line.h"
+ #include "base/containers/flat_set.h"
+@@ -37,7 +39,14 @@
+ #include "chrome/browser/ui/tabs/existing_window_sub_menu_model.h"
+ #include "chrome/browser/ui/tabs/features.h"
+ #include "chrome/browser/ui/tabs/glic_tab_sub_menu_model.h"
++#include "chrome/browser/ui/tabs/helium_pins_service.h"
++#include "chrome/browser/ui/tabs/helium_pins_tab_controller.h"
+ #include "chrome/browser/ui/tabs/helium_pins_util.h"
++#include "chrome/browser/ui/tabs/helium_spaces_service.h"
++#include "chrome/browser/ui/tabs/helium_spaces_service_factory.h"
++#include "chrome/browser/ui/tabs/helium_spaces_util.h"
++#include "chrome/browser/ui/tabs/helium_window_spaces_controller.h"
++#include "chrome/browser/ui/tabs/pinned_tab_service_factory.h"
+ #include "chrome/browser/ui/tabs/pane_settings_menu_model.h"
+ #include "chrome/browser/ui/tabs/split_layout_templates.h"
+ #include "chrome/browser/ui/tabs/split_tab_menu_model.h"
+@@ -87,6 +96,84 @@
+ using base::UserMetricsAction;
+ 
+ namespace {
++
++class MoveToSpaceSubMenuModel : public ui::SimpleMenuModel,
++                                public ui::SimpleMenuModel::Delegate {
++ public:
++  MoveToSpaceSubMenuModel(TabStripModel* tab_strip, int context_index)
++      : ui::SimpleMenuModel(this),
++        tab_strip_(tab_strip),
++        context_index_(context_index) {
++    auto* service = helium_spaces::HeliumSpacesServiceFactory::GetForProfile(
++        tab_strip_->profile());
++    if (!service) {
++      return;
++    }
++    const std::string current_space =
++        helium_spaces::GetTabSpaceId(tab_strip_->GetTabAtIndex(context_index_));
++    int cmd_id = kFirstSpaceCommandId;
++    for (const helium_spaces::Space& space : service->spaces()) {
++      if (space.id == current_space) {
++        continue;
++      }
++      space_ids_.push_back(space.id);
++      AddItem(cmd_id++, space.name);
++    }
++    if (!space_ids_.empty()) {
++      AddSeparator(ui::NORMAL_SEPARATOR);
++    }
++    AddItemWithStringId(kNewSpaceCommandId, IDS_TAB_CXMENU_MOVE_TO_NEW_SPACE);
++  }
++  MoveToSpaceSubMenuModel(const MoveToSpaceSubMenuModel&) = delete;
++  MoveToSpaceSubMenuModel& operator=(const MoveToSpaceSubMenuModel&) = delete;
++  ~MoveToSpaceSubMenuModel() override = default;
++
++  // ui::SimpleMenuModel::Delegate:
++  void ExecuteCommand(int command_id, int event_flags) override {
++    if (!tab_strip_ || !tab_strip_->ContainsIndex(context_index_)) {
++      return;
++    }
++    BrowserWindowInterface* browser =
++        tab_strip_->delegate()->GetBrowserWindowInterface();
++    auto* ctrl = helium_spaces::HeliumWindowSpacesController::From(browser);
++    auto* service = helium_spaces::HeliumSpacesServiceFactory::GetForProfile(
++        tab_strip_->profile());
++    if (!ctrl || !service) {
++      return;
++    }
++
++    std::string target_space_id;
++    if (command_id == kNewSpaceCommandId) {
++      target_space_id = service->CreateSpace();
++    } else {
++      const size_t offset =
++          static_cast<size_t>(command_id - kFirstSpaceCommandId);
++      if (offset >= space_ids_.size()) {
++        return;
++      }
++      target_space_id = space_ids_[offset];
++    }
++
++    std::vector<tabs::TabInterface*> tabs;
++    if (tab_strip_->IsTabSelected(context_index_)) {
++      for (tabs::TabInterface* selected :
++           tab_strip_->selection_model().selected_tabs()) {
++        tabs.push_back(selected);
++      }
++    } else {
++      tabs.push_back(tab_strip_->GetTabAtIndex(context_index_));
++    }
++    ctrl->MoveTabsToSpace(tabs, target_space_id);
++  }
++
++ private:
++  static constexpr int kNewSpaceCommandId = 1;
++  static constexpr int kFirstSpaceCommandId = 100;
++
++  raw_ptr<TabStripModel> tab_strip_;
++  int context_index_;
++  std::vector<std::string> space_ids_;
++};
+ constexpr int kTabMenuIconSize = 16;
+ #if BUILDFLAG(IS_MAC)
+ // Separate from pane settings (2000-2099) and Chromium's context commands.
+@@ -744,6 +831,14 @@
+     }
+   }
+ 
++  if (helium_spaces::HasSpaces(tab_strip_)) {
++    move_to_space_submenu_ =
++        std::make_unique<MoveToSpaceSubMenuModel>(tab_strip_, index);
++    AddSubMenuWithStringId(TabStripModel::CommandMoveToSpace,
++                           IDS_TAB_CXMENU_MOVE_TO_SPACE,
++                           move_to_space_submenu_.get());
++  }
++
+   AddSeparator(ui::NORMAL_SEPARATOR);
+   AddItemWithStringId(TabStripModel::CommandCopyURL,
+                       num_tabs == 1 ? IDS_TAB_CXMENU_COPY_URL
+@@ -766,14 +861,24 @@
+             ui::kColorMenuIcon, ui::SimpleMenuModel::kDefaultIconSize));
+   }
+ 
+-  // Pinned URL actions for a single persistent pin. A pin in the active split
+-  // is selected together with its partner.
++  // Global Pin action directly below Pin/Unpin for a single tab or split.
+   tabs::TabInterface* const context_tab = tab_strip_->GetTabAtIndex(index);
+-  if (helium_pins::IsPersistentPin(context_tab) &&
++  const bool is_single_tab_or_split =
+       std::ranges::all_of(tabs, [context_tab](tabs::TabInterface* tab) {
+         return tab == context_tab ||
+                (tab->GetSplit() && tab->GetSplit() == context_tab->GetSplit());
+-      })) {
++      });
++  if (is_single_tab_or_split &&
++      helium_spaces::CanToggleGlobalPin(tab_strip_, context_tab)) {
++    AddItemWithStringId(TabStripModel::CommandTogglePinAllSpaces,
++                        helium_spaces::IsGlobalPin(context_tab)
++                            ? IDS_TAB_CXMENU_PIN_IN_CURRENT_SPACE
++                            : IDS_TAB_CXMENU_PIN_IN_ALL_SPACES);
++  }
++
++  // Pinned URL actions for a single persistent pin. A pin in the active split
++  // is selected together with its partner.
++  if (helium_pins::IsPersistentPin(context_tab) && is_single_tab_or_split) {
+     AddItemWithStringId(TabStripModel::CommandReturnToPinnedUrl,
+                         IDS_TAB_CXMENU_RETURN_TO_PINNED_URL);
+     AddItemWithStringId(TabStripModel::CommandUseCurrentUrlAsPinnedUrl,
+--- a/chrome/browser/ui/views/helium/command_bar_commands.cc
++++ b/chrome/browser/ui/views/helium/command_bar_commands.cc
+@@ -72,6 +72,24 @@
+      .label_id = IDS_HELIUM_COMMAND_BAR_CMD_SPLIT_VIEW,
+      .keywords = "side by side pane",
+      .icon = &kSplitSceneIcon},
++
++    // Spaces.
++    {.command_id = IDC_HELIUM_NEW_SPACE,
++     .label_id = IDS_HELIUM_NEW_SPACE,
++     .keywords = "space workspace create add",
++     .icon = &kNewWindowIcon},
++    {.command_id = IDC_HELIUM_NEXT_SPACE,
++     .label_id = IDS_HELIUM_NEXT_SPACE,
++     .keywords = "space workspace switch",
++     .icon = &omnibox::kTabIcon},
++    {.command_id = IDC_HELIUM_PREV_SPACE,
++     .label_id = IDS_HELIUM_PREV_SPACE,
++     .keywords = "space workspace switch",
++     .icon = &omnibox::kTabIcon},
++    {.command_id = IDC_HELIUM_DELETE_SPACE,
++     .label_id = IDS_HELIUM_DELETE_SPACE,
++     .keywords = "space workspace remove close",
++     .icon = &kDeleteIcon},
+     {.command_id = IDC_HELIUM_NEW_SPLIT_PANE_ON_RIGHT,
+      .label_id = IDS_HELIUM_NEW_SPLIT_PANE_ON_RIGHT,
+      .keywords = "split view column",
+--- a/chrome/browser/ui/views/helium/command_bar_view.h
++++ b/chrome/browser/ui/views/helium/command_bar_view.h
+@@ -97,6 +97,8 @@
+     tabs::TabHandle tab;
+     // Set when the entry restores an archived tab.
+     std::optional<int32_t> archived_tab_id;
++    // Set when the entry switches this window to a Space.
++    std::string space_id;
+     // Set when the entry opens an autocomplete match.
+     std::optional<AutocompleteMatch> match;
+     // Set when the entry runs a browser command.
+--- a/chrome/browser/ui/views/helium/command_bar_view.cc
++++ b/chrome/browser/ui/views/helium/command_bar_view.cc
+@@ -32,6 +32,10 @@
+ #include "chrome/browser/ui/navigator/browser_navigator_params.h"
+ #include "chrome/browser/ui/tabs/archived_tabs_service.h"
+ #include "chrome/browser/ui/tabs/archived_tabs_service_factory.h"
++#include "chrome/browser/ui/tabs/helium_spaces_service.h"
++#include "chrome/browser/ui/tabs/helium_spaces_service_factory.h"
++#include "chrome/browser/ui/tabs/helium_spaces_util.h"
++#include "chrome/browser/ui/tabs/helium_window_spaces_controller.h"
+ #include "chrome/browser/ui/tabs/tab_strip_model.h"
+ #include "chrome/browser/ui/views/frame/browser_view.h"
+ #include "chrome/browser/ui/views/helium/command_bar_commands.h"
+@@ -882,12 +886,19 @@
+       if (window == browser_.get() && tab == tab_strip->GetActiveTab()) {
+         continue;
+       }
+-      open_urls.emplace_back(
++      auto item = std::make_pair(
+           AutocompleteMatch::GURLToStrippedGURL(
+               ShownUrl(tab->GetContents()), input_,
+               template_url_service, std::u16string(),
+               /*keep_search_intent_params=*/true),
+           tab->GetHandle());
++      // Prefer tabs in this window's active Space when matching open URLs.
++      if (window == browser_.get() &&
++          helium_spaces::IsTabInActiveSpace(tab_strip, tab)) {
++        open_urls.insert(open_urls.begin(), std::move(item));
++      } else {
++        open_urls.push_back(std::move(item));
++      }
+     }
+   }
+ 
+@@ -1226,6 +1237,14 @@
+     Dismiss();
+     return;
+   }
++  if (!entry.space_id.empty()) {
++    if (auto* ctrl = helium_spaces::HeliumWindowSpacesController::From(
++            browser_)) {
++      ctrl->SwitchToSpace(entry.space_id);
++    }
++    Dismiss();
++    return;
++  }
+   if (entry.archived_tab_id) {
+     if (ArchivedTabsService* archived_service =
+             ArchivedTabsServiceFactory::GetForProfile(browser_->GetProfile())) {
+@@ -1580,6 +1599,36 @@
+     }
+     scored.emplace_back(score, std::move(entry));
+   }
++  if (helium_spaces::HasSpaces(browser_)) {
++    if (auto* spaces_service =
++            helium_spaces::HeliumSpacesServiceFactory::GetForProfile(
++                browser_->GetProfile())) {
++      const std::string active_space =
++          helium_spaces::GetActiveSpaceId(browser_);
++      CommandBarCommand space_matcher;
++      space_matcher.keywords = "space workspace switch";
++      for (const helium_spaces::Space& space : spaces_service->spaces()) {
++        if (space.id == active_space) {
++          continue;
++        }
++        Entry entry;
++        entry.space_id = space.id;
++        entry.title = l10n_util::GetStringFUTF16(
++            IDS_HELIUM_COMMAND_BAR_SWITCH_TO_SPACE, space.name);
++        int score = 1;
++        if (!terms.empty()) {
++          score = ScoreCommandBarCommand(space_matcher, entry.title, terms);
++          if (score < min_term_score * static_cast<int>(terms.size())) {
++            continue;
++          }
++        }
++        entry.icon = ui::ImageModel::FromVectorIcon(
++            omnibox::kTabIcon, kColorOmniboxResultsIcon, kIconSize);
++        entry.action = l10n_util::GetStringUTF16(IDS_HELIUM_COMMAND_BAR_RUN);
++        scored.emplace_back(score, std::move(entry));
++      }
++    }
++  }
+   std::ranges::stable_sort(scored, std::ranges::greater(),
+                            &std::pair<int, Entry>::first);
+ 

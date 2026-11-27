@@ -457,3 +457,8 @@ helium/ui/neo-browser-public-dependencies.patch
 helium/ui/neo-pins-split-state.patch
 helium/ui/omnibox-switch-to-tab.patch
 helium/ui/auto-archive-tabs.patch
+helium/core/spaces/spaces-core.patch
+helium/core/spaces/spaces-pins.patch
+helium/core/spaces/spaces-tab-filtering.patch
+helium/core/spaces/spaces-commands.patch
+helium/ui/spaces-ui.patch
